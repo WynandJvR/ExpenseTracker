@@ -1,0 +1,74 @@
+/* styles.css */
+
+/* Table headers */
+.table-view .column-header {
+    -fx-background-color: #000000;
+    -fx-font-weight: bold;
+    -fx-font-size: 14px;
+}
+
+.table-view .column-header .label {
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-font-size: 14px;
+}
+
+/* DatePicker styles */
+.date-picker {
+    -fx-background-color: #535353;
+    -fx-text-fill: white;
+    -fx-font-size: 14px;
+}
+
+/* DatePicker text field (editor) */
+.date-picker .text-field {
+    -fx-text-fill: white;
+    -fx-control-inner-background: #535353;
+    -fx-font-size: 14px;
+}
+
+/* DatePicker arrow button */
+.date-picker .arrow-button {
+    -fx-background-color: #5C6BC0;
+}
+
+.date-picker .arrow-button .arrow {
+    -fx-background-color: white;
+}
+
+/* DatePicker popup (calendar) */
+.date-picker-popup {
+    -fx-background-color: #535353;
+    -fx-border-color: #5C6BC0;
+}
+
+/* Calendar cells */
+.date-picker-popup .month-year-pane {
+    -fx-background-color: #5C6BC0;
+    -fx-text-fill: white;
+}
+
+.date-picker-popup .spinner .button {
+    -fx-background-color: #5C6BC0;
+    -fx-text-fill: white;
+}
+
+.date-picker-popup .day-cell {
+    -fx-background-color: #535353;
+    -fx-text-fill: white;
+}
+
+.date-picker-popup .day-cell:hover {
+    -fx-background-color: #6d7acc;
+}
+
+.date-picker-popup .day-cell:selected {
+    -fx-background-color: #5C6BC0;
+    -fx-text-fill: white;
+}
+
+.date-picker-popup .today {
+    -fx-background-color: #424242;
+    -fx-text-fill: white;
+    -fx-border-color: #5C6BC0;
+}
