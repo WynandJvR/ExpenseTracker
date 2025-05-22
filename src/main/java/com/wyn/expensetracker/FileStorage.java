@@ -1,21 +1,19 @@
 package com.wyn.expensetracker;
 
+import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+
 import java.io.*;
 import java.time.LocalDate;
 import java.time.YearMonth;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import java.util.*;
 
 public class FileStorage {
     private static final String BASE_DIR = System.getProperty("user.home") + File.separator + ".expenseTracker";
-    private static final String EXPENSES_FILE = BASE_DIR + File.separator + "expenses.xlsx";
+    private static final String EXPENSES_FILE = BASE_DIR + File.separator + "expenses.txt";
     private static final String CATEGORIES_FILE = BASE_DIR + File.separator + "categories.txt";
     private static final String INCOME_FILE = BASE_DIR + File.separator + "incomes.txt";
+    private final ExcelStorage excelStorage = new ExcelStorage();
 
     public FileStorage() {
         File dir = new File(BASE_DIR);
@@ -25,70 +23,69 @@ public class FileStorage {
     }
 
     public void saveExpenses(List<Expense> expenses) throws IOException {
-        try (Workbook workbook = new XSSFWorkbook();
-             FileOutputStream fileOut = new FileOutputStream(EXPENSES_FILE)) {
-            Sheet sheet = workbook.createSheet("Expenses");
-
-            // Create header row
-            Row headerRow = sheet.createRow(0);
-            String[] headers = {"Amount", "Category", "Date", "Description"};
-            for (int i = 0; i < headers.length; i++) {
-                Cell cell = headerRow.createCell(i);
-                cell.setCellValue(headers[i]);
-            }
-
-            // Fill data rows
-            for (int i = 0; i < expenses.size(); i++) {
-                Row row = sheet.createRow(i + 1);
-                Expense expense = expenses.get(i);
-                row.createCell(0).setCellValue(expense.getAmount());
-                row.createCell(1).setCellValue(expense.getCategory());
-                row.createCell(2).setCellValue(expense.getDate().toString());
-                row.createCell(3).setCellValue(expense.getDescription());
-            }
-
-            // Auto-size columns
-            for (int i = 0; i < headers.length; i++) {
-                sheet.autoSizeColumn(i);
-            }
-
-            workbook.write(fileOut);
-        }
+        // Save to both Excel and text file for backward compatibility
+        excelStorage.saveExpenses(expenses);
+        saveToTextFile(expenses);
     }
 
     public List<Expense> loadExpenses() throws IOException {
+        try {
+            // Try loading from Excel first
+            return excelStorage.loadExpenses();
+        } catch (Exception e) {
+            System.err.println("Failed to load from Excel, falling back to text file: " + e.getMessage());
+            return loadFromTextFile();
+        }
+    }
+
+    private void saveToTextFile(List<Expense> expenses) throws IOException {
+        try (PrintWriter out = new PrintWriter(new FileWriter(EXPENSES_FILE))) {
+            for (Expense expense : expenses) {
+                out.println(expense.getAmount() + "," + escapeCsv(expense.getCategory()) + "," +
+                            expense.getDate() + "," + escapeCsv(expense.getDescription()));
+            }
+        }
+    }
+
+    private List<Expense> loadFromTextFile() throws IOException {
         List<Expense> expenses = new ArrayList<>();
         File file = new File(EXPENSES_FILE);
         if (!file.exists()) {
             return expenses;
         }
-        try (Workbook workbook = new XSSFWorkbook(new FileInputStream(file))) {
-            Sheet sheet = workbook.getSheet("Expenses");
-            if (sheet == null) return expenses;
-
-            for (int i = 1; i <= sheet.getLastRowNum(); i++) {
-                Row row = sheet.getRow(i);
-                if (row != null) {
-                    try {
-                        double amount = row.getCell(0).getNumericCellValue();
-                        if (amount <= 0) continue;
-                        String category = row.getCell(1).getStringCellValue();
-                        LocalDate date = LocalDate.parse(row.getCell(2).getStringCellValue());
-                        String description = row.getCell(3) != null ? row.getCell(3).getStringCellValue() : "";
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            int lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                try {
+                    String[] parts = splitCsv(line);
+                    if (parts.length >= 3) {
+                        double amount = Double.parseDouble(parts[0]);
+                        if (amount <= 0) {
+                            System.err.println("Invalid amount at line " + lineNumber + ": " + line);
+                            continue;
+                        }
+                        String category = parts[1];
+                        LocalDate date = LocalDate.parse(parts[2]);
+                        String description = parts.length > 3 ? parts[3] : "";
                         expenses.add(new Expense(amount, category, date, description));
-                    } catch (Exception e) {
-                        System.err.println("Error parsing row " + i + ": " + e.getMessage());
+                    } else {
+                        System.err.println("Malformed line at " + lineNumber + ": " + line);
                     }
+                } catch (Exception e) {
+                    System.err.println("Error parsing line " + lineNumber + ": " + e.getMessage());
                 }
             }
         }
         return expenses;
     }
 
+    // Rest of the FileStorage class remains the same...
     public void saveCategories(ObservableList<String> categories) throws IOException {
         try (PrintWriter out = new PrintWriter(new FileWriter(CATEGORIES_FILE))) {
             for (String category : categories) {
-                out.println(category);
+                out.println(escapeCsv(category));
             }
         }
     }
@@ -130,12 +127,17 @@ public class FileStorage {
             while ((line = reader.readLine()) != null) {
                 lineNumber++;
                 try {
-                    String[] parts = line.split(",");
+                    String[] parts = splitCsv(line);
                     if (parts.length == 2) {
                         YearMonth yearMonth = YearMonth.parse(parts[0]);
                         double income = Double.parseDouble(parts[1]);
-                        if (income < 0) continue;
+                        if (income < 0) {
+                            System.err.println("Invalid income at line " + lineNumber + ": " + line);
+                            continue;
+                        }
                         incomes.put(yearMonth, income);
+                    } else {
+                        System.err.println("Malformed line at " + lineNumber + ": " + line);
                     }
                 } catch (Exception e) {
                     System.err.println("Error parsing line " + lineNumber + ": " + e.getMessage());
@@ -143,5 +145,32 @@ public class FileStorage {
             }
         }
         return incomes;
+    }
+
+    private String escapeCsv(String value) {
+        if (value == null) return "";
+        if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        }
+        return value;
+    }
+
+    private String[] splitCsv(String line) {
+        List<String> parts = new ArrayList<>();
+        boolean inQuotes = false;
+        StringBuilder field = new StringBuilder();
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"' && (i == 0 || line.charAt(i - 1) != '\\')) {
+                inQuotes = !inQuotes;
+            } else if (c == ',' && !inQuotes) {
+                parts.add(field.toString());
+                field = new StringBuilder();
+            } else {
+                field.append(c);
+            }
+        }
+        parts.add(field.toString());
+        return parts.toArray(new String[0]);
     }
 }
