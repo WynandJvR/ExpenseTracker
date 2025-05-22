@@ -3,8 +3,8 @@ module com.wyn.expensetracker {
     requires javafx.fxml;
     requires javafx.graphics;
     requires javafx.base;
-
-    // Open the package to JavaFX FXML (if using FXML)
+    requires org.apache.poi.poi;
+    requires org.apache.poi.ooxml;
     opens com.wyn.expensetracker to javafx.fxml;
     exports com.wyn.expensetracker;
 }
