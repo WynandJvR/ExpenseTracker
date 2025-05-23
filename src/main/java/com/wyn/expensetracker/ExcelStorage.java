@@ -9,16 +9,19 @@ import java.util.List;
 
 public class ExcelStorage {
     private static final String BASE_DIR = System.getProperty("user.home") + File.separator + ".expenseTracker";
-    private static final String EXPENSES_FILE = BASE_DIR + File.separator + "expenses.xlsx";
+    private static final String DEFAULT_EXPENSES_FILE = BASE_DIR + File.separator + "expenses.xlsx";
+    private String lastSavedFilePath; // Store the last saved file path
 
     public ExcelStorage() {
         File dir = new File(BASE_DIR);
         if (!dir.exists()) {
             dir.mkdirs();
         }
+        lastSavedFilePath = DEFAULT_EXPENSES_FILE; // Default path
     }
 
-    public void saveExpenses(List<Expense> expenses) throws IOException {
+    // Modified saveExpenses to accept a file path
+    public void saveExpenses(List<Expense> expenses, String filePath) throws IOException {
         Workbook workbook = new XSSFWorkbook();
         Sheet sheet = workbook.createSheet("Expenses");
 
@@ -46,15 +49,26 @@ public class ExcelStorage {
         }
 
         // Write to file
-        try (FileOutputStream outputStream = new FileOutputStream(EXPENSES_FILE)) {
+        try (FileOutputStream outputStream = new FileOutputStream(filePath)) {
             workbook.write(outputStream);
         }
         workbook.close();
+        lastSavedFilePath = filePath; // Update the last saved file path
+    }
+
+    // Original saveExpenses method for backward compatibility
+    public void saveExpenses(List<Expense> expenses) throws IOException {
+        saveExpenses(expenses, lastSavedFilePath);
+    }
+
+    // Getter for last saved file path
+    public String getLastSavedFilePath() {
+        return lastSavedFilePath;
     }
 
     public List<Expense> loadExpenses() throws IOException {
         List<Expense> expenses = new ArrayList<>();
-        File file = new File(EXPENSES_FILE);
+        File file = new File(lastSavedFilePath);
         if (!file.exists()) {
             return expenses;
         }

@@ -1,7 +1,9 @@
+/* Root pane styling */
 .root-pane {
     -fx-background-color: #1E1E1E;
 }
 
+/* Left panel styling */
 .left-panel {
     -fx-background-color: #2A2A2A;
     -fx-border-color: #3A3A3A;
@@ -9,11 +11,13 @@
     -fx-padding: 20;
 }
 
+/* Right panel styling */
 .right-panel {
     -fx-background-color: #1E1E1E;
     -fx-padding: 20;
 }
 
+/* Panel box */
 .panel-box {
     -fx-background-color: #333333;
     -fx-padding: 15;
@@ -21,12 +25,14 @@
     -fx-border-radius: 8;
 }
 
+/* Header label */
 .header-label {
     -fx-font-size: 22px;
     -fx-font-weight: bold;
     -fx-text-fill: #FFFFFF;
 }
 
+/* Section titles */
 .section-title {
     -fx-font-size: 18px;
     -fx-font-weight: bold;
@@ -34,6 +40,7 @@
     -fx-padding: 0 0 10 0;
 }
 
+/* Table title */
 .table-title {
     -fx-font-size: 16px;
     -fx-font-weight: bold;
@@ -41,12 +48,14 @@
     -fx-padding: 0 0 10 0;
 }
 
+/* Form labels */
 .form-label {
     -fx-font-size: 14px;
     -fx-text-fill: #E0E0E0;
     -fx-padding: 5 0 5 0;
 }
 
+/* Text fields */
 .text-field {
     -fx-background-color: #424242;
     -fx-text-fill: #FFFFFF;
@@ -63,6 +72,7 @@
     -fx-border-width: 1;
 }
 
+/* Combo boxes */
 .combo-box {
     -fx-background-color: #424242;
     -fx-text-fill: #FFFFFF;
@@ -83,6 +93,7 @@
     -fx-background-color: #5C6BC0;
 }
 
+/* Date picker */
 .date-picker {
     -fx-background-color: #424242;
     -fx-text-fill: #FFFFFF;
@@ -99,6 +110,7 @@
     -fx-background-color: #424242;
 }
 
+/* Buttons */
 .primary-button {
     -fx-background-color: #5C6BC0;
     -fx-text-fill: #FFFFFF;
@@ -162,6 +174,7 @@
     -fx-scale-x: 0.95;
 }
 
+/* Tables */
 .table-view {
     -fx-background-color: transparent;
     -fx-padding: 5;
@@ -196,11 +209,61 @@
     -fx-background-color: #B0BEC5;
 }
 
+/* Charts */
 .chart {
     -fx-background-color: #2D2D2D;
-    -fx-text-fill: #FFFFFF;
+    -fx-padding: 10;
+    -fx-font-family: "Arial";
 }
 
+.chart-title {
+    -fx-text-fill: #F5F5F5;
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.8), 2, 0, 0, 1);
+}
+
+.chart-legend {
+    -fx-background-color: #333333;
+    -fx-text-fill: #F5F5F5;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-padding: 5;
+    -fx-border-color: #4A4A4A;
+    -fx-border-width: 1;
+    -fx-border-radius: 3;
+}
+
+.chart-legend-item {
+    -fx-text-fill: #F5F5F5;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
+.chart-pie-label {
+    -fx-fill: #F5F5F5;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.8), 2, 0, 0, 1);
+}
+
+.axis {
+    -fx-tick-label-fill: #F5F5F5;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
+.axis-label {
+    -fx-text-fill: #F5F5F5;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+}
+
+.chart-plot-background {
+    -fx-background-color: #2D2D2D;
+}
+
+/* Labels */
 .total-label {
     -fx-font-size: 14px;
     -fx-text-fill: #E0E0E0;
@@ -226,6 +289,7 @@
     -fx-text-fill: #4CAF50;
 }
 
+/* Scroll pane */
 .scroll-pane {
     -fx-background-color: transparent;
 }
@@ -243,6 +307,7 @@
     -fx-background-color: #7986CB;
 }
 
+/* Dialog pane */
 .dialog-pane {
     -fx-background-color: #333333;
     -fx-text-fill: #FFFFFF;
@@ -256,4 +321,14 @@
 
 .dialog-pane .button:hover {
     -fx-background-color: #7986CB;
+}
+
+/* SplitPane divider styling */
+.split-pane-divider {
+    -fx-background-color: #4682B4; /* Steel Blue */
+    -fx-pref-width: 4px; /* Thicker divider for visibility */
+}
+
+.split-pane-divider:hover {
+    -fx-background-color: #6495ED; /* Cornflower Blue on hover */
 }
