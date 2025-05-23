@@ -13,8 +13,10 @@ import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
+import javafx.stage.FileChooser;
 import javafx.scene.image.Image;
 import javafx.util.Duration;
+import java.io.File;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.Month;
@@ -78,7 +80,7 @@ public class ExpenseTrackerApp extends Application {
             System.out.println("Loaded " + manager.getExpenses().size() + " expenses");
             if (manager.getExpenses().isEmpty()) {
                 manager.addExpense(new Expense(50.0, "Food", LocalDate.now(), "Groceries"));
-                manager.addExpense(new Expense(30.0, "Transport", LocalDate.now(), "Bus fare")); // Corrected typo
+                manager.addExpense(new Expense(30.0, "Transport", LocalDate.now(), "Bus fare"));
                 errorLabel.setText("No expenses found. Added sample expenses.");
             }
         } catch (Exception e) {
@@ -101,7 +103,6 @@ public class ExpenseTrackerApp extends Application {
         VBox leftPanel = new VBox(15);
         leftPanel.setPadding(new Insets(20));
         leftPanel.getStyleClass().add("left-panel");
-        leftPanel.setMaxWidth(Double.MAX_VALUE);
         VBox.setVgrow(leftPanel, Priority.ALWAYS);
 
         // Header
@@ -270,7 +271,6 @@ public class ExpenseTrackerApp extends Application {
         VBox rightPanel = new VBox(15);
         rightPanel.setPadding(new Insets(20));
         rightPanel.getStyleClass().add("right-panel");
-        rightPanel.setMaxWidth(Double.MAX_VALUE);
         VBox.setVgrow(rightPanel, Priority.ALWAYS);
 
         // Expense records table
@@ -309,8 +309,32 @@ public class ExpenseTrackerApp extends Application {
         Button exportButton = createStyledButton("Export to Excel", "success-button");
         exportButton.setOnAction(e -> {
             try {
-                new ExcelStorage().saveExpenses(manager.getExpenses());
-                errorLabel.setText("Expenses exported to Excel successfully!");
+                File defaultFile = new File(System.getProperty("user.home") + File.separator + ".expenseTracker" + File.separator + "expenses.xlsx");
+                String filePath;
+
+                // Check if the default file exists (indicating it's not the first time)
+                if (!defaultFile.exists()) {
+                    // Prompt user to choose a file location
+                    FileChooser fileChooser = new FileChooser();
+                    fileChooser.setTitle("Save Expenses to Excel");
+                    fileChooser.setInitialDirectory(new File(System.getProperty("user.home")));
+                    fileChooser.setInitialFileName("expenses.xlsx");
+                    fileChooser.getExtensionFilters().add(
+                        new FileChooser.ExtensionFilter("Excel Files", "*.xlsx")
+                    );
+                    File selectedFile = fileChooser.showSaveDialog(stage);
+                    if (selectedFile == null) {
+                        errorLabel.setText("Export cancelled by user");
+                        errorLabel.getStyleClass().setAll("error-label", "error-message");
+                        return;
+                    }
+                    filePath = selectedFile.getAbsolutePath();
+                } else {
+                    filePath = defaultFile.getAbsolutePath();
+                }
+
+                storage.saveExpenses(manager.getExpenses(), filePath);
+                errorLabel.setText("Expenses exported to Excel successfully at: " + filePath);
                 errorLabel.getStyleClass().setAll("error-label", "success-message");
             } catch (IOException ex) {
                 errorLabel.setText("Failed to export to Excel: " + ex.getMessage());
@@ -378,12 +402,19 @@ public class ExpenseTrackerApp extends Application {
         rightScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         rightScrollPane.getStyleClass().add("scroll-pane");
 
-        // Set up the main layout
-        HBox mainLayout = new HBox(10, leftScrollPane, rightScrollPane);
-        HBox.setHgrow(leftScrollPane, Priority.ALWAYS);
-        HBox.setHgrow(rightScrollPane, Priority.ALWAYS);
-        mainLayout.setPrefSize(Region.USE_COMPUTED_SIZE, Region.USE_COMPUTED_SIZE);
-        root.setCenter(mainLayout);
+        // Set up the main layout with SplitPane
+        SplitPane splitPane = new SplitPane();
+        splitPane.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
+        splitPane.getItems().addAll(leftScrollPane, rightScrollPane);
+        splitPane.setDividerPositions(0.4); // Initial divider position: 40% for left panel
+        SplitPane.setResizableWithParent(leftScrollPane, Boolean.TRUE);
+        SplitPane.setResizableWithParent(rightScrollPane, Boolean.TRUE);
+        root.setCenter(splitPane);
+
+        // Ensure SplitPane grows with the window
+        BorderPane.setAlignment(splitPane, Pos.CENTER);
+        splitPane.prefWidthProperty().bind(root.widthProperty());
+        splitPane.prefHeightProperty().bind(root.heightProperty());
 
         // Set up the scene
         Scene scene = new Scene(root, 1200, 800);

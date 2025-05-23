@@ -33,10 +33,31 @@ public class ConsoleApp {
                     // Existing view total by category logic...
                 } else if (choice == 4) {
                     try {
-                        storage.saveExpenses(manager.getExpenses());
+                        File defaultFile = new File(System.getProperty("user.home") + File.separator + ".expenseTracker" + File.separator + "expenses.xlsx");
+                        String filePath;
+
+                        // Check if the default file exists (indicating it's not the first time)
+                        if (!defaultFile.exists()) {
+                            System.out.print("Enter the path to save the Excel file (or press Enter for default: " +
+                                             defaultFile.getAbsolutePath() + "): ");
+                            String inputPath = scanner.nextLine().trim();
+                            filePath = inputPath.isEmpty() ? defaultFile.getAbsolutePath() : inputPath;
+                            // Ensure the file has the correct extension
+                            if (!filePath.toLowerCase().endsWith(".xlsx")) {
+                                filePath += ".xlsx";
+                            }
+                            // Ensure the directory exists
+                            File parentDir = new File(filePath).getParentFile();
+                            if (parentDir != null && !parentDir.exists()) {
+                                parentDir.mkdirs();
+                            }
+                        } else {
+                            filePath = defaultFile.getAbsolutePath();
+                        }
+
+                        storage.saveExpenses(manager.getExpenses(), filePath);
                         System.out.println("Expenses exported to Excel successfully!");
-                        System.out.println("Location: " + System.getProperty("user.home") + 
-                            File.separator + ".expenseTracker" + File.separator + "expenses.xlsx");
+                        System.out.println("Location: " + filePath);
                     } catch (Exception ex) {
                         System.out.println("Error exporting to Excel: " + ex.getMessage());
                     }
