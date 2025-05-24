@@ -13,8 +13,10 @@ import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
+import javafx.stage.FileChooser;
 import javafx.scene.image.Image;
 import javafx.util.Duration;
+import java.io.File;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.Month;
@@ -54,10 +56,9 @@ public class ExpenseTrackerApp extends Application {
 
     @Override
     public void start(Stage stage) {
-        // Initialize errorLabel first
+        // Initialize errorLabel
         errorLabel = new Label("");
-        errorLabel.setStyle("-fx-text-fill: #FF5252; -fx-font-weight: bold; -fx-font-size: 14px;");
-        errorLabel.setWrapText(true);
+        errorLabel.getStyleClass().add("error-label");
 
         try {
             stage.getIcons().add(new Image(getClass().getResourceAsStream("/expenseIcon.png")));
@@ -96,21 +97,18 @@ public class ExpenseTrackerApp extends Application {
 
         // Main container
         BorderPane root = new BorderPane();
-        root.setStyle("-fx-background-color: #2D2D2D;");
+        root.getStyleClass().add("root-pane");
 
         // Left panel - Input Form
         VBox leftPanel = new VBox(15);
         leftPanel.setPadding(new Insets(20));
-        leftPanel.setStyle("-fx-background-color: #3A3A3A; -fx-border-color: #4A4A4A; -fx-border-width: 0 1 0 0;");
-        leftPanel.setMinWidth(350);
-        leftPanel.setMaxWidth(350);
-        leftPanel.setFillWidth(true);
+        leftPanel.getStyleClass().add("left-panel");
+        VBox.setVgrow(leftPanel, Priority.ALWAYS);
 
         // Header
         Label headerLabel = new Label("Expense Tracker");
-        headerLabel.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 20px; -fx-font-weight: bold;");
+        headerLabel.getStyleClass().add("header-label");
         headerLabel.setWrapText(true);
-        headerLabel.setMaxWidth(310);
 
         HBox headerBox = new HBox(headerLabel);
         headerBox.setPadding(new Insets(0, 0, 20, 0));
@@ -118,42 +116,42 @@ public class ExpenseTrackerApp extends Application {
 
         // Form section
         VBox formBox = new VBox(15);
-        formBox.setStyle("-fx-background-color: #424242; -fx-padding: 20; -fx-border-radius: 5; -fx-background-radius: 5;");
+        formBox.getStyleClass().add("panel-box");
 
         Label formTitle = new Label("Add New Expense");
-        formTitle.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 18px; -fx-font-weight: bold;");
+        formTitle.getStyleClass().add("section-title");
 
         // Amount field
         Label amountLabel = new Label("Amount:");
-        amountLabel.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 14px;");
+        amountLabel.getStyleClass().add("form-label");
         TextField amountField = createStyledTextField("e.g., 10.99");
 
         // Category section
         Label categoryLabel = new Label("Category:");
-        categoryLabel.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 14px;");
+        categoryLabel.getStyleClass().add("form-label");
         ComboBox<String> categoryCombo = createStyledComboBox("Select or enter category", categories);
 
         // Category buttons
         HBox categoryButtons = new HBox(10);
-        Button addCategoryButton = createStyledButton("Add Category", "#5C6BC0");
-        Button removeCategoryButton = createStyledButton("Remove Category", "#E53935");
+        Button addCategoryButton = createStyledButton("Add Category", "primary-button");
+        Button removeCategoryButton = createStyledButton("Remove Category", "danger-button");
         categoryButtons.getChildren().addAll(addCategoryButton, removeCategoryButton);
         categoryButtons.setPadding(new Insets(5, 0, 15, 0));
 
         // Date picker
         Label dateLabel = new Label("Date:");
-        dateLabel.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 14px;");
+        dateLabel.getStyleClass().add("form-label");
         DatePicker datePicker = createStyledDatePicker();
 
         // Description
         Label descLabel = new Label("Description (optional):");
-        descLabel.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 14px;");
+        descLabel.getStyleClass().add("form-label");
         TextField descriptionField = createStyledTextField("Enter description");
 
         // Action buttons
         HBox actionButtons = new HBox(10);
-        Button addButton = createStyledButton("Add Expense", "#43A047");
-        Button deleteButton = createStyledButton("Delete Selected", "#E53935");
+        Button addButton = createStyledButton("Add Expense", "success-button");
+        Button deleteButton = createStyledButton("Delete Selected", "danger-button");
         actionButtons.getChildren().addAll(addButton, deleteButton);
 
         formBox.getChildren().addAll(
@@ -167,19 +165,19 @@ public class ExpenseTrackerApp extends Application {
 
         // Income section
         VBox incomeBox = new VBox(15);
-        incomeBox.setStyle("-fx-background-color: #424242; -fx-padding: 20; -fx-border-radius: 5; -fx-background-radius: 5;");
+        incomeBox.getStyleClass().add("panel-box");
 
         Label incomeTitle = new Label("Income & Savings");
-        incomeTitle.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 18px; -fx-font-weight: bold;");
+        incomeTitle.getStyleClass().add("section-title");
 
         // Income input
         Label incomeLabel = new Label("Monthly Income:");
-        incomeLabel.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 14px;");
+        incomeLabel.getStyleClass().add("form-label");
         incomeField = createStyledTextField("e.g., 5000.00");
 
         // Year/month selector
         Label periodLabel = new Label("Select Period:");
-        periodLabel.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 14px;");
+        periodLabel.getStyleClass().add("form-label");
         HBox selectorBox = new HBox(10);
         yearList = FXCollections.observableArrayList();
         yearCombo = createStyledComboBox("Year", yearList);
@@ -190,11 +188,9 @@ public class ExpenseTrackerApp extends Application {
         // Totals display
         VBox totalsBox = new VBox(10);
         totalLabel = new Label("Total Expenses: 0.00");
-        totalLabel.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 14px;");
-
+        totalLabel.getStyleClass().add("total-label");
         moneySavedLabel = new Label("Money Saved: 0.00");
-        moneySavedLabel.setStyle("-fx-text-fill: #4CAF50; -fx-font-size: 14px; -fx-font-weight: bold;");
-
+        moneySavedLabel.getStyleClass().add("saved-label");
         totalsBox.getChildren().addAll(totalLabel, moneySavedLabel);
 
         incomeBox.getChildren().addAll(
@@ -207,55 +203,41 @@ public class ExpenseTrackerApp extends Application {
 
         // Search section
         VBox searchBox = new VBox(15);
-        searchBox.setStyle("-fx-background-color: #424242; -fx-padding: 20; -fx-border-radius: 5; -fx-background-radius: 5;");
+        searchBox.getStyleClass().add("panel-box");
 
         Label searchTitle = new Label("Search Expenses");
-        searchTitle.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 18px; -fx-font-weight: bold;");
+        searchTitle.getStyleClass().add("section-title");
 
         searchField = createStyledTextField("Search by amount, category, date, or description");
 
         // Category totals table
         Label categoryTableTitle = new Label("Expenses by Category");
-        categoryTableTitle.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 16px;");
+        categoryTableTitle.getStyleClass().add("table-title");
 
         categoryTable = new TableView<>();
         categoryTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         categoryTable.setPrefHeight(180);
-        categoryTable.setStyle("-fx-background-color: transparent; -fx-padding: 5;");
+        categoryTable.getStyleClass().add("table-view");
 
         TableColumn<CategoryTotal, String> categoryColumn = new TableColumn<>("Category");
         categoryColumn.setCellValueFactory(new PropertyValueFactory<>("category"));
-        categoryColumn.setStyle("-fx-text-fill: white; -fx-alignment: CENTER_LEFT; -fx-font-size: 14px;");
         categoryColumn.setPrefWidth(120);
         categoryColumn.setCellFactory(tc -> new TableCell<CategoryTotal, String>() {
             @Override
             protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) {
-                    setText(null);
-                    setStyle("-fx-background-color: #3A3A3A;");
-                } else {
-                    setText(item);
-                    setStyle("-fx-text-fill: black; -fx-font-size: 14px; -fx-background-color: #e0e0e0; -fx-alignment: CENTER_LEFT;");
-                }
+                setText(empty ? null : item);
             }
         });
 
         TableColumn<CategoryTotal, Double> totalColumn = new TableColumn<>("Amount");
         totalColumn.setCellValueFactory(new PropertyValueFactory<>("total"));
-        totalColumn.setStyle("-fx-text-fill: white; -fx-alignment: CENTER_RIGHT; -fx-font-size: 14px;");
         totalColumn.setPrefWidth(80);
         totalColumn.setCellFactory(tc -> new TableCell<CategoryTotal, Double>() {
             @Override
             protected void updateItem(Double item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) {
-                    setText(null);
-                    setStyle("-fx-background-color: #3A3A3A;");
-                } else {
-                    setText(String.format("%.2f", item));
-                    setStyle("-fx-text-fill: black; -fx-font-size: 14px; -fx-background-color: #e0e0e0; -fx-alignment: CENTER_RIGHT;");
-                }
+                setText(empty || item == null ? null : String.format("%.2f", item));
             }
         });
 
@@ -288,17 +270,16 @@ public class ExpenseTrackerApp extends Application {
         // Right panel - Expense records and analytics
         VBox rightPanel = new VBox(15);
         rightPanel.setPadding(new Insets(20));
-        rightPanel.setStyle("-fx-background-color: #2D2D2D;");
-        rightPanel.setMinWidth(850);
-        rightPanel.setFillWidth(true);
+        rightPanel.getStyleClass().add("right-panel");
+        VBox.setVgrow(rightPanel, Priority.ALWAYS);
 
         // Expense records table
         Label tableTitle = new Label("Expense Records");
-        tableTitle.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 20px; -fx-font-weight: bold;");
+        tableTitle.getStyleClass().add("section-title");
 
         expenseTable = new TableView<>();
         expenseTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        expenseTable.setStyle("-fx-background-color: transparent; -fx-padding: 5;");
+        expenseTable.getStyleClass().add("table-view");
         expenseTable.setPrefHeight(400);
 
         // Create columns
@@ -324,57 +305,64 @@ public class ExpenseTrackerApp extends Application {
         sortedData.comparatorProperty().bind(expenseTable.comparatorProperty());
         expenseTable.setItems(sortedData);
 
-        // Add row highlighting
-        expenseTable.setRowFactory(tv -> new TableRow<Expense>() {
-            @Override
-            protected void updateItem(Expense item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) {
-                    setStyle("-fx-background-color: #2D2D2D;");
-                } else {
-                    if (isSelected()) {
-                        setStyle("-fx-background-color: #5C6BC0;");
-                    } else {
-                        setStyle("-fx-background-color: #3A3A3A;");
-                    }
-                }
-            }
-        });
-
         // Export button
-        Button exportButton = createStyledButton("Export to Excel", "#4CAF50");
+        Button exportButton = createStyledButton("Export to Excel", "success-button");
         exportButton.setOnAction(e -> {
             try {
-                new ExcelStorage().saveExpenses(manager.getExpenses());
-                errorLabel.setText("Expenses exported to Excel successfully!");
-                errorLabel.setStyle("-fx-text-fill: #4CAF50;");
+                File defaultFile = new File(System.getProperty("user.home") + File.separator + ".expenseTracker" + File.separator + "expenses.xlsx");
+                String filePath;
+
+                // Check if the default file exists (indicating it's not the first time)
+                if (!defaultFile.exists()) {
+                    // Prompt user to choose a file location
+                    FileChooser fileChooser = new FileChooser();
+                    fileChooser.setTitle("Save Expenses to Excel");
+                    fileChooser.setInitialDirectory(new File(System.getProperty("user.home")));
+                    fileChooser.setInitialFileName("expenses.xlsx");
+                    fileChooser.getExtensionFilters().add(
+                        new FileChooser.ExtensionFilter("Excel Files", "*.xlsx")
+                    );
+                    File selectedFile = fileChooser.showSaveDialog(stage);
+                    if (selectedFile == null) {
+                        errorLabel.setText("Export cancelled by user");
+                        errorLabel.getStyleClass().setAll("error-label", "error-message");
+                        return;
+                    }
+                    filePath = selectedFile.getAbsolutePath();
+                } else {
+                    filePath = defaultFile.getAbsolutePath();
+                }
+
+                storage.saveExpenses(manager.getExpenses(), filePath);
+                errorLabel.setText("Expenses exported to Excel successfully at: " + filePath);
+                errorLabel.getStyleClass().setAll("error-label", "success-message");
             } catch (IOException ex) {
                 errorLabel.setText("Failed to export to Excel: " + ex.getMessage());
-                errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
             }
         });
 
         // Analytics section
         VBox analyticsBox = new VBox(15);
-        analyticsBox.setStyle("-fx-background-color: #424242; -fx-padding: 20; -fx-border-radius: 5; -fx-background-radius: 5;");
+        analyticsBox.getStyleClass().add("panel-box");
 
         Label analyticsTitle = new Label("Expense Analytics");
-        analyticsTitle.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 18px; -fx-font-weight: bold;");
+        analyticsTitle.getStyleClass().add("section-title");
 
         // Chart period selector
         HBox chartControls = new HBox(10);
         Label periodLabelChart = new Label("View by:");
-        periodLabelChart.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 14px;");
+        periodLabelChart.getStyleClass().add("form-label");
         chartPeriodCombo = new ComboBox<>(FXCollections.observableArrayList("All Time", "By Year", "By Month"));
         chartPeriodCombo.setValue("All Time");
-        chartPeriodCombo.setStyle("-fx-background-color: #535353; -fx-text-fill: white;");
+        chartPeriodCombo.getStyleClass().add("combo-box");
         chartControls.getChildren().addAll(periodLabelChart, chartPeriodCombo);
 
         // Create charts
         categoryChart = new PieChart();
         categoryChart.setTitle("Expenses by Category");
         categoryChart.setLegendVisible(true);
-        categoryChart.setStyle("-fx-text-fill: white; -fx-background-color: #2D2D2D;");
+        categoryChart.getStyleClass().add("chart");
         categoryChart.setPrefHeight(250);
 
         CategoryAxis xAxis = new CategoryAxis();
@@ -382,7 +370,7 @@ public class ExpenseTrackerApp extends Application {
         monthlyTrendChart = new BarChart<>(xAxis, yAxis);
         monthlyTrendChart.setTitle("Monthly Trend");
         monthlyTrendChart.setLegendVisible(false);
-        monthlyTrendChart.setStyle("-fx-text-fill: white; -fx-background-color: #2D2D2D;");
+        monthlyTrendChart.getStyleClass().add("chart");
         monthlyTrendChart.setPrefHeight(250);
 
         // Add charts to analytics box
@@ -407,27 +395,26 @@ public class ExpenseTrackerApp extends Application {
         ScrollPane leftScrollPane = new ScrollPane(leftPanel);
         leftScrollPane.setFitToWidth(true);
         leftScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        leftScrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
-        leftScrollPane.setPadding(new Insets(0));
+        leftScrollPane.getStyleClass().add("scroll-pane");
 
         ScrollPane rightScrollPane = new ScrollPane(rightPanel);
         rightScrollPane.setFitToWidth(true);
         rightScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        rightScrollPane.setStyle("-fx-background-color: transparent; -fx-background: transparent;");
-        rightScrollPane.setPadding(new Insets(0));
+        rightScrollPane.getStyleClass().add("scroll-pane");
 
-        // Style the scroll bars
-        leftScrollPane.lookupAll(".scroll-bar").forEach(node ->
-            node.setStyle("-fx-base: #3A3A3A; -fx-background-color: #3A3A3A;")
-        );
-        rightScrollPane.lookupAll(".scroll-bar").forEach(node ->
-            node.setStyle("-fx-base: #2D2D2D; -fx-background-color: #2D2D2D;")
-        );
+        // Set up the main layout with SplitPane
+        SplitPane splitPane = new SplitPane();
+        splitPane.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
+        splitPane.getItems().addAll(leftScrollPane, rightScrollPane);
+        splitPane.setDividerPositions(0.4); // Initial divider position: 40% for left panel
+        SplitPane.setResizableWithParent(leftScrollPane, Boolean.TRUE);
+        SplitPane.setResizableWithParent(rightScrollPane, Boolean.TRUE);
+        root.setCenter(splitPane);
 
-        // Set up the main layout
-        root.setLeft(leftScrollPane);
-        root.setCenter(rightScrollPane);
-        root.setPrefSize(1200, 800);
+        // Ensure SplitPane grows with the window
+        BorderPane.setAlignment(splitPane, Pos.CENTER);
+        splitPane.prefWidthProperty().bind(root.widthProperty());
+        splitPane.prefHeightProperty().bind(root.heightProperty());
 
         // Set up the scene
         Scene scene = new Scene(root, 1200, 800);
@@ -464,6 +451,7 @@ public class ExpenseTrackerApp extends Application {
                 double incomeValue = newValue.isEmpty() ? 0.0 : Double.parseDouble(newValue);
                 if (incomeValue < 0) {
                     errorLabel.setText("Income cannot be negative");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
                     return;
                 }
                 incomes.put(selectedYearMonth, incomeValue);
@@ -473,9 +461,11 @@ public class ExpenseTrackerApp extends Application {
                 } catch (IOException ex) {
                     incomes.remove(selectedYearMonth);
                     errorLabel.setText("Error saving incomes: " + ex.getMessage());
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
                 }
             } catch (NumberFormatException ex) {
                 errorLabel.setText("Invalid income: Please enter a valid number (e.g., 5000.00)");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
             }
         });
 
@@ -503,7 +493,7 @@ public class ExpenseTrackerApp extends Application {
                 double amount = Double.parseDouble(amountField.getText());
                 if (amount <= 0) {
                     errorLabel.setText("Amount must be positive");
-                    errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
                     return;
                 }
                 String category = categoryCombo.getValue();
@@ -511,7 +501,7 @@ public class ExpenseTrackerApp extends Application {
                     category = categoryCombo.getEditor().getText().trim();
                     if (category.isEmpty()) {
                         errorLabel.setText("Category cannot be empty");
-                        errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                        errorLabel.getStyleClass().setAll("error-label", "error-message");
                         return;
                     }
                     if (!categories.contains(category)) {
@@ -521,7 +511,7 @@ public class ExpenseTrackerApp extends Application {
                         } catch (Exception ex) {
                             categories.remove(category);
                             errorLabel.setText("Failed to save categories: " + ex.getMessage());
-                            errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                            errorLabel.getStyleClass().setAll("error-label", "error-message");
                             return;
                         }
                     }
@@ -531,7 +521,7 @@ public class ExpenseTrackerApp extends Application {
 
                 if (date == null) {
                     errorLabel.setText("Please select a date");
-                    errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
                     return;
                 }
 
@@ -542,7 +532,7 @@ public class ExpenseTrackerApp extends Application {
                 } catch (Exception ex) {
                     manager.getExpenses().remove(expense);
                     errorLabel.setText("Failed to save expense: " + ex.getMessage());
-                    errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
                     return;
                 }
                 refreshTable();
@@ -552,13 +542,13 @@ public class ExpenseTrackerApp extends Application {
                 datePicker.setValue(LocalDate.now());
                 descriptionField.clear();
                 errorLabel.setText("Expense added successfully!");
-                errorLabel.setStyle("-fx-text-fill: #4CAF50;");
+                errorLabel.getStyleClass().setAll("error-label", "success-message");
             } catch (NumberFormatException ex) {
                 errorLabel.setText("Invalid amount: Please enter a valid number (e.g., 10.99)");
-                errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
             } catch (Exception ex) {
                 errorLabel.setText("Error: " + ex.getMessage());
-                errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
             }
         });
 
@@ -566,7 +556,7 @@ public class ExpenseTrackerApp extends Application {
             Expense selectedExpense = expenseTable.getSelectionModel().getSelectedItem();
             if (selectedExpense == null) {
                 errorLabel.setText("Please select an expense to delete");
-                errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
                 return;
             }
 
@@ -582,11 +572,11 @@ public class ExpenseTrackerApp extends Application {
                     storage.saveExpenses(manager.getExpenses());
                     refreshTable();
                     errorLabel.setText("Expense deleted successfully!");
-                    errorLabel.setStyle("-fx-text-fill: #4CAF50;");
+                    errorLabel.getStyleClass().setAll("error-label", "success-message");
                 } catch (Exception ex) {
                     manager.addExpense(selectedExpense);
                     errorLabel.setText("Error deleting expense: " + ex.getMessage());
-                    errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
                 }
             }
         });
@@ -596,6 +586,7 @@ public class ExpenseTrackerApp extends Application {
             dialog.setTitle("Add Category");
             dialog.setHeaderText("Enter a new category:");
             dialog.setContentText("Category:");
+            dialog.getDialogPane().getStyleClass().add("dialog-pane");
 
             dialog.showAndWait().ifPresent(category -> {
                 category = category.trim();
@@ -605,17 +596,18 @@ public class ExpenseTrackerApp extends Application {
                     try {
                         storage.saveCategories(categories);
                         errorLabel.setText("");
+                        errorLabel.getStyleClass().setAll("error-label");
                     } catch (Exception ex) {
                         categories.remove(category);
                         errorLabel.setText("Error saving categories: " + ex.getMessage());
-                        errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                        errorLabel.getStyleClass().setAll("error-label", "error-message");
                     }
                 } else if (categories.contains(category)) {
                     errorLabel.setText("Category already exists");
-                    errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
                 } else {
                     errorLabel.setText("Category cannot be empty");
-                    errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
                 }
             });
         });
@@ -624,7 +616,7 @@ public class ExpenseTrackerApp extends Application {
             String selectedCategory = categoryCombo.getValue();
             if (selectedCategory == null) {
                 errorLabel.setText("Please select a category to remove");
-                errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
                 return;
             }
 
@@ -632,7 +624,7 @@ public class ExpenseTrackerApp extends Application {
                 .anyMatch(expense -> expense.getCategory().equals(selectedCategory));
             if (isUsed) {
                 errorLabel.setText("Cannot remove category as it is used in existing expenses");
-                errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
                 return;
             }
 
@@ -646,16 +638,20 @@ public class ExpenseTrackerApp extends Application {
             try {
                 storage.saveCategories(categories);
                 errorLabel.setText("");
+                errorLabel.getStyleClass().setAll("error-label");
             } catch (Exception ex) {
                 categories.add(selectedCategory);
                 errorLabel.setText("Error saving categories: " + ex.getMessage());
-                errorLabel.setStyle("-fx-text-fill: #FF5252;");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
             }
         });
 
         // Initial refresh
         refreshTable();
 
+        // Set minimum window size
+        stage.setMinWidth(800);
+        stage.setMinHeight(600);
         stage.setTitle("Expense Tracker");
         stage.setScene(scene);
         stage.show();
@@ -681,7 +677,7 @@ public class ExpenseTrackerApp extends Application {
             updateIncomeField();
         } catch (Exception e) {
             errorLabel.setText("Error refreshing table: " + e.getMessage());
-            errorLabel.setStyle("-fx-text-fill: #FF5252;");
+            errorLabel.getStyleClass().setAll("error-label", "error-message");
         }
     }
 
@@ -828,20 +824,19 @@ public class ExpenseTrackerApp extends Application {
     private TextField createStyledTextField(String prompt) {
         TextField field = new TextField();
         field.setPromptText(prompt);
-        field.setStyle("-fx-background-color: #535353; -fx-text-fill: white; -fx-prompt-text-fill: #B0B0B0; -fx-font-size: 14px; -fx-padding: 5;");
+        field.getStyleClass().add("text-field");
         return field;
     }
 
     private <T> ComboBox<T> createStyledComboBox(String prompt, ObservableList<T> items) {
         ComboBox<T> combo = new ComboBox<>(items);
         combo.setPromptText(prompt);
-        combo.setStyle("-fx-background-color: #535353; -fx-text-fill: white; -fx-prompt-text-fill: #B0B0B0; -fx-font-size: 14px;");
+        combo.getStyleClass().add("combo-box");
         combo.setCellFactory(lv -> new ListCell<T>() {
             @Override
             protected void updateItem(T item, boolean empty) {
                 super.updateItem(item, empty);
                 setText(empty ? null : item.toString());
-                setStyle("-fx-text-fill: white; -fx-background-color: #535353; -fx-font-size: 14px;");
             }
         });
         return combo;
@@ -851,39 +846,27 @@ public class ExpenseTrackerApp extends Application {
         DatePicker picker = new DatePicker();
         picker.setPromptText("Select Date");
         picker.setValue(LocalDate.now());
-        picker.setStyle("-fx-background-color: #535353; -fx-text-fill: white; -fx-font-size: 14px;");
-        picker.getEditor().setStyle("-fx-text-fill: white; -fx-font-size: 14px;");
+        picker.getStyleClass().add("date-picker");
         return picker;
     }
 
-    private Button createStyledButton(String text, String color) {
+    private Button createStyledButton(String text, String styleClass) {
         Button button = new Button(text);
-        button.setStyle("-fx-background-color: " + color + "; -fx-text-fill: white; -fx-font-weight: bold; -fx-font-size: 14px; -fx-padding: 5 10;");
+        button.getStyleClass().add(styleClass);
         return button;
     }
 
     private <S, T> TableColumn<S, T> createStyledTableColumn(String title, String property, Pos alignment) {
         TableColumn<S, T> column = new TableColumn<>(title);
         column.setCellValueFactory(new PropertyValueFactory<>(property));
-        column.setStyle("-fx-text-fill: white; -fx-font-size: 14px;");
-
         column.setCellFactory(tc -> new TableCell<S, T>() {
             @Override
             protected void updateItem(T item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) {
-                    setText(null);
-                    setStyle("-fx-background-color: #3A3A3A;");
-                } else {
-                    setText(item.toString());
-                    int row = getIndex();
-                    String color = row % 2 == 0 ? "#e0e0e0" : "#d0d0d0";
-                    setStyle("-fx-text-fill: black; -fx-font-size: 14px; -fx-background-color: " + color + ";");
-                    setAlignment(alignment);
-                }
+                setText(empty || item == null ? null : item.toString());
+                setAlignment(alignment);
             }
         });
-
         return column;
     }
 

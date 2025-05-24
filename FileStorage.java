@@ -22,10 +22,16 @@ public class FileStorage {
         }
     }
 
-    public void saveExpenses(List<Expense> expenses) throws IOException {
+    // Modified saveExpenses to accept a file path
+    public void saveExpenses(List<Expense> expenses, String filePath) throws IOException {
         // Save to both Excel and text file for backward compatibility
-        excelStorage.saveExpenses(expenses);
+        excelStorage.saveExpenses(expenses, filePath);
         saveToTextFile(expenses);
+    }
+
+    // Original saveExpenses method
+    public void saveExpenses(List<Expense> expenses) throws IOException {
+        saveExpenses(expenses, excelStorage.getLastSavedFilePath());
     }
 
     public List<Expense> loadExpenses() throws IOException {
@@ -81,7 +87,6 @@ public class FileStorage {
         return expenses;
     }
 
-    // Rest of the FileStorage class remains the same...
     public void saveCategories(ObservableList<String> categories) throws IOException {
         try (PrintWriter out = new PrintWriter(new FileWriter(CATEGORIES_FILE))) {
             for (String category : categories) {
