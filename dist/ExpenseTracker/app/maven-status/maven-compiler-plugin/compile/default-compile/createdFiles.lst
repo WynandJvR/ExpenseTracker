@@ -1,4 +1,6 @@
 com\wyn\expensetracker\ExpenseTrackerApp$4.class
+com\wyn\expensetracker\ExpenseManager$1.class
+com\wyn\expensetracker\RecurrenceType.class
 com\wyn\expensetracker\ExpenseTrackerApp$3.class
 com\wyn\expensetracker\Expense.class
 com\wyn\expensetracker\CategoryTotal.class
@@ -7,6 +9,7 @@ com\wyn\expensetracker\ExpenseTrackerApp$1.class
 module-info.class
 com\wyn\expensetracker\ExpenseTrackerApp$2.class
 com\wyn\expensetracker\FileStorage.class
+com\wyn\expensetracker\RecurringExpense.class
 com\wyn\expensetracker\ExpenseManager.class
 com\wyn\expensetracker\ConsoleApp.class
 com\wyn\expensetracker\ExcelStorage.class
