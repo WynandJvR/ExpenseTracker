@@ -44,17 +44,21 @@ public class FileStorage {
         try (PrintWriter out = new PrintWriter(new FileWriter(EXPENSES_FILE))) {
             for (Expense expense : expenses) {
                 if (expense instanceof RecurringExpense recurringExpense) {
-                    out.println(escapeCsv(expense.getAmount() + "," +
-                            escapeCsv(expense.getCategory()) + "," +
-                            expense.getDate() + "," +
-                            escapeCsv(expense.getDescription()) + "," +
-                            recurringExpense.getFrequency() + "," +
-                            (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : "")));
-                } else {
+                    // Save recurring expenses with all fields properly escaped
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
-                            escapeCsv(expense.getDescription()));
+                            escapeCsv(expense.getDescription()) + "," +
+                            "RECURRING," +
+                            recurringExpense.getFrequency() + "," +
+                            (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : ""));
+                } else {
+                    // Save regular expenses
+                    out.println(expense.getAmount() + "," +
+                            escapeCsv(expense.getCategory()) + "," +
+                            expense.getDate() + "," +
+                            escapeCsv(expense.getDescription()) + "," +
+                            "REGULAR");
                 }
             }
         }
@@ -73,21 +77,27 @@ public class FileStorage {
                 lineNumber++;
                 try {
                     String[] parts = splitCsv(line);
-                    if (parts.length >= 4) {
+                    if (parts.length >= 5) {
                         double amount = Double.parseDouble(parts[0]);
                         if (amount <= 0) {
                             System.err.println("Invalid amount at line " + lineNumber + ": " + line);
                             continue;
                         }
-                        String category = parts[1];
+                        String category = unescapeCsv(parts[1]);
                         LocalDate date = LocalDate.parse(parts[2]);
-                        String description = parts[3];
-                        if (parts.length >= 6) { // Recurring expense
-                            RecurrenceType frequency = RecurrenceType.valueOf(parts[4]);
-                            LocalDate endDate = parts[5].isEmpty() ? null : LocalDate.parse(parts[5]);
+                        String description = unescapeCsv(parts[3]);
+                        String type = parts[4];
+                        
+                        if ("RECURRING".equals(type) && parts.length >= 7) {
+                            // Recurring expense
+                            RecurrenceType frequency = RecurrenceType.valueOf(parts[5]);
+                            LocalDate endDate = parts[6].isEmpty() ? null : LocalDate.parse(parts[6]);
                             expenses.add(new RecurringExpense(amount, category, date, description, frequency, endDate));
-                        } else {
+                        } else if ("REGULAR".equals(type)) {
+                            // Regular expense
                             expenses.add(new Expense(amount, category, date, description));
+                        } else {
+                            System.err.println("Unknown expense type at line " + lineNumber + ": " + line);
                         }
                     } else {
                         System.err.println("Malformed line at " + lineNumber + ": " + line);
@@ -118,7 +128,7 @@ public class FileStorage {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!line.trim().isEmpty()) {
-                    categories.add(line.trim());
+                    categories.add(unescapeCsv(line.trim()));
                 }
             }
         }
@@ -173,14 +183,30 @@ public class FileStorage {
         return value;
     }
 
+    private String unescapeCsv(String value) {
+        if (value == null) return "";
+        if (value.startsWith("\"") && value.endsWith("\"")) {
+            return value.substring(1, value.length() - 1).replace("\"\"", "\"");
+        }
+        return value;
+    }
+
     private String[] splitCsv(String line) {
         List<String> parts = new ArrayList<>();
         boolean inQuotes = false;
         StringBuilder field = new StringBuilder();
+        
         for (int i = 0; i < line.length(); i++) {
             char c = line.charAt(i);
-            if (c == '"' && (i == 0 || line.charAt(i - 1) != '\\')) {
-                inQuotes = !inQuotes;
+            if (c == '"') {
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    // Double quote - add a single quote to the field
+                    field.append('"');
+                    i++; // Skip the next quote
+                } else {
+                    // Start or end of quoted field
+                    inQuotes = !inQuotes;
+                }
             } else if (c == ',' && !inQuotes) {
                 parts.add(field.toString());
                 field = new StringBuilder();
