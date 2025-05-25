@@ -217,4 +217,8 @@ public class FileStorage {
         parts.add(field.toString());
         return parts.toArray(new String[0]);
     }
+	
+	public ExcelStorage getExcelStorage() {
+    return excelStorage;
+}
 }

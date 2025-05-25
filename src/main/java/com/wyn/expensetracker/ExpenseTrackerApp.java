@@ -75,15 +75,19 @@ public class ExpenseTrackerApp extends Application {
             errorLabel.setText("Failed to load categories: " + e.getMessage());
         }
 
-        try {
+       try {
     manager.getExpenses().addAll(storage.loadExpenses());
     manager.clearGeneratedRecurringIds(); // Clear any previous tracking
     manager.generateRecurringExpenses(LocalDate.now()); // Generate recurring expenses up to today
     System.out.println("Loaded " + manager.getExpenses().size() + " expenses");
     if (manager.getExpenses().isEmpty()) {
-        manager.addExpense(new Expense(50.0, "Food", LocalDate.now(), "Groceries"));
-        manager.addExpense(new Expense(30.0, "Transport", LocalDate.now(), "Bus fare"));
-        errorLabel.setText("No expenses found. Added sample expenses.");
+        // Add sample data only if this is the first run
+        if (!new File(storage.getExcelStorage().getLastSavedFilePath()).exists()) {
+            manager.addExpense(new Expense(50.0, "Food", LocalDate.now(), "Groceries"));
+            manager.addExpense(new Expense(30.0, "Transport", LocalDate.now(), "Bus fare"));
+            errorLabel.setText("No expenses found. Added sample expenses.");
+            storage.saveExpenses(manager.getExpenses()); // Save the sample data
+        }
     }
 } catch (Exception e) {
     System.err.println("Error loading expenses: " + e.getMessage());

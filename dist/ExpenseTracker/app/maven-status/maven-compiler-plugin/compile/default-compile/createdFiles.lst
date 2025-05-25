@@ -11,5 +11,4 @@ com\wyn\expensetracker\ExpenseTrackerApp$2.class
 com\wyn\expensetracker\FileStorage.class
 com\wyn\expensetracker\RecurringExpense.class
 com\wyn\expensetracker\ExpenseManager.class
-com\wyn\expensetracker\ConsoleApp.class
 com\wyn\expensetracker\ExcelStorage.class
