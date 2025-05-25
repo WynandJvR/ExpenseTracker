@@ -24,98 +24,160 @@ import java.time.YearMonth;
 import java.time.format.TextStyle;
 import java.util.*;
 import java.util.stream.Collectors;
-import javafx.scene.chart.PieChart;
-import javafx.scene.chart.BarChart;
-import javafx.scene.chart.CategoryAxis;
-import javafx.scene.chart.NumberAxis;
-import javafx.scene.chart.XYChart;
-import javafx.scene.input.KeyCode;
+import javafx.scene.chart.*;
 
 public class ExpenseTrackerApp extends Application {
     private ExpenseManager manager = new ExpenseManager();
-    private FileStorage storage = new FileStorage();
-    private TableView<Expense> expenseTable;
-    private ObservableList<String> categories;
-    private Label errorLabel;
+    private ExcelStorage storage = new ExcelStorage();
+    private TableView<Expense> expenseTable = new TableView<>();
+    private ObservableList<String> categories = FXCollections.observableArrayList();
+    private Label errorLabel = new Label();
     private FilteredList<Expense> filteredData;
-    private TextField searchField;
-    private ObservableList<Expense> expenseList;
-    private Label totalLabel;
-    private ComboBox<Integer> yearCombo;
-    private ComboBox<Month> monthCombo;
-    private ObservableList<Integer> yearList;
-    private ObservableList<Month> monthList;
-    private TableView<CategoryTotal> categoryTable;
-    private ObservableList<CategoryTotal> categoryTotals;
-    private TextField incomeField;
-    private Label moneySavedLabel;
-    private Map<YearMonth, Double> incomes;
-    private PieChart categoryChart;
+    private TextField searchField = new TextField();
+    private ObservableList<Expense> expenseList = FXCollections.observableArrayList();
+    private Label totalLabel = new Label();
+    private ComboBox<Integer> yearCombo = new ComboBox<>();
+    private ComboBox<Month> monthCombo = new ComboBox<>();
+    private ObservableList<Integer> yearList = FXCollections.observableArrayList();
+    private ObservableList<Month> monthList = FXCollections.observableArrayList(Month.values());
+    private TableView<CategoryTotal> categoryTable = new TableView<>();
+    private ObservableList<CategoryTotal> categoryTotals = FXCollections.observableArrayList();
+    private TextField incomeField = new TextField();
+    private Label moneySavedLabel = new Label();
+    private Map<YearMonth, Double> incomes = new HashMap<>();
+    private PieChart categoryChart = new PieChart();
     private BarChart<String, Number> monthlyTrendChart;
-    private ComboBox<String> chartPeriodCombo;
+    private ComboBox<String> chartPeriodCombo = new ComboBox<>();
 
     @Override
     public void start(Stage stage) {
-        // Initialize errorLabel
-        errorLabel = new Label("");
-        errorLabel.getStyleClass().add("error-label");
+        // Add shutdown hook for proper cleanup
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                List<Expense> expensesToSave = manager.getExpenses();
+                if (expensesToSave.isEmpty()) {
+                    System.out.println("Skipping shutdown save: No expenses to save");
+                    return;
+                }
+                System.out.println("Shutting down - saving " + expensesToSave.size() + " expenses...");
+                storage.saveExpenses(expensesToSave);
+            } catch (IOException e) {
+                System.err.println("Failed to save during shutdown: " + e.getMessage());
+            }
+        }));
 
         try {
             stage.getIcons().add(new Image(getClass().getResourceAsStream("/expenseIcon.png")));
         } catch (Exception e) {
-            System.err.println("Failed to load icon: " + e.getMessage());
-            errorLabel.setText("Failed to load icon: " + e.getMessage());
+            showError("Failed to load icon: " + e.getMessage());
         }
 
-        // Initialize data
-        try {
-            categories = FXCollections.observableArrayList(storage.loadCategories());
-        } catch (Exception e) {
-            categories = FXCollections.observableArrayList("Food", "Transport", "Entertainment", "Utilities", "Other");
-            errorLabel.setText("Failed to load categories: " + e.getMessage());
-        }
-
-        try {
-            manager.getExpenses().addAll(storage.loadExpenses());
-            manager.generateRecurringExpenses(LocalDate.now()); // Generate recurring expenses up to today
-            System.out.println("Loaded " + manager.getExpenses().size() + " expenses");
-            if (manager.getExpenses().isEmpty()) {
-                manager.addExpense(new Expense(50.0, "Food", LocalDate.now(), "Groceries"));
-                manager.addExpense(new Expense(30.0, "Transport", LocalDate.now(), "Bus fare"));
-                errorLabel.setText("No expenses found. Added sample expenses.");
-            }
-        } catch (Exception e) {
-            System.err.println("Error loading expenses: " + e.getMessage());
-            errorLabel.setText("Failed to load expenses: " + e.getMessage());
-        }
-
-        try {
-            incomes = storage.loadIncomes();
-        } catch (Exception e) {
-            incomes = new HashMap<>();
-            errorLabel.setText("Failed to load incomes: " + e.getMessage());
-        }
-
-        // Main container
+        // Initialize UI
         BorderPane root = new BorderPane();
         root.getStyleClass().add("root-pane");
 
-        // Left panel - Input Form
+        // Create left and right panels
+        VBox leftPanel = createLeftPanel();
+        VBox rightPanel = createRightPanel();
+
+        // Create scroll panes
+        ScrollPane leftScrollPane = new ScrollPane(leftPanel);
+        leftScrollPane.setFitToWidth(true);
+        leftScrollPane.getStyleClass().add("scroll-pane");
+
+        ScrollPane rightScrollPane = new ScrollPane(rightPanel);
+        rightScrollPane.setFitToWidth(true);
+        rightScrollPane.getStyleClass().add("scroll-pane");
+
+        // Set up split pane
+        SplitPane splitPane = new SplitPane(leftScrollPane, rightScrollPane);
+        splitPane.setDividerPositions(0.4);
+        root.setCenter(splitPane);
+
+        // Set up scene
+        Scene scene = new Scene(root, 1200, 800);
+        try {
+            scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        } catch (Exception e) {
+            showError("Failed to load stylesheet: " + e.getMessage());
+        }
+
+        // Load data
+        try {
+            // Load categories first
+            categories.setAll(storage.loadCategories());
+            if (categories.isEmpty()) {
+                categories.addAll("Food", "Transport", "Utilities", "Entertainment", "Other");
+            }
+
+            // Then load expenses
+            List<Expense> loadedExpenses = storage.loadExpenses();
+            System.out.println("Loaded " + loadedExpenses.size() + " expenses from storage");
+            
+            manager.getExpenses().clear();
+            manager.getExpenses().addAll(loadedExpenses);
+            manager.generateRecurringExpenses(LocalDate.now());
+            
+            // Initialize the observable list
+            expenseList.setAll(manager.getExpenses());
+            System.out.println("Manager now has " + manager.getExpenses().size() + " expenses");
+            
+        } catch (IOException e) {
+            showError("Failed to load data: " + e.getMessage());
+        }
+
+        // Initialize filtered data
+        filteredData = new FilteredList<>(expenseList, p -> true);
+        SortedList<Expense> sortedData = new SortedList<>(filteredData);
+        sortedData.comparatorProperty().bind(expenseTable.comparatorProperty());
+        expenseTable.setItems(sortedData);
+
+        // Set up event handlers
+        setupEventHandlers();
+
+        // Ensure table is refreshed with loaded data
+        refreshTable();
+
+        stage.setTitle("Expense Tracker");
+        stage.setScene(scene);
+        stage.setMinWidth(800);
+        stage.setMinHeight(600);
+        stage.show();
+    }
+
+    private VBox createLeftPanel() {
         VBox leftPanel = new VBox(15);
         leftPanel.setPadding(new Insets(20));
         leftPanel.getStyleClass().add("left-panel");
-        VBox.setVgrow(leftPanel, Priority.ALWAYS);
 
         // Header
         Label headerLabel = new Label("Expense Tracker");
         headerLabel.getStyleClass().add("header-label");
-        headerLabel.setWrapText(true);
-
-        HBox headerBox = new HBox(headerLabel);
-        headerBox.setPadding(new Insets(0, 0, 20, 0));
-        headerBox.setAlignment(Pos.CENTER);
 
         // Form section
+        VBox formBox = createFormSection();
+
+        // Income section
+        VBox incomeBox = createIncomeSection();
+
+        // Search section
+        VBox searchBox = createSearchSection();
+
+        leftPanel.getChildren().addAll(
+            headerLabel,
+            formBox,
+            new Separator(),
+            incomeBox,
+            new Separator(),
+            searchBox,
+            errorLabel
+        );
+        errorLabel.getStyleClass().add("error-label");
+
+        return leftPanel;
+    }
+
+    private VBox createFormSection() {
         VBox formBox = new VBox(15);
         formBox.getStyleClass().add("panel-box");
 
@@ -123,53 +185,43 @@ public class ExpenseTrackerApp extends Application {
         formTitle.getStyleClass().add("section-title");
 
         // Amount field
-        Label amountLabel = new Label("Amount:");
-        amountLabel.getStyleClass().add("form-label");
         TextField amountField = createStyledTextField("e.g., 10.99");
+        Label amountLabel = createFormLabel("Amount:");
 
-        // Category section
-        Label categoryLabel = new Label("Category:");
-        categoryLabel.getStyleClass().add("form-label");
+        // Category
         ComboBox<String> categoryCombo = createStyledComboBox("Select or enter category", categories);
+        Label categoryLabel = createFormLabel("Category:");
 
         // Category buttons
         HBox categoryButtons = new HBox(10);
         Button addCategoryButton = createStyledButton("Add Category", "primary-button");
         Button removeCategoryButton = createStyledButton("Remove Category", "danger-button");
         categoryButtons.getChildren().addAll(addCategoryButton, removeCategoryButton);
-        categoryButtons.setPadding(new Insets(5, 0, 15, 0));
 
         // Date picker
-        Label dateLabel = new Label("Date:");
-        dateLabel.getStyleClass().add("form-label");
         DatePicker datePicker = createStyledDatePicker();
+        Label dateLabel = createFormLabel("Date:");
 
         // Description
-        Label descLabel = new Label("Description (optional):");
-        descLabel.getStyleClass().add("form-label");
         TextField descriptionField = createStyledTextField("Enter description");
+        Label descLabel = createFormLabel("Description (optional):");
 
         // Recurring expense fields
-        Label recurringLabel = new Label("Recurring:");
-        recurringLabel.getStyleClass().add("form-label");
         CheckBox recurringCheckBox = new CheckBox("Is Recurring?");
         recurringCheckBox.getStyleClass().add("check-box");
+        Label recurringLabel = createFormLabel("Recurring:");
 
-        Label frequencyLabel = new Label("Frequency:");
-        frequencyLabel.getStyleClass().add("form-label");
         ComboBox<RecurrenceType> frequencyCombo = new ComboBox<>(FXCollections.observableArrayList(RecurrenceType.values()));
         frequencyCombo.setPromptText("Select frequency");
-        frequencyCombo.getStyleClass().add("combo-box");
-        frequencyCombo.setDisable(true); // Disabled unless recurring is checked
+        frequencyCombo.setDisable(true);
+        Label frequencyLabel = createFormLabel("Frequency:");
 
-        Label endDateLabel = new Label("End Date (optional):");
-        endDateLabel.getStyleClass().add("form-label");
         DatePicker endDatePicker = new DatePicker();
         endDatePicker.setPromptText("Select end date");
-        endDatePicker.getStyleClass().add("date-picker");
-        endDatePicker.setDisable(true); // Disabled unless recurring is checked
+        endDatePicker.setDisable(true);
+        Label endDateLabel = createFormLabel("End Date (optional):");
 
-        // Enable/disable recurring fields based on checkbox
+        // Enable/disable recurring fields
         recurringCheckBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
             frequencyCombo.setDisable(!newVal);
             endDatePicker.setDisable(!newVal);
@@ -181,6 +233,7 @@ public class ExpenseTrackerApp extends Application {
         Button deleteButton = createStyledButton("Delete Selected", "danger-button");
         actionButtons.getChildren().addAll(addButton, deleteButton);
 
+        // Add all components to form box
         formBox.getChildren().addAll(
             formTitle,
             amountLabel, amountField,
@@ -193,7 +246,144 @@ public class ExpenseTrackerApp extends Application {
             actionButtons
         );
 
-        // Income section
+        // Add button action
+        addButton.setOnAction(event -> {
+            Expense expense = null;
+            try {
+                double amount = Double.parseDouble(amountField.getText());
+                if (amount <= 0) {
+                    showError("Amount must be positive");
+                    return;
+                }
+
+                String category = categoryCombo.getValue() != null ? 
+                    categoryCombo.getValue() : categoryCombo.getEditor().getText().trim();
+                if (category.isEmpty()) {
+                    showError("Category cannot be empty");
+                    return;
+                }
+
+                LocalDate date = datePicker.getValue();
+                if (date == null) {
+                    showError("Please select a date");
+                    return;
+                }
+
+                String description = descriptionField.getText().trim();
+
+                if (recurringCheckBox.isSelected()) {
+                    RecurrenceType frequency = frequencyCombo.getValue();
+                    if (frequency == null) {
+                        showError("Please select a recurrence frequency");
+                        return;
+                    }
+                    LocalDate endDate = endDatePicker.getValue();
+                    expense = new RecurringExpense(amount, category, date, description, frequency, endDate);
+                } else {
+                    expense = new Expense(amount, category, date, description);
+                }
+
+                // Add category if new
+                if (!categories.contains(category)) {
+                    categories.add(category);
+                }
+
+                manager.addExpense(expense); // Saving is handled in ExpenseManager
+                refreshTable();
+                showSuccess("Expense added successfully!");
+            } catch (NumberFormatException ex) {
+                showError("Invalid amount: Please enter a valid number");
+            } catch (IllegalArgumentException ex) {
+                showError(ex.getMessage());
+            } catch (Exception e) { // Catch any unexpected exceptions
+                showError("Failed to add expense: " + e.getMessage());
+                if (expense != null) {
+                    manager.getExpenses().remove(expense);
+                }
+            }
+        });
+
+        // Delete button action
+        deleteButton.setOnAction(event -> {
+            Expense selected = expenseTable.getSelectionModel().getSelectedItem();
+            if (selected == null) {
+                showError("Please select an expense to delete");
+                return;
+            }
+
+            Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+            confirmation.setTitle("Confirm Deletion");
+            confirmation.setHeaderText(null);
+            confirmation.setContentText("Are you sure you want to delete this expense?");
+            
+            if (confirmation.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
+                manager.getExpenses().remove(selected);
+                try {
+                    storage.saveExpenses(manager.getExpenses());
+                    refreshTable();
+                    showSuccess("Expense deleted successfully!");
+                } catch (IOException e) {
+                    showError("Failed to save changes: " + e.getMessage());
+                    manager.getExpenses().add(selected); // Revert if save fails
+                }
+            }
+        });
+
+        // Add category button action
+        addCategoryButton.setOnAction(event -> {
+            TextInputDialog dialog = new TextInputDialog();
+            dialog.setTitle("Add Category");
+            dialog.setHeaderText("Enter a new category:");
+            dialog.setContentText("Category:");
+            
+            dialog.showAndWait().ifPresent(category -> {
+                category = category.trim();
+                if (!category.isEmpty() && !categories.contains(category)) {
+                    categories.add(category);
+                    categoryCombo.setValue(category);
+                    try {
+                        storage.saveCategories(categories);
+                    } catch (IOException e) {
+                        showError("Failed to save categories: " + e.getMessage());
+                        categories.remove(category);
+                    }
+                } else if (category.isEmpty()) {
+                    showError("Category cannot be empty");
+                } else {
+                    showError("Category already exists");
+                }
+            });
+        });
+
+        // Remove category button action
+        removeCategoryButton.setOnAction(event -> {
+            String selected = categoryCombo.getValue();
+            if (selected == null) {
+                showError("Please select a category to remove");
+                return;
+            }
+
+            boolean isUsed = manager.getExpenses().stream()
+                .anyMatch(exp -> exp.getCategory().equals(selected));
+            
+            if (isUsed) {
+                showError("Cannot remove category used by existing expenses");
+                return;
+            }
+
+            categories.remove(selected);
+            try {
+                storage.saveCategories(categories);
+            } catch (IOException e) {
+                showError("Failed to save categories: " + e.getMessage());
+                categories.add(selected);
+            }
+        });
+
+        return formBox;
+    }
+
+    private VBox createIncomeSection() {
         VBox incomeBox = new VBox(15);
         incomeBox.getStyleClass().add("panel-box");
 
@@ -201,37 +391,26 @@ public class ExpenseTrackerApp extends Application {
         incomeTitle.getStyleClass().add("section-title");
 
         // Income input
-        Label incomeLabel = new Label("Monthly Income:");
-        incomeLabel.getStyleClass().add("form-label");
+        Label incomeLabel = createFormLabel("Monthly Income:");
         incomeField = createStyledTextField("e.g., 5000.00");
-
-        // Year/month selector
-        Label periodLabel = new Label("Select Period:");
-        periodLabel.getStyleClass().add("form-label");
-        HBox selectorBox = new HBox(10);
-        yearList = FXCollections.observableArrayList();
-        yearCombo = createStyledComboBox("Year", yearList);
-        monthList = FXCollections.observableArrayList(Month.values());
-        monthCombo = createStyledComboBox("Month", monthList);
-        selectorBox.getChildren().addAll(yearCombo, monthCombo);
 
         // Totals display
         VBox totalsBox = new VBox(10);
-        totalLabel = new Label("Total Expenses: 0.00");
         totalLabel.getStyleClass().add("total-label");
-        moneySavedLabel = new Label("Money Saved: 0.00");
         moneySavedLabel.getStyleClass().add("saved-label");
         totalsBox.getChildren().addAll(totalLabel, moneySavedLabel);
 
         incomeBox.getChildren().addAll(
             incomeTitle,
             incomeLabel, incomeField,
-            periodLabel, selectorBox,
             new Separator(),
             totalsBox
         );
 
-        // Search section
+        return incomeBox;
+    }
+
+    private VBox createSearchSection() {
         VBox searchBox = new VBox(15);
         searchBox.getStyleClass().add("panel-box");
 
@@ -240,95 +419,55 @@ public class ExpenseTrackerApp extends Application {
 
         searchField = createStyledTextField("Search by amount, category, date, or description");
 
-        // Category totals table
-        Label categoryTableTitle = new Label("Expenses by Category");
-        categoryTableTitle.getStyleClass().add("table-title");
-
-        categoryTable = new TableView<>();
-        categoryTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        categoryTable.setPrefHeight(180);
-        categoryTable.getStyleClass().add("table-view");
-
-        TableColumn<CategoryTotal, String> categoryColumn = new TableColumn<>("Category");
-        categoryColumn.setCellValueFactory(new PropertyValueFactory<>("category"));
-        categoryColumn.setPrefWidth(120);
-        categoryColumn.setCellFactory(tc -> new TableCell<CategoryTotal, String>() {
-            @Override
-            protected void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty ? null : item);
-            }
-        });
-
-        TableColumn<CategoryTotal, Double> totalColumn = new TableColumn<>("Amount");
-        totalColumn.setCellValueFactory(new PropertyValueFactory<>("total"));
-        totalColumn.setPrefWidth(80);
-        totalColumn.setCellFactory(tc -> new TableCell<CategoryTotal, Double>() {
-            @Override
-            protected void updateItem(Double item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? null : String.format("%.2f", item));
-            }
-        });
-
-        @SuppressWarnings("unchecked")
-        TableColumn<CategoryTotal, ?>[] categoryColumns = new TableColumn[]{categoryColumn, totalColumn};
-        categoryTable.getColumns().addAll(categoryColumns);
-
-        categoryTotals = FXCollections.observableArrayList();
-        categoryTable.setItems(categoryTotals);
-
         searchBox.getChildren().addAll(
             searchTitle,
-            searchField,
-            new Separator(),
-            categoryTableTitle,
-            categoryTable
+            searchField
         );
 
-        // Assemble left panel
-        leftPanel.getChildren().addAll(
-            headerBox,
-            formBox,
-            new Separator(),
-            incomeBox,
-            new Separator(),
-            searchBox,
-            errorLabel
-        );
+        return searchBox;
+    }
 
-        // Right panel - Expense records and analytics
+    @SuppressWarnings("unchecked")
+    private VBox createRightPanel() {
         VBox rightPanel = new VBox(15);
         rightPanel.setPadding(new Insets(20));
         rightPanel.getStyleClass().add("right-panel");
-        VBox.setVgrow(rightPanel, Priority.ALWAYS);
 
-        // Expense records table
-        Label tableTitle = new Label("Expense Records");
-        tableTitle.getStyleClass().add("section-title");
+        // Period selector
+        Label periodLabel = createFormLabel("Select Period:");
+        HBox selectorBox = new HBox(10);
+        yearCombo = createStyledComboBox("Year", yearList);
+        monthCombo = createStyledComboBox("Month", monthList);
+        selectorBox.getChildren().addAll(periodLabel, yearCombo, monthCombo);
 
-        expenseTable = new TableView<>();
+        // Expense table
         expenseTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         expenseTable.getStyleClass().add("table-view");
         expenseTable.setPrefHeight(400);
 
-        // Create columns
-        TableColumn<Expense, Double> amountColumn = createStyledTableColumn("Amount", "amount", Pos.CENTER_RIGHT);
-        TableColumn<Expense, String> expenseCategoryColumn = createStyledTableColumn("Category", "category", Pos.CENTER_LEFT);
-        TableColumn<Expense, LocalDate> dateColumn = createStyledTableColumn("Date", "date", Pos.CENTER);
-        TableColumn<Expense, String> descriptionColumn = createStyledTableColumn("Description", "description", Pos.CENTER_LEFT);
+        TableColumn<Expense, Double> amountColumn = new TableColumn<>("Amount");
+        amountColumn.setCellValueFactory(new PropertyValueFactory<>("amount"));
+        amountColumn.setCellFactory(tc -> new TableCell<>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty ? null : String.format("$%.2f", item));
+                setAlignment(Pos.CENTER_RIGHT);
+            }
+        });
 
-        @SuppressWarnings("unchecked")
-        TableColumn<Expense, ?>[] expenseColumns = new TableColumn[]{amountColumn, expenseCategoryColumn, dateColumn, descriptionColumn};
-        expenseTable.getColumns().addAll(expenseColumns);
+        TableColumn<Expense, String> categoryColumn = new TableColumn<>("Category");
+        categoryColumn.setCellValueFactory(new PropertyValueFactory<>("category"));
 
-        // Set column widths
-        amountColumn.setPrefWidth(100);
-        expenseCategoryColumn.setPrefWidth(150);
-        dateColumn.setPrefWidth(120);
-        descriptionColumn.setPrefWidth(250);
+        TableColumn<Expense, LocalDate> dateColumn = new TableColumn<>("Date");
+        dateColumn.setCellValueFactory(new PropertyValueFactory<>("date"));
 
-        // Initialize expense list and filtered data
+        TableColumn<Expense, String> descriptionColumn = new TableColumn<>("Description");
+        descriptionColumn.setCellValueFactory(new PropertyValueFactory<>("description"));
+
+        expenseTable.getColumns().setAll(amountColumn, categoryColumn, dateColumn, descriptionColumn);
+
+        // Initialize filtered data
         expenseList = FXCollections.observableArrayList(manager.getExpenses());
         filteredData = new FilteredList<>(expenseList, p -> true);
         SortedList<Expense> sortedData = new SortedList<>(filteredData);
@@ -337,38 +476,7 @@ public class ExpenseTrackerApp extends Application {
 
         // Export button
         Button exportButton = createStyledButton("Export to Excel", "success-button");
-        exportButton.setOnAction(e -> {
-            try {
-                File defaultFile = new File(System.getProperty("user.home") + File.separator + ".expenseTracker" + File.separator + "expenses.xlsx");
-                String filePath;
-
-                if (!defaultFile.exists()) {
-                    FileChooser fileChooser = new FileChooser();
-                    fileChooser.setTitle("Save Expenses to Excel");
-                    fileChooser.setInitialDirectory(new File(System.getProperty("user.home")));
-                    fileChooser.setInitialFileName("expenses.xlsx");
-                    fileChooser.getExtensionFilters().add(
-                        new FileChooser.ExtensionFilter("Excel Files", "*.xlsx")
-                    );
-                    File selectedFile = fileChooser.showSaveDialog(stage);
-                    if (selectedFile == null) {
-                        errorLabel.setText("Export cancelled by user");
-                        errorLabel.getStyleClass().setAll("error-label", "error-message");
-                        return;
-                    }
-                    filePath = selectedFile.getAbsolutePath();
-                } else {
-                    filePath = defaultFile.getAbsolutePath();
-                }
-
-                storage.saveExpenses(manager.getExpenses(), filePath);
-                errorLabel.setText("Expenses exported to Excel successfully at: " + filePath);
-                errorLabel.getStyleClass().setAll("error-label", "success-message");
-            } catch (IOException ex) {
-                errorLabel.setText("Failed to export to Excel: " + ex.getMessage());
-                errorLabel.getStyleClass().setAll("error-label", "error-message");
-            }
-        });
+        exportButton.setOnAction(event -> exportToExcel());
 
         // Analytics section
         VBox analyticsBox = new VBox(15);
@@ -379,15 +487,12 @@ public class ExpenseTrackerApp extends Application {
 
         // Chart period selector
         HBox chartControls = new HBox(10);
-        Label periodLabelChart = new Label("View by:");
-        periodLabelChart.getStyleClass().add("form-label");
-        chartPeriodCombo = new ComboBox<>(FXCollections.observableArrayList("All Time", "By Year", "By Month"));
+        Label periodLabelChart = createFormLabel("View by:");
+        chartPeriodCombo.setItems(FXCollections.observableArrayList("All Time", "By Year", "By Month"));
         chartPeriodCombo.setValue("All Time");
-        chartPeriodCombo.getStyleClass().add("combo-box");
         chartControls.getChildren().addAll(periodLabelChart, chartPeriodCombo);
 
         // Create charts
-        categoryChart = new PieChart();
         categoryChart.setTitle("Expenses by Category");
         categoryChart.setLegendVisible(true);
         categoryChart.getStyleClass().add("chart");
@@ -401,17 +506,46 @@ public class ExpenseTrackerApp extends Application {
         monthlyTrendChart.getStyleClass().add("chart");
         monthlyTrendChart.setPrefHeight(250);
 
-        // Add charts to analytics box
+        // Category totals table
+        Label categoryTableTitle = new Label("Expenses by Category");
+        categoryTableTitle.getStyleClass().add("table-title");
+
+        categoryTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        categoryTable.setPrefHeight(180);
+        categoryTable.getStyleClass().add("table-view");
+
+        TableColumn<CategoryTotal, String> categoryTotalColumn = new TableColumn<>("Category");
+        categoryTotalColumn.setCellValueFactory(new PropertyValueFactory<>("category"));
+
+        TableColumn<CategoryTotal, Double> totalColumn = new TableColumn<>("Amount");
+        totalColumn.setCellValueFactory(new PropertyValueFactory<>("total"));
+        totalColumn.setCellFactory(tc -> new TableCell<>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty ? null : String.format("$%.2f", item));
+            }
+        });
+
+        categoryTable.getColumns().setAll(categoryTotalColumn, totalColumn);
+        categoryTable.setItems(categoryTotals);
+
         analyticsBox.getChildren().addAll(
             analyticsTitle,
             chartControls,
             categoryChart,
-            monthlyTrendChart
+            monthlyTrendChart,
+            new Separator(),
+            categoryTableTitle,
+            categoryTable
         );
 
-        // Add all components to right panel
+        Label recordsLabel = new Label("Expense Records");
+        recordsLabel.getStyleClass().add("section-title");
+
         rightPanel.getChildren().addAll(
-            tableTitle,
+            selectorBox,
+            recordsLabel,
             expenseTable,
             new Separator(),
             exportButton,
@@ -419,435 +553,220 @@ public class ExpenseTrackerApp extends Application {
             analyticsBox
         );
 
-        // Create scroll panes
-        ScrollPane leftScrollPane = new ScrollPane(leftPanel);
-        leftScrollPane.setFitToWidth(true);
-        leftScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-        leftScrollPane.getStyleClass().add("scroll-pane");
+        return rightPanel;
+    }
 
-        ScrollPane rightScrollPane = new ScrollPane(rightPanel);
-        rightScrollPane.setFitToWidth(true);
-        rightScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-        rightScrollPane.getStyleClass().add("scroll-pane");
+    private void loadInitialData() {
+        // Already handled in start method
+    }
 
-        // Set up the main layout with SplitPane
-        SplitPane splitPane = new SplitPane();
-        splitPane.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
-        splitPane.getItems().addAll(leftScrollPane, rightScrollPane);
-        splitPane.setDividerPositions(0.4);
-        SplitPane.setResizableWithParent(leftScrollPane, Boolean.TRUE);
-        SplitPane.setResizableWithParent(rightScrollPane, Boolean.TRUE);
-        root.setCenter(splitPane);
-
-        // Ensure SplitPane grows with the window
-        BorderPane.setAlignment(splitPane, Pos.CENTER);
-        splitPane.prefWidthProperty().bind(root.widthProperty());
-        splitPane.prefHeightProperty().bind(root.heightProperty());
-
-        // Set up the scene
-        Scene scene = new Scene(root, 1200, 800);
-        try {
-            scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
-        } catch (Exception e) {
-            System.err.println("Failed to load styles.css: " + e.getMessage());
-            errorLabel.setText("Failed to load stylesheet: " + e.getMessage());
-        }
-
-        // Event handlers
+    private void setupEventHandlers() {
+        // Search debounce
         PauseTransition searchDebounce = new PauseTransition(Duration.millis(300));
         searchField.textProperty().addListener((observable, oldValue, newValue) -> {
             searchDebounce.setOnFinished(e -> updateTotalExpenses());
             searchDebounce.playFromStart();
         });
 
-        yearCombo.valueProperty().addListener((observable, oldValue, newValue) -> {
+        // Year/month change listeners
+        yearCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
             updateTotalExpenses();
             updateIncomeField();
         });
 
-        monthCombo.valueProperty().addListener((observable, oldValue, newValue) -> {
+        monthCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
             updateTotalExpenses();
             updateIncomeField();
         });
 
-        incomeField.textProperty().addListener((observable, oldValue, newValue) -> {
-            Integer selectedYear = yearCombo.getValue();
-            Month selectedMonth = monthCombo.getValue();
-            if (selectedYear == null || selectedMonth == null) return;
-            YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
+        // Income field listener
+        incomeField.textProperty().addListener((obs, oldVal, newVal) -> {
+            Integer year = yearCombo.getValue();
+            Month month = monthCombo.getValue();
+            if (year == null || month == null) return;
+            
+            YearMonth ym = YearMonth.of(year, month);
             try {
-                double incomeValue = newValue.isEmpty() ? 0.0 : Double.parseDouble(newValue);
-                if (incomeValue < 0) {
-                    errorLabel.setText("Income cannot be negative");
-                    errorLabel.getStyleClass().setAll("error-label", "error-message");
+                double income = newVal.isEmpty() ? 0.0 : Double.parseDouble(newVal);
+                if (income < 0) {
+                    showError("Income cannot be negative");
                     return;
                 }
-                incomes.put(selectedYearMonth, incomeValue);
-                try {
-                    storage.saveIncomes(incomes);
-                    updateTotalExpenses();
-                } catch (IOException ex) {
-                    incomes.remove(selectedYearMonth);
-                    errorLabel.setText("Error saving incomes: " + ex.getMessage());
-                    errorLabel.getStyleClass().setAll("error-label", "error-message");
-                }
-            } catch (NumberFormatException ex) {
-                errorLabel.setText("Invalid income: Please enter a valid number (e.g., 5000.00)");
-                errorLabel.getStyleClass().setAll("error-label", "error-message");
+                incomes.put(ym, income);
+                updateTotalExpenses();
+            } catch (NumberFormatException e) {
+                showError("Invalid income: Please enter a valid number");
             }
         });
 
+        // Chart period change listener
         chartPeriodCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
             updateTotalExpenses();
         });
-
-        // Keyboard shortcuts
-        addButton.setDefaultButton(true);
-        amountField.setOnKeyPressed(e -> {
-            if (e.getCode() == KeyCode.ENTER) {
-                addButton.fire();
-            }
-        });
-
-        expenseTable.setOnKeyPressed(e -> {
-            if (e.getCode() == KeyCode.DELETE) {
-                deleteButton.fire();
-            }
-        });
-
-        // Button actions
-        addButton.setOnAction(e -> {
-            try {
-                double amount = Double.parseDouble(amountField.getText());
-                if (amount <= 0) {
-                    errorLabel.setText("Amount must be positive");
-                    errorLabel.getStyleClass().setAll("error-label", "error-message");
-                    return;
-                }
-                String category = categoryCombo.getValue();
-                if (category == null || category.trim().isEmpty()) {
-                    category = categoryCombo.getEditor().getText().trim();
-                    if (category.isEmpty()) {
-                        errorLabel.setText("Category cannot be empty");
-                        errorLabel.getStyleClass().setAll("error-label", "error-message");
-                        return;
-                    }
-                    if (!categories.contains(category)) {
-                        categories.add(category);
-                        try {
-                            storage.saveCategories(categories);
-                        } catch (Exception ex) {
-                            categories.remove(category);
-                            errorLabel.setText("Failed to save categories: " + ex.getMessage());
-                            errorLabel.getStyleClass().setAll("error-label", "error-message");
-                            return;
-                        }
-                    }
-                }
-                LocalDate date = datePicker.getValue();
-                String description = descriptionField.getText().trim();
-
-                if (date == null) {
-                    errorLabel.setText("Please select a date");
-                    errorLabel.getStyleClass().setAll("error-label", "error-message");
-                    return;
-                }
-
-                Expense expense;
-                if (recurringCheckBox.isSelected()) {
-                    RecurrenceType frequency = frequencyCombo.getValue();
-                    if (frequency == null) {
-                        errorLabel.setText("Please select a recurrence frequency");
-                        errorLabel.getStyleClass().setAll("error-label", "error-message");
-                        return;
-                    }
-                    LocalDate endDate = endDatePicker.getValue();
-                    expense = new RecurringExpense(amount, category, date, description.isEmpty() ? "" : description, frequency, endDate);
-                } else {
-                    expense = new Expense(amount, category, date, description.isEmpty() ? "" : description);
-                }
-
-                manager.addExpense(expense);
-                try {
-                    storage.saveExpenses(manager.getExpenses());
-                    manager.generateRecurringExpenses(LocalDate.now()); // Generate recurring expenses up to today
-                    storage.saveExpenses(manager.getExpenses()); // Save again with generated expenses
-                } catch (Exception ex) {
-                    manager.getExpenses().remove(expense);
-                    errorLabel.setText("Failed to save expense: " + ex.getMessage());
-                    errorLabel.getStyleClass().setAll("error-label", "error-message");
-                    return;
-                }
-                refreshTable();
-
-                amountField.clear();
-                categoryCombo.setValue(null);
-                datePicker.setValue(LocalDate.now());
-                descriptionField.clear();
-                recurringCheckBox.setSelected(false);
-                frequencyCombo.setValue(null);
-                endDatePicker.setValue(null);
-                errorLabel.setText("Expense added successfully!");
-                errorLabel.getStyleClass().setAll("error-label", "success-message");
-            } catch (NumberFormatException ex) {
-                errorLabel.setText("Invalid amount: Please enter a valid number (e.g., 10.99)");
-                errorLabel.getStyleClass().setAll("error-label", "error-message");
-            } catch (Exception ex) {
-                errorLabel.setText("Error: " + ex.getMessage());
-                errorLabel.getStyleClass().setAll("error-label", "error-message");
-            }
-        });
-
-        deleteButton.setOnAction(e -> {
-            Expense selectedExpense = expenseTable.getSelectionModel().getSelectedItem();
-            if (selectedExpense == null) {
-                errorLabel.setText("Please select an expense to delete");
-                errorLabel.getStyleClass().setAll("error-label", "error-message");
-                return;
-            }
-
-            Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
-            confirmation.setTitle("Confirm Deletion");
-            confirmation.setHeaderText(null);
-            confirmation.setContentText("Are you sure you want to delete this expense?");
-
-            Optional<ButtonType> result = confirmation.showAndWait();
-            if (result.isPresent() && result.get() == ButtonType.OK) {
-                manager.getExpenses().remove(selectedExpense);
-                try {
-                    storage.saveExpenses(manager.getExpenses());
-                    refreshTable();
-                    errorLabel.setText("Expense deleted successfully!");
-                    errorLabel.getStyleClass().setAll("error-label", "success-message");
-                } catch (Exception ex) {
-                    manager.addExpense(selectedExpense);
-                    errorLabel.setText("Error deleting expense: " + ex.getMessage());
-                    errorLabel.getStyleClass().setAll("error-label", "error-message");
-                }
-            }
-        });
-
-        addCategoryButton.setOnAction(e -> {
-            TextInputDialog dialog = new TextInputDialog();
-            dialog.setTitle("Add Category");
-            dialog.setHeaderText("Enter a new category:");
-            dialog.setContentText("Category:");
-            dialog.getDialogPane().getStyleClass().add("dialog-pane");
-
-            dialog.showAndWait().ifPresent(category -> {
-                category = category.trim();
-                if (!category.isEmpty() && !categories.contains(category)) {
-                    categories.add(category);
-                    categoryCombo.setValue(category);
-                    try {
-                        storage.saveCategories(categories);
-                        errorLabel.setText("");
-                        errorLabel.getStyleClass().setAll("error-label");
-                    } catch (Exception ex) {
-                        categories.remove(category);
-                        errorLabel.setText("Error saving categories: " + ex.getMessage());
-                        errorLabel.getStyleClass().setAll("error-label", "error-message");
-                    }
-                } else if (categories.contains(category)) {
-                    errorLabel.setText("Category already exists");
-                    errorLabel.getStyleClass().setAll("error-label", "error-message");
-                } else {
-                    errorLabel.setText("Category cannot be empty");
-                    errorLabel.getStyleClass().setAll("error-label", "error-message");
-                }
-            });
-        });
-
-        removeCategoryButton.setOnAction(e -> {
-            String selectedCategory = categoryCombo.getValue();
-            if (selectedCategory == null) {
-                errorLabel.setText("Please select a category to remove");
-                errorLabel.getStyleClass().setAll("error-label", "error-message");
-                return;
-            }
-
-            boolean isUsed = manager.getExpenses().stream()
-                .anyMatch(expense -> expense.getCategory().equals(selectedCategory));
-            if (isUsed) {
-                errorLabel.setText("Cannot remove category as it is used in existing expenses");
-                errorLabel.getStyleClass().setAll("error-label", "error-message");
-                return;
-            }
-
-            categories.remove(selectedCategory);
-            if (categoryCombo.getItems().isEmpty()) {
-                categoryCombo.setValue(null);
-            } else if (categoryCombo.getSelectionModel().getSelectedIndex() >= categoryCombo.getItems().size()) {
-                categoryCombo.getSelectionModel().selectLast();
-            }
-
-            try {
-                storage.saveCategories(categories);
-                errorLabel.setText("");
-                errorLabel.getStyleClass().setAll("error-label");
-            } catch (Exception ex) {
-                categories.add(selectedCategory);
-                errorLabel.setText("Error saving categories: " + ex.getMessage());
-                errorLabel.getStyleClass().setAll("error-label", "error-message");
-            }
-        });
-
-        // Initial refresh
-        refreshTable();
-
-        // Set minimum window size
-        stage.setMinWidth(800);
-        stage.setMinHeight(600);
-        stage.setTitle("Expense Tracker");
-        stage.setScene(scene);
-        stage.show();
-    }
-
-    private void updateIncomeField() {
-        Integer selectedYear = yearCombo.getValue();
-        Month selectedMonth = monthCombo.getValue();
-        if (selectedYear == null || selectedMonth == null) {
-            incomeField.setText("");
-            return;
-        }
-        YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
-        Double income = incomes.get(selectedYearMonth);
-        incomeField.setText(income != null ? String.format("%.2f", income) : "");
     }
 
     private void refreshTable() {
         try {
+            // Reload expenses from storage
+            List<Expense> loadedExpenses = storage.loadExpenses();
+            if (!loadedExpenses.isEmpty()) { // Only clear if we loaded valid data
+                manager.getExpenses().clear();
+                manager.getExpenses().addAll(loadedExpenses);
+            } else {
+                System.out.println("No expenses loaded from file, keeping existing data");
+            }
+            
+            // Generate recurring expenses and save
+            manager.generateRecurringExpenses(LocalDate.now());
+            storage.saveExpenses(manager.getExpenses()); // Save after generating recurring expenses
+            
+            // Update the observable list
             expenseList.setAll(manager.getExpenses());
+            
+            // Force refresh of the filtered data
+            filteredData.setPredicate(p -> true);
+            
             updateYearList();
             updateTotalExpenses();
             updateIncomeField();
-        } catch (Exception e) {
-            errorLabel.setText("Error refreshing table: " + e.getMessage());
-            errorLabel.getStyleClass().setAll("error-label", "error-message");
+            
+            System.out.println("Refreshed table with " + manager.getExpenses().size() + " expenses");
+        } catch (IOException e) {
+            showError("Failed to refresh data: " + e.getMessage());
         }
     }
 
     private void updateYearList() {
-        Set<Integer> years = new TreeSet<>();
-        for (Expense expense : expenseList) {
-            years.add(expense.getDate().getYear());
-        }
-
-        Integer selectedYear = yearCombo.getValue();
-        Month selectedMonth = monthCombo.getValue();
-        yearList.setAll(years);
-
-        if (selectedYear != null && yearList.contains(selectedYear)) {
-            yearCombo.setValue(selectedYear);
-        } else {
-            int currentYear = LocalDate.now().getYear();
-            if (yearList.contains(currentYear)) {
-                yearCombo.setValue(currentYear);
-            } else if (!yearList.isEmpty()) {
-                yearCombo.setValue(yearList.get(yearList.size() - 1));
-            }
-        }
-
-        if (yearCombo.getValue() != null && selectedMonth == null) {
+        Set<Integer> years = manager.getExpenses().stream()
+            .map(e -> e.getDate().getYear())
+            .collect(Collectors.toSet());
+        
+        yearList.setAll(years.stream().sorted().collect(Collectors.toList()));
+        
+        if (!yearList.isEmpty() && yearCombo.getValue() == null) {
+            yearCombo.setValue(Collections.max(yearList));
             monthCombo.setValue(Month.of(LocalDate.now().getMonthValue()));
         }
     }
 
-    private void updateTotalExpenses() {
-        Integer selectedYear = yearCombo.getValue();
-        Month selectedMonth = monthCombo.getValue();
-        String chartPeriod = chartPeriodCombo.getValue();
+    private void updateIncomeField() {
+        Integer year = yearCombo.getValue();
+        Month month = monthCombo.getValue();
+        if (year == null || month == null) {
+            incomeField.setText("");
+            return;
+        }
+        
+        YearMonth ym = YearMonth.of(year, month);
+        Double income = incomes.get(ym);
+        incomeField.setText(income != null ? String.format("%.2f", income) : "");
+    }
 
-        if (selectedYear == null || selectedMonth == null) {
-            totalLabel.setText("Total Expenses: 0.00");
-            moneySavedLabel.setText("Money Saved: 0.00");
+    private void updateTotalExpenses() {
+        Integer year = yearCombo.getValue();
+        Month month = monthCombo.getValue();
+        String chartPeriod = chartPeriodCombo.getValue();
+        String searchText = searchField.getText().toLowerCase();
+
+        if (year == null || month == null) {
+            totalLabel.setText("Total Expenses: $0.00");
+            moneySavedLabel.setText("Money Saved: $0.00");
             categoryTotals.clear();
-            categoryChart.setData(FXCollections.emptyObservableList());
+            categoryChart.getData().clear();
             monthlyTrendChart.getData().clear();
             return;
         }
 
-        YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
+        YearMonth selectedYm = YearMonth.of(year, month);
 
-        // Compute filtered expenses
-        List<Expense> filteredExpenses = expenseList.stream()
+        // Filter expenses
+        List<Expense> filteredExpenses = manager.getExpenses().stream()
             .filter(expense -> {
+                // Filter by period
                 switch (chartPeriod) {
                     case "By Year":
-                        return expense.getDate().getYear() == selectedYear;
+                        return expense.getDate().getYear() == year;
                     case "By Month":
-                        return YearMonth.from(expense.getDate()).equals(selectedYearMonth);
-                    default:
+                        return YearMonth.from(expense.getDate()).equals(selectedYm);
+                    default: // "All Time"
                         return true;
                 }
             })
             .filter(expense -> {
-                String filter = searchField.getText();
-                if (filter == null || filter.isEmpty()) return true;
-                String lowerCaseFilter = filter.toLowerCase();
-                return String.valueOf(expense.getAmount()).contains(lowerCaseFilter) ||
-                       expense.getCategory().toLowerCase().contains(lowerCaseFilter) ||
-                       expense.getDate().toString().contains(lowerCaseFilter) ||
-                       (expense.getDescription() != null && expense.getDescription().toLowerCase().contains(lowerCaseFilter));
+                // Filter by search text
+                if (searchText.isEmpty()) return true;
+                return String.valueOf(expense.getAmount()).contains(searchText) ||
+                       expense.getCategory().toLowerCase().contains(searchText) ||
+                       expense.getDate().toString().contains(searchText) ||
+                       (expense.getDescription() != null && 
+                        expense.getDescription().toLowerCase().contains(searchText));
             })
             .collect(Collectors.toList());
 
-        // Update expense table
+        // Update filtered data
         filteredData.setPredicate(expense -> filteredExpenses.contains(expense));
 
-        // Calculate total
-        double total = filteredExpenses.stream().mapToDouble(Expense::getAmount).sum();
-        totalLabel.setText(String.format("Total Expenses for %s %d: %.2f",
-            selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, total));
+        // Calculate totals
+        double total = filteredExpenses.stream()
+            .mapToDouble(Expense::getAmount)
+            .sum();
 
-        double income = incomes.getOrDefault(selectedYearMonth, 0.0);
-        double moneySaved = income - total;
-        moneySavedLabel.setText(String.format("Money Saved: %.2f", Math.max(0, moneySaved)));
+        double income = incomes.getOrDefault(selectedYm, 0.0);
+        double saved = income - total;
 
-        // Update category totals table
+        totalLabel.setText(String.format("Total Expenses for %s %d: $%.2f",
+            month.getDisplayName(TextStyle.FULL, Locale.ENGLISH), year, total));
+        moneySavedLabel.setText(String.format("Money Saved: $%.2f", Math.max(0, saved)));
+
+        // Update category totals
         Map<String, Double> categoryMap = filteredExpenses.stream()
             .collect(Collectors.groupingBy(
                 Expense::getCategory,
                 Collectors.summingDouble(Expense::getAmount)
             ));
 
-        categoryTotals.setAll(categoryMap.entrySet().stream()
-            .map(entry -> new CategoryTotal(entry.getKey(), entry.getValue()))
-            .sorted(Comparator.comparing(CategoryTotal::getCategory))
-            .collect(Collectors.toList()));
+        categoryTotals.setAll(
+            categoryMap.entrySet().stream()
+                .map(entry -> new CategoryTotal(entry.getKey(), entry.getValue()))
+                .sorted(Comparator.comparing(CategoryTotal::getCategory))
+                .collect(Collectors.toList())
+        );
 
-        // Update pie chart data with custom colors
-        ObservableList<PieChart.Data> pieChartData = FXCollections.observableArrayList();
+        // Update pie chart
+        ObservableList<PieChart.Data> pieData = FXCollections.observableArrayList();
         String[] colors = {"#FF6F61", "#6B5B95", "#88B04B", "#F7B731", "#4ECDC4"};
-        List<Map.Entry<String, Double>> sortedEntries = categoryMap.entrySet().stream()
+        
+        List<Map.Entry<String, Double>> sortedCategories = categoryMap.entrySet().stream()
             .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
             .collect(Collectors.toList());
 
-        for (int i = 0; i < sortedEntries.size(); i++) {
-            Map.Entry<String, Double> entry = sortedEntries.get(i);
-            final int colorIndex = i % colors.length;
+        for (int i = 0; i < sortedCategories.size(); i++) {
+            Map.Entry<String, Double> entry = sortedCategories.get(i);
             PieChart.Data data = new PieChart.Data(
-                entry.getKey() + " (" + String.format("%.2f", entry.getValue()) + ")",
+                entry.getKey() + " ($" + String.format("%.2f", entry.getValue()) + ")",
                 entry.getValue()
             );
+            
+            final int colorIndex = i % colors.length;
             data.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
                     newNode.setStyle("-fx-pie-color: " + colors[colorIndex] + ";");
                 }
             });
-            pieChartData.add(data);
+            pieData.add(data);
         }
-        categoryChart.setData(pieChartData);
+        categoryChart.setData(pieData);
 
         // Update monthly trend chart
         monthlyTrendChart.getData().clear();
         XYChart.Series<String, Number> series = new XYChart.Series<>();
-        Map<YearMonth, Double> monthlyTotals = expenseList.stream()
+        
+        Map<YearMonth, Double> monthlyTotals = manager.getExpenses().stream()
             .collect(Collectors.groupingBy(
                 expense -> YearMonth.from(expense.getDate()),
-                Collectors.summingDouble(Expense::getAmount))
-            );
-
+                Collectors.summingDouble(Expense::getAmount)
+            ));
+        
         monthlyTotals.entrySet().stream()
             .sorted(Map.Entry.comparingByKey())
             .forEach(entry -> {
@@ -862,11 +781,36 @@ public class ExpenseTrackerApp extends Application {
                 });
                 series.getData().add(data);
             });
-
+        
         monthlyTrendChart.getData().add(series);
     }
 
-    // Helper methods for creating styled controls
+    private void exportToExcel() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Save Expenses");
+        fileChooser.getExtensionFilters().add(
+            new FileChooser.ExtensionFilter("Excel Files", "*.xlsx")
+        );
+        fileChooser.setInitialFileName("expenses.xlsx");
+        
+        File file = fileChooser.showSaveDialog(null);
+        if (file != null) {
+            try {
+                storage.saveExpenses(manager.getExpenses(), file.getAbsolutePath());
+                showSuccess("Expenses exported successfully to: " + file.getAbsolutePath());
+            } catch (IOException e) {
+                showError("Failed to export expenses: " + e.getMessage());
+            }
+        }
+    }
+
+    // Helper methods
+    private Label createFormLabel(String text) {
+        Label label = new Label(text);
+        label.getStyleClass().add("form-label");
+        return label;
+    }
+
     private TextField createStyledTextField(String prompt) {
         TextField field = new TextField();
         field.setPromptText(prompt);
@@ -902,18 +846,14 @@ public class ExpenseTrackerApp extends Application {
         return button;
     }
 
-    private <S, T> TableColumn<S, T> createStyledTableColumn(String title, String property, Pos alignment) {
-        TableColumn<S, T> column = new TableColumn<>(title);
-        column.setCellValueFactory(new PropertyValueFactory<>(property));
-        column.setCellFactory(tc -> new TableCell<S, T>() {
-            @Override
-            protected void updateItem(T item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? null : item.toString());
-                setAlignment(alignment);
-            }
-        });
-        return column;
+    private void showError(String message) {
+        errorLabel.setText(message);
+        errorLabel.getStyleClass().setAll("error-label", "error-message");
+    }
+
+    private void showSuccess(String message) {
+        errorLabel.setText(message);
+        errorLabel.getStyleClass().setAll("error-label", "success-message");
     }
 
     public static void main(String[] args) {

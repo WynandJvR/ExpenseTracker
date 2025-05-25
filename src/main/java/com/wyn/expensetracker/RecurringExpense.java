@@ -4,16 +4,16 @@ import java.time.LocalDate;
 
 public class RecurringExpense extends Expense {
     private RecurrenceType frequency;
-    private LocalDate endDate; // Null if no end date
+    private LocalDate endDate;
 
     public RecurringExpense(double amount, String category, LocalDate date, String description,
                            RecurrenceType frequency, LocalDate endDate) {
         super(amount, category, date, description);
+        if (frequency == null) throw new IllegalArgumentException("Frequency cannot be null");
         this.frequency = frequency;
         this.endDate = endDate;
     }
 
-    // Getters
     public RecurrenceType getFrequency() {
         return frequency;
     }
