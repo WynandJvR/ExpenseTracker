@@ -222,13 +222,18 @@
     -fx-background-color: #D0D0D0;
 }
 
-.table-view .table-row-cell:selected {
-    -fx-background-color: #5C6BC0;
-    -fx-text-fill: #FFFFFF;
-}
-
 .table-view .table-row-cell:hover {
     -fx-background-color: #B0BEC5;
+}
+
+.table-view .table-row-cell:selected {
+    -fx-background-color: #5C6BC0; /* Old highlight method */
+    -fx-text-fill: #FFFFFF; /* White text for row */
+}
+
+.table-view .table-row-cell:selected .table-cell {
+    -fx-background-color: transparent; /* Ensure cell background doesn’t obscure highlight */
+    -fx-text-fill: #FFFFFF; /* Match row’s text-fill for consistency */
 }
 
 /* Charts */

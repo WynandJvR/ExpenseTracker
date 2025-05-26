@@ -2,7 +2,6 @@ package com.wyn.expensetracker;
 
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
-
 import java.io.*;
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -44,7 +43,6 @@ public class FileStorage {
         try (PrintWriter out = new PrintWriter(new FileWriter(EXPENSES_FILE))) {
             for (Expense expense : expenses) {
                 if (expense instanceof RecurringExpense recurringExpense) {
-                    // Save recurring expenses with all fields properly escaped
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
@@ -53,7 +51,6 @@ public class FileStorage {
                             recurringExpense.getFrequency() + "," +
                             (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : ""));
                 } else {
-                    // Save regular expenses
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
@@ -76,25 +73,22 @@ public class FileStorage {
             while ((line = reader.readLine()) != null) {
                 lineNumber++;
                 try {
-                    String[] parts = splitCsv(line);
-                    if (parts.length >= 5) {
-                        double amount = Double.parseDouble(parts[0]);
+                    List<String> parts = parseCsvLine(line);
+                    if (parts.size() >= 5) {
+                        double amount = Double.parseDouble(parts.get(0));
                         if (amount <= 0) {
                             System.err.println("Invalid amount at line " + lineNumber + ": " + line);
                             continue;
                         }
-                        String category = unescapeCsv(parts[1]);
-                        LocalDate date = LocalDate.parse(parts[2]);
-                        String description = unescapeCsv(parts[3]);
-                        String type = parts[4];
-                        
-                        if ("RECURRING".equals(type) && parts.length >= 7) {
-                            // Recurring expense
-                            RecurrenceType frequency = RecurrenceType.valueOf(parts[5]);
-                            LocalDate endDate = parts[6].isEmpty() ? null : LocalDate.parse(parts[6]);
+                        String category = unescapeCsv(parts.get(1));
+                        LocalDate date = LocalDate.parse(parts.get(2));
+                        String description = unescapeCsv(parts.get(3));
+                        String type = parts.get(4);
+                        if ("RECURRING".equals(type) && parts.size() >= 7) {
+                            RecurrenceType frequency = RecurrenceType.valueOf(parts.get(5));
+                            LocalDate endDate = parts.get(6).isEmpty() ? null : LocalDate.parse(parts.get(6));
                             expenses.add(new RecurringExpense(amount, category, date, description, frequency, endDate));
                         } else if ("REGULAR".equals(type)) {
-                            // Regular expense
                             expenses.add(new Expense(amount, category, date, description));
                         } else {
                             System.err.println("Unknown expense type at line " + lineNumber + ": " + line);
@@ -155,10 +149,10 @@ public class FileStorage {
             while ((line = reader.readLine()) != null) {
                 lineNumber++;
                 try {
-                    String[] parts = splitCsv(line);
-                    if (parts.length == 2) {
-                        YearMonth yearMonth = YearMonth.parse(parts[0]);
-                        double income = Double.parseDouble(parts[1]);
+                    List<String> parts = parseCsvLine(line);
+                    if (parts.size() == 2) {
+                        YearMonth yearMonth = YearMonth.parse(parts.get(0));
+                        double income = Double.parseDouble(parts.get(1));
                         if (income < 0) {
                             System.err.println("Invalid income at line " + lineNumber + ": " + line);
                             continue;
@@ -191,20 +185,17 @@ public class FileStorage {
         return value;
     }
 
-    private String[] splitCsv(String line) {
+    private List<String> parseCsvLine(String line) {
         List<String> parts = new ArrayList<>();
         boolean inQuotes = false;
         StringBuilder field = new StringBuilder();
-        
         for (int i = 0; i < line.length(); i++) {
             char c = line.charAt(i);
             if (c == '"') {
                 if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
-                    // Double quote - add a single quote to the field
                     field.append('"');
-                    i++; // Skip the next quote
+                    i++;
                 } else {
-                    // Start or end of quoted field
                     inQuotes = !inQuotes;
                 }
             } else if (c == ',' && !inQuotes) {
@@ -215,10 +206,10 @@ public class FileStorage {
             }
         }
         parts.add(field.toString());
-        return parts.toArray(new String[0]);
+        return parts;
     }
-	
-	public ExcelStorage getExcelStorage() {
-    return excelStorage;
-}
+
+    public ExcelStorage getExcelStorage() {
+        return excelStorage;
+    }
 }
