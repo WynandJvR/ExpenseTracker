@@ -220,12 +220,12 @@ public class ExpenseTrackerApp extends Application {
         recurringTable.getStyleClass().add("table-view");
         recurringTable.setPrefHeight(150);
 
-        TableColumn<RecurringExpense, Double> recurringAmountColumn = createStyledTableColumn("Amount", "amount", Pos.CENTER_RIGHT);
-        TableColumn<RecurringExpense, String> recurringCategoryColumn = createStyledTableColumn("Category", "category", Pos.CENTER_LEFT);
-        TableColumn<RecurringExpense, LocalDate> recurringDateColumn = createStyledTableColumn("Start Date", "date", Pos.CENTER);
-        TableColumn<RecurringExpense, String> recurringDescColumn = createStyledTableColumn("Description", "description", Pos.CENTER_LEFT);
-        TableColumn<RecurringExpense, RecurrenceType> recurringFreqColumn = createStyledTableColumn("Frequency", "frequency", Pos.CENTER);
-        TableColumn<RecurringExpense, LocalDate> recurringEndDateColumn = createStyledTableColumn("End Date", "endDate", Pos.CENTER);
+        TableColumn<RecurringExpense, Double> recurringAmountColumn = createTableColumn("Amount", "amount", Pos.CENTER_RIGHT);
+        TableColumn<RecurringExpense, String> recurringCategoryColumn = createTableColumn("Category", "category", Pos.CENTER_LEFT);
+        TableColumn<RecurringExpense, LocalDate> recurringDateColumn = createTableColumn("Start Date", "date", Pos.CENTER);
+        TableColumn<RecurringExpense, String> recurringDescColumn = createTableColumn("Description", "description", Pos.CENTER_LEFT);
+        TableColumn<RecurringExpense, RecurrenceType> recurringFreqColumn = createTableColumn("Frequency", "frequency", Pos.CENTER);
+        TableColumn<RecurringExpense, LocalDate> recurringEndDateColumn = createTableColumn("End Date", "endDate", Pos.CENTER);
 
         @SuppressWarnings("unchecked")
         TableColumn<RecurringExpense, ?>[] recurringColumns = new TableColumn[]{
@@ -378,10 +378,10 @@ public class ExpenseTrackerApp extends Application {
         expenseTable.getStyleClass().add("table-view");
         expenseTable.setPrefHeight(400);
 
-        TableColumn<Expense, Double> amountColumn = createStyledTableColumn("Amount", "amount", Pos.CENTER_RIGHT);
-        TableColumn<Expense, String> expenseCategoryColumn = createStyledTableColumn("Category", "category", Pos.CENTER_LEFT);
-        TableColumn<Expense, LocalDate> dateColumn = createStyledTableColumn("Date", "date", Pos.CENTER);
-        TableColumn<Expense, String> descriptionColumn = createStyledTableColumn("Description", "description", Pos.CENTER_LEFT);
+        TableColumn<Expense, Double> amountColumn = createTableColumn("Amount", "amount", Pos.CENTER_RIGHT);
+        TableColumn<Expense, String> expenseCategoryColumn = createTableColumn("Category", "category", Pos.CENTER_LEFT);
+        TableColumn<Expense, LocalDate> dateColumn = createTableColumn("Date", "date", Pos.CENTER);
+        TableColumn<Expense, String> descriptionColumn = createTableColumn("Description", "description", Pos.CENTER_LEFT);
 
         @SuppressWarnings("unchecked")
         TableColumn<Expense, ?>[] expenseColumns = new TableColumn[]{amountColumn, expenseCategoryColumn, dateColumn, descriptionColumn};
@@ -544,7 +544,7 @@ public class ExpenseTrackerApp extends Application {
         try {
             scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
         } catch (Exception e) {
-            System.err.println("Failed to load styles.css: " + e.getMessage());
+            System.err.println("Failed to load stylesheet: " + e.getMessage());
             errorLabel.setText("Failed to load stylesheet: " + e.getMessage());
         }
 
@@ -556,11 +556,13 @@ public class ExpenseTrackerApp extends Application {
 
         yearCombo.valueProperty().addListener((observable, oldValue, newValue) -> {
             updateTotalExpenses();
+            updateCharts();
             updateIncomeField();
         });
 
         monthCombo.valueProperty().addListener((observable, oldValue, newValue) -> {
             updateTotalExpenses();
+            updateCharts();
             updateIncomeField();
         });
 
@@ -592,7 +594,7 @@ public class ExpenseTrackerApp extends Application {
         });
 
         chartPeriodCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
-            updateTotalExpenses();
+            updateCharts();
         });
 
         addButton.setDefaultButton(true);
@@ -774,7 +776,7 @@ public class ExpenseTrackerApp extends Application {
                 }
                 LocalDate date = editRecurringDatePicker.getValue();
                 if (date == null) {
-                    errorLabel.setText("Please select a start date");
+                    errorLabel.setText("Please select a date");
                     errorLabel.getStyleClass().setAll("error-label", "error-message");
                     return;
                 }
@@ -930,6 +932,7 @@ public class ExpenseTrackerApp extends Application {
             recurringList.setAll(manager.getBaseRecurringExpenses());
             updateYearList();
             updateTotalExpenses();
+            updateCharts();
             updateIncomeField();
             updateUndoRedoButtons();
         } catch (Exception e) {
@@ -957,11 +960,10 @@ public class ExpenseTrackerApp extends Application {
         for (Expense expense : expenseList) {
             years.add(expense.getDate().getYear());
         }
+        yearList.setAll(years);
 
         Integer selectedYear = yearCombo.getValue();
         Month selectedMonth = monthCombo.getValue();
-        yearList.setAll(years);
-
         if (selectedYear != null && yearList.contains(selectedYear)) {
             yearCombo.setValue(selectedYear);
         } else {
@@ -981,30 +983,19 @@ public class ExpenseTrackerApp extends Application {
     private void updateTotalExpenses() {
         Integer selectedYear = yearCombo.getValue();
         Month selectedMonth = monthCombo.getValue();
-        String chartPeriod = chartPeriodCombo.getValue();
 
         if (selectedYear == null || selectedMonth == null) {
             totalLabel.setText("Total Expenses: 0.00");
             moneySavedLabel.setText("Money Saved: 0.00");
+            filteredData.setPredicate(e -> false);
             categoryTotals.clear();
-            categoryChart.setData(FXCollections.emptyObservableList());
-            monthlyTrendChart.getData().clear();
             return;
         }
 
         YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
 
         List<Expense> filteredExpenses = expenseList.stream()
-            .filter(expense -> {
-                switch (chartPeriod) {
-                    case "By Year":
-                        return expense.getDate().getYear() == selectedYear;
-                    case "By Month":
-                        return YearMonth.from(expense.getDate()).equals(selectedYearMonth);
-                    default:
-                        return true;
-                }
-            })
+            .filter(expense -> YearMonth.from(expense.getDate()).equals(selectedYearMonth))
             .filter(expense -> {
                 String filter = searchField.getText();
                 if (filter == null || filter.isEmpty()) return true;
@@ -1018,9 +1009,11 @@ public class ExpenseTrackerApp extends Application {
 
         filteredData.setPredicate(expense -> filteredExpenses.contains(expense));
 
-        double total = filteredExpenses.stream().mapToDouble(Expense::getAmount).sum();
+        double total = filteredExpenses.stream()
+            .mapToDouble(Expense::getAmount)
+            .sum();
         totalLabel.setText(String.format("Total Expenses for %s %d: %.2f",
-            selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, total));
+                selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, total));
 
         double income = incomes.getOrDefault(selectedYearMonth, 0.0);
         double moneySaved = income - total;
@@ -1029,13 +1022,46 @@ public class ExpenseTrackerApp extends Application {
         Map<String, Double> categoryMap = filteredExpenses.stream()
             .collect(Collectors.groupingBy(
                 Expense::getCategory,
-                Collectors.summingDouble(Expense::getAmount)
-            ));
+                Collectors.summingDouble(Expense::getAmount))
+            );
 
         categoryTotals.setAll(categoryMap.entrySet().stream()
             .map(entry -> new CategoryTotal(entry.getKey(), entry.getValue()))
             .sorted(Comparator.comparing(CategoryTotal::getCategory))
             .collect(Collectors.toList()));
+    }
+
+    private void updateCharts() {
+        Integer selectedYear = yearCombo.getValue();
+        Month selectedMonth = monthCombo.getValue();
+        String chartPeriod = chartPeriodCombo.getValue();
+
+        if (selectedYear == null || selectedMonth == null) {
+            categoryChart.setData(FXCollections.observableArrayList());
+            monthlyTrendChart.getData().clear();
+            return;
+        }
+
+        YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
+
+        List<Expense> chartExpenses = expenseList.stream()
+            .filter(expense -> {
+                switch (chartPeriod) {
+                    case "By Year":
+                        return expense.getDate().getYear() == selectedYear;
+                    case "By Month":
+                        return YearMonth.from(expense.getDate()).equals(selectedYearMonth);
+                    default: // All Time
+                        return true;
+                }
+            })
+            .collect(Collectors.toList());
+
+        // Update PieChart
+        Map<String, Double> categoryMap = chartExpenses.stream()
+            .collect(Collectors.groupingBy(
+                Expense::getCategory,
+                Collectors.summingDouble(Expense::getAmount)));
 
         ObservableList<PieChart.Data> pieChartData = FXCollections.observableArrayList();
         String[] colors = {"#FF6F61", "#6B5B95", "#88B04B", "#F7B731", "#4ECDC4"};
@@ -1048,8 +1074,7 @@ public class ExpenseTrackerApp extends Application {
             final int colorIndex = i % colors.length;
             PieChart.Data data = new PieChart.Data(
                 entry.getKey() + " (" + String.format("%.2f", entry.getValue()) + ")",
-                entry.getValue()
-            );
+                entry.getValue());
             data.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
                     newNode.setStyle("-fx-pie-color: " + colors[colorIndex] + ";");
@@ -1059,21 +1084,30 @@ public class ExpenseTrackerApp extends Application {
         }
         categoryChart.setData(pieChartData);
 
+        // Update BarChart
         monthlyTrendChart.getData().clear();
         XYChart.Series<String, Number> series = new XYChart.Series<>();
         Map<YearMonth, Double> monthlyTotals = expenseList.stream()
             .collect(Collectors.groupingBy(
                 expense -> YearMonth.from(expense.getDate()),
-                Collectors.summingDouble(Expense::getAmount))
-            );
+                Collectors.summingDouble(Expense::getAmount)));
 
         monthlyTotals.entrySet().stream()
             .sorted(Map.Entry.comparingByKey())
+            .filter(entry -> {
+                switch (chartPeriod) {
+                    case "By Year":
+                        return entry.getKey().getYear() == selectedYear;
+                    case "By Month":
+                        return entry.getKey().equals(selectedYearMonth);
+                    default: // All Time
+                        return true;
+                }
+            })
             .forEach(entry -> {
                 XYChart.Data<String, Number> data = new XYChart.Data<>(
                     entry.getKey().getMonth().toString() + " " + entry.getKey().getYear(),
-                    entry.getValue()
-                );
+                    entry.getValue());
                 data.nodeProperty().addListener((obs, oldNode, newNode) -> {
                     if (newNode != null) {
                         newNode.setStyle("-fx-bar-fill: #4CAF50;");
@@ -1100,7 +1134,7 @@ public class ExpenseTrackerApp extends Application {
             @Override
             protected void updateItem(T item, boolean empty) {
                 super.updateItem(item, empty);
-                setText(empty ? null : item.toString());
+                setText(empty || item == null ? null : item.toString());
             }
         });
         return combo;
@@ -1120,7 +1154,7 @@ public class ExpenseTrackerApp extends Application {
         return button;
     }
 
-    private <S, T> TableColumn<S, T> createStyledTableColumn(String title, String property, Pos alignment) {
+    private <S, T> TableColumn<S, T> createTableColumn(String title, String property, Pos alignment) {
         TableColumn<S, T> column = new TableColumn<>(title);
         column.setCellValueFactory(new PropertyValueFactory<>(property));
         column.setCellFactory(tc -> new TableCell<S, T>() {
