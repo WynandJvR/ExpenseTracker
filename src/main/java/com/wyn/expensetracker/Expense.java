@@ -7,6 +7,8 @@ public class Expense {
     private String category;
     private LocalDate date;
     private String description;
+    private String recurringId;
+    private RecurringExpense sourceRecurringExpense;
 
     public Expense(double amount, String category, LocalDate date, String description) {
         this.amount = amount;
@@ -15,13 +17,39 @@ public class Expense {
         this.description = description;
     }
 
-    // Getters
-    public double getAmount() { return amount; }
-    public String getCategory() { return category; }
-    public LocalDate getDate() { return date; }
-    public String getDescription() { return description; }
+    public Expense(double amount, String category, LocalDate date, String description, String recurringId, RecurringExpense sourceRecurringExpense) {
+        this(amount, category, date, description);
+        this.recurringId = recurringId;
+        this.sourceRecurringExpense = sourceRecurringExpense;
+    }
 
+    public double getAmount() {
+        return amount;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public LocalDate getDate() {
+        return date;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public String getRecurringId() {
+        return recurringId;
+    }
+
+    public RecurringExpense getSourceRecurringExpense() {
+        return sourceRecurringExpense;
+    }
+
+    @Override
     public String toString() {
-        return String.format("%.2f, %s, %s, %s", amount, category, date, description);
+        return String.format("Expense{amount=%.2f, category='%s', date=%s, description='%s'}", 
+            amount, category, date, description);
     }
 }

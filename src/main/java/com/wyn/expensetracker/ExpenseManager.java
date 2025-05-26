@@ -9,12 +9,14 @@ import java.util.Stack;
 
 public class ExpenseManager {
     private List<Expense> expenses;
-    private Set<String> generatedRecurringIds; // Track generated recurring expenses
+    private List<RecurringExpense> baseRecurringExpenses;
+    private Set<String> generatedRecurringIds;
     private Stack<Command> undoStack;
     private Stack<Command> redoStack;
 
     public ExpenseManager() {
         expenses = new ArrayList<>();
+        baseRecurringExpenses = new ArrayList<>();
         generatedRecurringIds = new HashSet<>();
         undoStack = new Stack<>();
         redoStack = new Stack<>();
@@ -23,7 +25,7 @@ public class ExpenseManager {
     public void executeCommand(Command command) {
         command.execute();
         undoStack.push(command);
-        redoStack.clear(); // Clear redo stack when a new command is executed
+        redoStack.clear();
     }
 
     public void undo() {
@@ -61,10 +63,62 @@ public class ExpenseManager {
             throw new IllegalArgumentException("Category cannot be empty");
         }
         expenses.add(expense);
+        if (expense instanceof RecurringExpense) {
+            baseRecurringExpenses.add((RecurringExpense) expense);
+        }
+    }
+
+    public void updateRecurringExpense(RecurringExpense oldExpense, RecurringExpense newExpense) {
+        int index = baseRecurringExpenses.indexOf(oldExpense);
+        if (index != -1) {
+            baseRecurringExpenses.set(index, newExpense);
+            regenerateExpenses();
+        }
+    }
+
+    public void deleteRecurringExpense(RecurringExpense expense) {
+        baseRecurringExpenses.remove(expense);
+        regenerateExpenses();
     }
 
     public List<Expense> getExpenses() {
         return expenses;
+    }
+
+    public List<RecurringExpense> getBaseRecurringExpenses() {
+        return baseRecurringExpenses;
+    }
+
+    public void generateRecurringExpenses(LocalDate upToDate) {
+        expenses.removeIf(e -> e.getRecurringId() != null && !baseRecurringExpenses.contains(e.getSourceRecurringExpense()));
+        generatedRecurringIds.clear();
+
+        List<Expense> generatedExpenses = new ArrayList<>();
+        for (RecurringExpense recurringExpense : baseRecurringExpenses) {
+            LocalDate currentDate = getNextRecurringDate(recurringExpense);
+            LocalDate endDate = recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : upToDate;
+
+            while (!currentDate.isAfter(endDate) && !currentDate.isAfter(upToDate)) {
+                String recurringId = generateRecurringId(recurringExpense, currentDate);
+
+                if (!generatedRecurringIds.contains(recurringId)) {
+                    Expense generated = new Expense(
+                        recurringExpense.getAmount(),
+                        recurringExpense.getCategory(),
+                        currentDate,
+                        recurringExpense.getDescription(),
+                        recurringId,
+                        recurringExpense
+                    );
+                    generatedExpenses.add(generated);
+                    generatedRecurringIds.add(recurringId);
+                }
+
+                currentDate = getNextRecurringDate(recurringExpense, currentDate);
+            }
+        }
+
+        expenses.addAll(generatedExpenses);
     }
 
     public double getTotalByCategory(String category) {
@@ -77,35 +131,10 @@ public class ExpenseManager {
             .sum();
     }
 
-    // Generate expenses from recurring expenses up to a specified date
-    public void generateRecurringExpenses(LocalDate upToDate) {
-        List<Expense> generatedExpenses = new ArrayList<>();
-        
-        for (Expense expense : new ArrayList<>(expenses)) { // Create copy to avoid concurrent modification
-            if (expense instanceof RecurringExpense recurringExpense) {
-                LocalDate currentDate = getNextRecurringDate(recurringExpense);
-                LocalDate endDate = recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : upToDate;
-                
-                while (!currentDate.isAfter(endDate) && !currentDate.isAfter(upToDate)) {
-                    String recurringId = generateRecurringId(recurringExpense, currentDate);
-                    
-                    // Only add if we haven't generated this specific recurring expense before
-                    if (!generatedRecurringIds.contains(recurringId)) {
-                        generatedExpenses.add(new Expense(
-                            recurringExpense.getAmount(),
-                            recurringExpense.getCategory(),
-                            currentDate,
-                            recurringExpense.getDescription()
-                        ));
-                        generatedRecurringIds.add(recurringId);
-                    }
-                    
-                    currentDate = getNextRecurringDate(recurringExpense, currentDate);
-                }
-            }
-        }
-        
-        expenses.addAll(generatedExpenses);
+    private void regenerateExpenses() {
+        expenses.removeIf(e -> e.getRecurringId() != null);
+        generatedRecurringIds.clear();
+        generateRecurringExpenses(LocalDate.now());
     }
 
     private LocalDate getNextRecurringDate(RecurringExpense expense) {
@@ -122,12 +151,24 @@ public class ExpenseManager {
     }
 
     private String generateRecurringId(RecurringExpense expense, LocalDate date) {
-        return expense.getAmount() + "|" + expense.getCategory() + "|" + 
+        return expense.getAmount() + "|" + expense.getCategory() + "|" +
                expense.getDate() + "|" + expense.getFrequency() + "|" + date;
     }
 
-    // Clear generated recurring IDs when loading expenses (to allow fresh generation)
     public void clearGeneratedRecurringIds() {
         generatedRecurringIds.clear();
+    }
+
+    public void loadExpenses(List<Expense> loadedExpenses) {
+        expenses.clear();
+        baseRecurringExpenses.clear();
+        for (Expense expense : loadedExpenses) {
+            if (expense instanceof RecurringExpense) {
+                baseRecurringExpenses.add((RecurringExpense) expense);
+            } else {
+                expenses.add(expense);
+            }
+        }
+        regenerateExpenses();
     }
 }

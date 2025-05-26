@@ -55,10 +55,19 @@ public class ExpenseTrackerApp extends Application {
     private ComboBox<String> chartPeriodCombo;
     private Button undoButton;
     private Button redoButton;
+    private TableView<RecurringExpense> recurringTable;
+    private ObservableList<RecurringExpense> recurringList;
+    private TextField editRecurringAmountField;
+    private ComboBox<String> editRecurringCategoryCombo;
+    private DatePicker editRecurringDatePicker;
+    private TextField editRecurringDescField;
+    private ComboBox<RecurrenceType> editRecurringFreqCombo;
+    private DatePicker editRecurringEndDatePicker;
+    private Button updateRecurringButton;
+    private RecurringExpense selectedRecurringExpense;
 
     @Override
     public void start(Stage stage) {
-        // Initialize errorLabel
         errorLabel = new Label("");
         errorLabel.getStyleClass().add("error-label");
 
@@ -69,7 +78,6 @@ public class ExpenseTrackerApp extends Application {
             errorLabel.setText("Failed to load icon: " + e.getMessage());
         }
 
-        // Initialize data
         try {
             categories = FXCollections.observableArrayList(storage.loadCategories());
         } catch (Exception e) {
@@ -78,17 +86,16 @@ public class ExpenseTrackerApp extends Application {
         }
 
         try {
-            manager.getExpenses().addAll(storage.loadExpenses());
-            manager.clearGeneratedRecurringIds(); // Clear any previous tracking
-            manager.generateRecurringExpenses(LocalDate.now()); // Generate recurring expenses up to today
+            manager.loadExpenses(storage.loadExpenses());
+            manager.clearGeneratedRecurringIds();
+            manager.generateRecurringExpenses(LocalDate.now());
             System.out.println("Loaded " + manager.getExpenses().size() + " expenses");
             if (manager.getExpenses().isEmpty()) {
-                // Add sample data only if this is the first run
                 if (!new File(storage.getExcelStorage().getLastSavedFilePath()).exists()) {
                     manager.executeCommand(new AddExpenseCommand(manager, new Expense(50.0, "Food", LocalDate.now(), "Groceries")));
                     manager.executeCommand(new AddExpenseCommand(manager, new Expense(30.0, "Transport", LocalDate.now(), "Bus fare")));
                     errorLabel.setText("No expenses found. Added sample expenses.");
-                    storage.saveExpenses(manager.getExpenses()); // Save the sample data
+                    storage.saveExpenses(manager.getExpenses());
                 }
             }
         } catch (Exception e) {
@@ -103,17 +110,14 @@ public class ExpenseTrackerApp extends Application {
             errorLabel.setText("Failed to load incomes: " + e.getMessage());
         }
 
-        // Main container
         BorderPane root = new BorderPane();
         root.getStyleClass().add("root-pane");
 
-        // Left panel - Input Form
         VBox leftPanel = new VBox(15);
         leftPanel.setPadding(new Insets(20));
         leftPanel.getStyleClass().add("left-panel");
         VBox.setVgrow(leftPanel, Priority.ALWAYS);
 
-        // Header
         Label headerLabel = new Label("Expense Tracker");
         headerLabel.getStyleClass().add("header-label");
         headerLabel.setWrapText(true);
@@ -122,41 +126,40 @@ public class ExpenseTrackerApp extends Application {
         headerBox.setPadding(new Insets(0, 0, 20, 0));
         headerBox.setAlignment(Pos.CENTER);
 
-        // Form section
-        VBox formBox = new VBox(15);
-        formBox.getStyleClass().add("panel-box");
+        TabPane tabPane = new TabPane();
+        tabPane.getStyleClass().add("tab-pane");
+
+        Tab expenseTab = new Tab("Expenses");
+        expenseTab.setClosable(false);
+        VBox expenseTabContent = new VBox(15);
+        expenseTabContent.setPadding(new Insets(10));
+        expenseTabContent.getStyleClass().add("panel-box");
 
         Label formTitle = new Label("Add New Expense");
         formTitle.getStyleClass().add("section-title");
 
-        // Amount field
         Label amountLabel = new Label("Amount:");
         amountLabel.getStyleClass().add("form-label");
         TextField amountField = createStyledTextField("e.g., 10.99");
 
-        // Category section
         Label categoryLabel = new Label("Category:");
         categoryLabel.getStyleClass().add("form-label");
         ComboBox<String> categoryCombo = createStyledComboBox("Select or enter category", categories);
 
-        // Category buttons
         HBox categoryButtons = new HBox(10);
         Button addCategoryButton = createStyledButton("Add Category", "primary-button");
         Button removeCategoryButton = createStyledButton("Remove Category", "danger-button");
         categoryButtons.getChildren().addAll(addCategoryButton, removeCategoryButton);
         categoryButtons.setPadding(new Insets(5, 0, 15, 0));
 
-        // Date picker
         Label dateLabel = new Label("Date:");
         dateLabel.getStyleClass().add("form-label");
         DatePicker datePicker = createStyledDatePicker();
 
-        // Description
         Label descLabel = new Label("Description (optional):");
         descLabel.getStyleClass().add("form-label");
         TextField descriptionField = createStyledTextField("Enter description");
 
-        // Recurring expense fields
         Label recurringLabel = new Label("Recurring:");
         recurringLabel.getStyleClass().add("form-label");
         CheckBox recurringCheckBox = new CheckBox("Is Recurring?");
@@ -167,22 +170,20 @@ public class ExpenseTrackerApp extends Application {
         ComboBox<RecurrenceType> frequencyCombo = new ComboBox<>(FXCollections.observableArrayList(RecurrenceType.values()));
         frequencyCombo.setPromptText("Select frequency");
         frequencyCombo.getStyleClass().add("combo-box");
-        frequencyCombo.setDisable(true); // Disabled unless recurring is checked
+        frequencyCombo.setDisable(true);
 
         Label endDateLabel = new Label("End Date (optional):");
         endDateLabel.getStyleClass().add("form-label");
         DatePicker endDatePicker = new DatePicker();
         endDatePicker.setPromptText("Select end date");
         endDatePicker.getStyleClass().add("date-picker");
-        endDatePicker.setDisable(true); // Disabled unless recurring is checked
+        endDatePicker.setDisable(true);
 
-        // Enable/disable recurring fields based on checkbox
         recurringCheckBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
             frequencyCombo.setDisable(!newVal);
             endDatePicker.setDisable(!newVal);
         });
 
-        // Action buttons
         HBox actionButtons = new HBox(10);
         Button addButton = createStyledButton("Add Expense", "success-button");
         Button deleteButton = createStyledButton("Delete Selected", "danger-button");
@@ -192,7 +193,7 @@ public class ExpenseTrackerApp extends Application {
         redoButton.setDisable(true);
         actionButtons.getChildren().addAll(addButton, deleteButton, undoButton, redoButton);
 
-        formBox.getChildren().addAll(
+        expenseTabContent.getChildren().addAll(
             formTitle,
             amountLabel, amountField,
             categoryLabel, categoryCombo, categoryButtons,
@@ -203,30 +204,119 @@ public class ExpenseTrackerApp extends Application {
             endDateLabel, endDatePicker,
             actionButtons
         );
+        expenseTab.setContent(expenseTabContent);
 
-        // Income section
+        Tab recurringTab = new Tab("Recurring Expenses");
+        recurringTab.setClosable(false);
+        VBox recurringTabContent = new VBox(15);
+        recurringTabContent.setPadding(new Insets(10));
+        recurringTabContent.getStyleClass().add("panel-box");
+
+        Label recurringTableTitle = new Label("Manage Recurring Expenses");
+        recurringTableTitle.getStyleClass().add("section-title");
+
+        recurringTable = new TableView<>();
+        recurringTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        recurringTable.getStyleClass().add("table-view");
+        recurringTable.setPrefHeight(150);
+
+        TableColumn<RecurringExpense, Double> recurringAmountColumn = createStyledTableColumn("Amount", "amount", Pos.CENTER_RIGHT);
+        TableColumn<RecurringExpense, String> recurringCategoryColumn = createStyledTableColumn("Category", "category", Pos.CENTER_LEFT);
+        TableColumn<RecurringExpense, LocalDate> recurringDateColumn = createStyledTableColumn("Start Date", "date", Pos.CENTER);
+        TableColumn<RecurringExpense, String> recurringDescColumn = createStyledTableColumn("Description", "description", Pos.CENTER_LEFT);
+        TableColumn<RecurringExpense, RecurrenceType> recurringFreqColumn = createStyledTableColumn("Frequency", "frequency", Pos.CENTER);
+        TableColumn<RecurringExpense, LocalDate> recurringEndDateColumn = createStyledTableColumn("End Date", "endDate", Pos.CENTER);
+
+        @SuppressWarnings("unchecked")
+        TableColumn<RecurringExpense, ?>[] recurringColumns = new TableColumn[]{
+            recurringAmountColumn, recurringCategoryColumn, recurringDateColumn,
+            recurringDescColumn, recurringFreqColumn, recurringEndDateColumn
+        };
+        recurringTable.getColumns().addAll(recurringColumns);
+
+        recurringList = FXCollections.observableArrayList(manager.getBaseRecurringExpenses());
+        recurringTable.setItems(recurringList);
+
+        recurringTable.getSelectionModel().selectedItemProperty().addListener((obs, oldSelection, newSelection) -> {
+            if (newSelection != null) {
+                selectedRecurringExpense = newSelection;
+                editRecurringAmountField.setText(String.valueOf(newSelection.getAmount()));
+                editRecurringCategoryCombo.setValue(newSelection.getCategory());
+                editRecurringDatePicker.setValue(newSelection.getDate());
+                editRecurringDescField.setText(newSelection.getDescription());
+                editRecurringFreqCombo.setValue(newSelection.getFrequency());
+                editRecurringEndDatePicker.setValue(newSelection.getEndDate());
+                updateRecurringButton.setDisable(false);
+            } else {
+                selectedRecurringExpense = null;
+                clearEditRecurringForm();
+                updateRecurringButton.setDisable(true);
+            }
+        });
+
+        Label editRecurringTitle = new Label("Edit Selected Recurring Expense");
+        editRecurringTitle.getStyleClass().add("section-title");
+
+        Label editRecurringAmountLabel = new Label("Amount:");
+        editRecurringAmountLabel.getStyleClass().add("form-label");
+        editRecurringAmountField = createStyledTextField("e.g., 10.99");
+
+        Label editRecurringCategoryLabel = new Label("Category:");
+        editRecurringCategoryLabel.getStyleClass().add("form-label");
+        editRecurringCategoryCombo = createStyledComboBox("Select category", categories);
+
+        Label editRecurringDateLabel = new Label("Start Date:");
+        editRecurringDateLabel.getStyleClass().add("form-label");
+        editRecurringDatePicker = createStyledDatePicker();
+
+        Label editRecurringDescLabel = new Label("Description (optional):");
+        editRecurringDescLabel.getStyleClass().add("form-label");
+        editRecurringDescField = createStyledTextField("Enter description");
+
+        Label editRecurringFreqLabel = new Label("Frequency:");
+        editRecurringFreqLabel.getStyleClass().add("form-label");
+        editRecurringFreqCombo = new ComboBox<>(FXCollections.observableArrayList(RecurrenceType.values()));
+        editRecurringFreqCombo.setPromptText("Select frequency");
+        editRecurringFreqCombo.getStyleClass().add("combo-box");
+
+        Label editRecurringEndDateLabel = new Label("End Date (optional):");
+        editRecurringEndDateLabel.getStyleClass().add("form-label");
+        editRecurringEndDatePicker = new DatePicker();
+        editRecurringEndDatePicker.setPromptText("Select end date");
+        editRecurringEndDatePicker.getStyleClass().add("date-picker");
+
+        HBox recurringActionButtons = new HBox(10);
+        updateRecurringButton = createStyledButton("Update Expense", "success-button");
+        updateRecurringButton.setDisable(true);
+        Button deleteRecurringButton = createStyledButton("Delete Selected", "danger-button");
+        recurringActionButtons.getChildren().addAll(updateRecurringButton, deleteRecurringButton);
+
+        recurringTabContent.getChildren().addAll(
+            recurringTableTitle,
+            recurringTable,
+            editRecurringTitle,
+            editRecurringAmountLabel, editRecurringAmountField,
+            editRecurringCategoryLabel, editRecurringCategoryCombo,
+            editRecurringDateLabel, editRecurringDatePicker,
+            editRecurringDescLabel, editRecurringDescField,
+            editRecurringFreqLabel, editRecurringFreqCombo,
+            editRecurringEndDateLabel, editRecurringEndDatePicker,
+            recurringActionButtons
+        );
+        recurringTab.setContent(recurringTabContent);
+
+        tabPane.getTabs().addAll(expenseTab, recurringTab);
+
         VBox incomeBox = new VBox(15);
         incomeBox.getStyleClass().add("panel-box");
 
         Label incomeTitle = new Label("Income & Savings");
         incomeTitle.getStyleClass().add("section-title");
 
-        // Income input
         Label incomeLabel = new Label("Monthly Income:");
         incomeLabel.getStyleClass().add("form-label");
         incomeField = createStyledTextField("e.g., 5000.00");
 
-        // Year/month selector
-        Label periodLabel = new Label("Select Period:");
-        periodLabel.getStyleClass().add("form-label");
-        HBox selectorBox = new HBox(10);
-        yearList = FXCollections.observableArrayList();
-        yearCombo = createStyledComboBox("Year", yearList);
-        monthList = FXCollections.observableArrayList(Month.values());
-        monthCombo = createStyledComboBox("Month", monthList);
-        selectorBox.getChildren().addAll(yearCombo, monthCombo);
-
-        // Totals display
         VBox totalsBox = new VBox(10);
         totalLabel = new Label("Total Expenses: 0.00");
         totalLabel.getStyleClass().add("total-label");
@@ -237,12 +327,10 @@ public class ExpenseTrackerApp extends Application {
         incomeBox.getChildren().addAll(
             incomeTitle,
             incomeLabel, incomeField,
-            periodLabel, selectorBox,
             new Separator(),
             totalsBox
         );
 
-        // Search section
         VBox searchBox = new VBox(15);
         searchBox.getStyleClass().add("panel-box");
 
@@ -251,7 +339,134 @@ public class ExpenseTrackerApp extends Application {
 
         searchField = createStyledTextField("Search by amount, category, date, or description");
 
-        // Category totals table
+        searchBox.getChildren().addAll(
+            searchTitle,
+            searchField
+        );
+
+        leftPanel.getChildren().addAll(
+            headerBox,
+            tabPane,
+            new Separator(),
+            incomeBox,
+            new Separator(),
+            searchBox,
+            errorLabel
+        );
+
+        VBox rightPanel = new VBox(15);
+        rightPanel.setPadding(new Insets(20));
+        rightPanel.getStyleClass().add("right-panel");
+        VBox.setVgrow(rightPanel, Priority.ALWAYS);
+
+        Label periodLabel = new Label("Select Period:");
+        periodLabel.getStyleClass().add("section-title");
+        HBox selectorBox = new HBox(10);
+        yearList = FXCollections.observableArrayList();
+        yearCombo = createStyledComboBox("Year", yearList);
+        monthList = FXCollections.observableArrayList(Month.values());
+        monthCombo = createStyledComboBox("Month", monthList);
+        selectorBox.getChildren().addAll(yearCombo, monthCombo);
+        HBox periodBox = new HBox(10, periodLabel, selectorBox);
+        periodBox.setAlignment(Pos.CENTER_LEFT);
+
+        Label tableTitle = new Label("Expense Records");
+        tableTitle.getStyleClass().add("section-title");
+
+        expenseTable = new TableView<>();
+        expenseTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        expenseTable.getStyleClass().add("table-view");
+        expenseTable.setPrefHeight(400);
+
+        TableColumn<Expense, Double> amountColumn = createStyledTableColumn("Amount", "amount", Pos.CENTER_RIGHT);
+        TableColumn<Expense, String> expenseCategoryColumn = createStyledTableColumn("Category", "category", Pos.CENTER_LEFT);
+        TableColumn<Expense, LocalDate> dateColumn = createStyledTableColumn("Date", "date", Pos.CENTER);
+        TableColumn<Expense, String> descriptionColumn = createStyledTableColumn("Description", "description", Pos.CENTER_LEFT);
+
+        @SuppressWarnings("unchecked")
+        TableColumn<Expense, ?>[] expenseColumns = new TableColumn[]{amountColumn, expenseCategoryColumn, dateColumn, descriptionColumn};
+        expenseTable.getColumns().addAll(expenseColumns);
+
+        amountColumn.setPrefWidth(100);
+        expenseCategoryColumn.setPrefWidth(150);
+        dateColumn.setPrefWidth(120);
+        descriptionColumn.setPrefWidth(250);
+
+        expenseList = FXCollections.observableArrayList(manager.getExpenses());
+        filteredData = new FilteredList<>(expenseList, p -> true);
+        SortedList<Expense> sortedData = new SortedList<>(filteredData);
+        sortedData.comparatorProperty().bind(expenseTable.comparatorProperty());
+        expenseTable.setItems(sortedData);
+
+        Button exportButton = createStyledButton("Export to Excel", "success-button");
+        exportButton.setOnAction(e -> {
+            try {
+                File defaultFile = new File(System.getProperty("user.home") + File.separator + ".expenseTracker" + File.separator + "expenses.xlsx");
+                String filePath;
+
+                if (!defaultFile.exists()) {
+                    FileChooser fileChooser = new FileChooser();
+                    fileChooser.setTitle("Save Expenses to Excel");
+                    fileChooser.setInitialDirectory(new File(System.getProperty("user.home")));
+                    fileChooser.setInitialFileName("expenses.xlsx");
+                    fileChooser.getExtensionFilters().add(
+                        new FileChooser.ExtensionFilter("Excel Files", "*.xlsx")
+                    );
+                    File selectedFile = fileChooser.showSaveDialog(stage);
+                    if (selectedFile == null) {
+                        errorLabel.setText("Export cancelled by user");
+                        errorLabel.getStyleClass().setAll("error-label", "error-message");
+                        return;
+                    }
+                    filePath = selectedFile.getAbsolutePath();
+                } else {
+                    filePath = defaultFile.getAbsolutePath();
+                }
+
+                storage.saveExpenses(manager.getExpenses());
+                errorLabel.setText("Expenses exported to Excel successfully at: " + filePath);
+                errorLabel.getStyleClass().setAll("error-label", "success-message");
+            } catch (IOException ex) {
+                errorLabel.setText("Failed to export to Excel: " + ex.getMessage());
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
+            }
+        });
+
+        VBox analyticsBox = new VBox(15);
+        analyticsBox.getStyleClass().add("panel-box");
+
+        Label analyticsTitle = new Label("Expense Analytics");
+        analyticsTitle.getStyleClass().add("section-title");
+
+        HBox chartControls = new HBox(10);
+        Label periodLabelChart = new Label("View by:");
+        periodLabelChart.getStyleClass().add("form-label");
+        chartPeriodCombo = new ComboBox<>(FXCollections.observableArrayList("All Time", "By Year", "By Month"));
+        chartPeriodCombo.setValue("All Time");
+        chartPeriodCombo.getStyleClass().add("combo-box");
+        chartControls.getChildren().addAll(periodLabelChart, chartPeriodCombo);
+
+        categoryChart = new PieChart();
+        categoryChart.setTitle("Expenses by Category");
+        categoryChart.setLegendVisible(true);
+        categoryChart.getStyleClass().add("chart");
+        categoryChart.setPrefHeight(250);
+
+        CategoryAxis xAxis = new CategoryAxis();
+        NumberAxis yAxis = new NumberAxis();
+        monthlyTrendChart = new BarChart<>(xAxis, yAxis);
+        monthlyTrendChart.setTitle("Monthly Trend");
+        monthlyTrendChart.setLegendVisible(false);
+        monthlyTrendChart.getStyleClass().add("chart");
+        monthlyTrendChart.setPrefHeight(250);
+
+        analyticsBox.getChildren().addAll(
+            analyticsTitle,
+            chartControls,
+            categoryChart,
+            monthlyTrendChart
+        );
+
         Label categoryTableTitle = new Label("Expenses by Category");
         categoryTableTitle.getStyleClass().add("table-title");
 
@@ -289,148 +504,20 @@ public class ExpenseTrackerApp extends Application {
         categoryTotals = FXCollections.observableArrayList();
         categoryTable.setItems(categoryTotals);
 
-        searchBox.getChildren().addAll(
-            searchTitle,
-            searchField,
-            new Separator(),
-            categoryTableTitle,
-            categoryTable
-        );
-
-        // Assemble left panel
-        leftPanel.getChildren().addAll(
-            headerBox,
-            formBox,
-            new Separator(),
-            incomeBox,
-            new Separator(),
-            searchBox,
-            errorLabel
-        );
-
-        // Right panel - Expense records and analytics
-        VBox rightPanel = new VBox(15);
-        rightPanel.setPadding(new Insets(20));
-        rightPanel.getStyleClass().add("right-panel");
-        VBox.setVgrow(rightPanel, Priority.ALWAYS);
-
-        // Expense records table
-        Label tableTitle = new Label("Expense Records");
-        tableTitle.getStyleClass().add("section-title");
-
-        expenseTable = new TableView<>();
-        expenseTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        expenseTable.getStyleClass().add("table-view");
-        expenseTable.setPrefHeight(400);
-
-        // Create columns
-        TableColumn<Expense, Double> amountColumn = createStyledTableColumn("Amount", "amount", Pos.CENTER_RIGHT);
-        TableColumn<Expense, String> expenseCategoryColumn = createStyledTableColumn("Category", "category", Pos.CENTER_LEFT);
-        TableColumn<Expense, LocalDate> dateColumn = createStyledTableColumn("Date", "date", Pos.CENTER);
-        TableColumn<Expense, String> descriptionColumn = createStyledTableColumn("Description", "description", Pos.CENTER_LEFT);
-
-        @SuppressWarnings("unchecked")
-        TableColumn<Expense, ?>[] expenseColumns = new TableColumn[]{amountColumn, expenseCategoryColumn, dateColumn, descriptionColumn};
-        expenseTable.getColumns().addAll(expenseColumns);
-
-        // Set column widths
-        amountColumn.setPrefWidth(100);
-        expenseCategoryColumn.setPrefWidth(150);
-        dateColumn.setPrefWidth(120);
-        descriptionColumn.setPrefWidth(250);
-
-        // Initialize expense list and filtered data
-        expenseList = FXCollections.observableArrayList(manager.getExpenses());
-        filteredData = new FilteredList<>(expenseList, p -> true);
-        SortedList<Expense> sortedData = new SortedList<>(filteredData);
-        sortedData.comparatorProperty().bind(expenseTable.comparatorProperty());
-        expenseTable.setItems(sortedData);
-
-        // Export button
-        Button exportButton = createStyledButton("Export to Excel", "success-button");
-        exportButton.setOnAction(e -> {
-            try {
-                File defaultFile = new File(System.getProperty("user.home") + File.separator + ".expenseTracker" + File.separator + "expenses.xlsx");
-                String filePath;
-
-                if (!defaultFile.exists()) {
-                    FileChooser fileChooser = new FileChooser();
-                    fileChooser.setTitle("Save Expenses to Excel");
-                    fileChooser.setInitialDirectory(new File(System.getProperty("user.home")));
-                    fileChooser.setInitialFileName("expenses.xlsx");
-                    fileChooser.getExtensionFilters().add(
-                        new FileChooser.ExtensionFilter("Excel Files", "*.xlsx")
-                    );
-                    File selectedFile = fileChooser.showSaveDialog(stage);
-                    if (selectedFile == null) {
-                        errorLabel.setText("Export cancelled by user");
-                        errorLabel.getStyleClass().setAll("error-label", "error-message");
-                        return;
-                    }
-                    filePath = selectedFile.getAbsolutePath();
-                } else {
-                    filePath = defaultFile.getAbsolutePath();
-                }
-
-                storage.saveExpenses(manager.getExpenses(), filePath);
-                errorLabel.setText("Expenses exported to Excel successfully at: " + filePath);
-                errorLabel.getStyleClass().setAll("error-label", "success-message");
-            } catch (IOException ex) {
-                errorLabel.setText("Failed to export to Excel: " + ex.getMessage());
-                errorLabel.getStyleClass().setAll("error-label", "error-message");
-            }
-        });
-
-        // Analytics section
-        VBox analyticsBox = new VBox(15);
-        analyticsBox.getStyleClass().add("panel-box");
-
-        Label analyticsTitle = new Label("Expense Analytics");
-        analyticsTitle.getStyleClass().add("section-title");
-
-        // Chart period selector
-        HBox chartControls = new HBox(10);
-        Label periodLabelChart = new Label("View by:");
-        periodLabelChart.getStyleClass().add("form-label");
-        chartPeriodCombo = new ComboBox<>(FXCollections.observableArrayList("All Time", "By Year", "By Month"));
-        chartPeriodCombo.setValue("All Time");
-        chartPeriodCombo.getStyleClass().add("combo-box");
-        chartControls.getChildren().addAll(periodLabelChart, chartPeriodCombo);
-
-        // Create charts
-        categoryChart = new PieChart();
-        categoryChart.setTitle("Expenses by Category");
-        categoryChart.setLegendVisible(true);
-        categoryChart.getStyleClass().add("chart");
-        categoryChart.setPrefHeight(250);
-
-        CategoryAxis xAxis = new CategoryAxis();
-        NumberAxis yAxis = new NumberAxis();
-        monthlyTrendChart = new BarChart<>(xAxis, yAxis);
-        monthlyTrendChart.setTitle("Monthly Trend");
-        monthlyTrendChart.setLegendVisible(false);
-        monthlyTrendChart.getStyleClass().add("chart");
-        monthlyTrendChart.setPrefHeight(250);
-
-        // Add charts to analytics box
-        analyticsBox.getChildren().addAll(
-            analyticsTitle,
-            chartControls,
-            categoryChart,
-            monthlyTrendChart
-        );
-
-        // Add all components to right panel
         rightPanel.getChildren().addAll(
+            periodBox,
+            new Separator(),
             tableTitle,
             expenseTable,
             new Separator(),
             exportButton,
             new Separator(),
-            analyticsBox
+            analyticsBox,
+            new Separator(),
+            categoryTableTitle,
+            categoryTable
         );
 
-        // Create scroll panes
         ScrollPane leftScrollPane = new ScrollPane(leftPanel);
         leftScrollPane.setFitToWidth(true);
         leftScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
@@ -441,7 +528,6 @@ public class ExpenseTrackerApp extends Application {
         rightScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
         rightScrollPane.getStyleClass().add("scroll-pane");
 
-        // Set up the main layout with SplitPane
         SplitPane splitPane = new SplitPane();
         splitPane.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
         splitPane.getItems().addAll(leftScrollPane, rightScrollPane);
@@ -450,12 +536,10 @@ public class ExpenseTrackerApp extends Application {
         SplitPane.setResizableWithParent(rightScrollPane, Boolean.TRUE);
         root.setCenter(splitPane);
 
-        // Ensure SplitPane grows with the window
         BorderPane.setAlignment(splitPane, Pos.CENTER);
         splitPane.prefWidthProperty().bind(root.widthProperty());
         splitPane.prefHeightProperty().bind(root.heightProperty());
 
-        // Set up the scene
         Scene scene = new Scene(root, 1200, 800);
         try {
             scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
@@ -464,7 +548,6 @@ public class ExpenseTrackerApp extends Application {
             errorLabel.setText("Failed to load stylesheet: " + e.getMessage());
         }
 
-        // Event handlers
         PauseTransition searchDebounce = new PauseTransition(Duration.millis(300));
         searchField.textProperty().addListener((observable, oldValue, newValue) -> {
             searchDebounce.setOnFinished(e -> updateTotalExpenses());
@@ -512,7 +595,6 @@ public class ExpenseTrackerApp extends Application {
             updateTotalExpenses();
         });
 
-        // Keyboard shortcuts
         addButton.setDefaultButton(true);
         amountField.setOnKeyPressed(e -> {
             if (e.getCode() == KeyCode.ENTER) {
@@ -526,7 +608,6 @@ public class ExpenseTrackerApp extends Application {
             }
         });
 
-        // Button actions
         addButton.setOnAction(e -> {
             try {
                 double amount = Double.parseDouble(amountField.getText());
@@ -581,8 +662,9 @@ public class ExpenseTrackerApp extends Application {
                 manager.executeCommand(new AddExpenseCommand(manager, expense));
                 try {
                     storage.saveExpenses(manager.getExpenses());
-                    manager.generateRecurringExpenses(LocalDate.now()); // Generate recurring expenses up to today
-                    storage.saveExpenses(manager.getExpenses()); // Save again with generated expenses
+                    manager.generateRecurringExpenses(LocalDate.now());
+                    storage.saveExpenses(manager.getExpenses());
+                    recurringList.setAll(manager.getBaseRecurringExpenses());
                 } catch (Exception ex) {
                     manager.undo();
                     errorLabel.setText("Failed to save expense: " + ex.getMessage());
@@ -645,6 +727,7 @@ public class ExpenseTrackerApp extends Application {
             try {
                 storage.saveExpenses(manager.getExpenses());
                 refreshTable();
+                recurringList.setAll(manager.getBaseRecurringExpenses());
                 updateUndoRedoButtons();
                 errorLabel.setText("Undo successful!");
                 errorLabel.getStyleClass().setAll("error-label", "success-message");
@@ -659,12 +742,99 @@ public class ExpenseTrackerApp extends Application {
             try {
                 storage.saveExpenses(manager.getExpenses());
                 refreshTable();
+                recurringList.setAll(manager.getBaseRecurringExpenses());
                 updateUndoRedoButtons();
                 errorLabel.setText("Redo successful!");
                 errorLabel.getStyleClass().setAll("error-label", "success-message");
             } catch (Exception ex) {
                 errorLabel.setText("Error during redo: " + ex.getMessage());
                 errorLabel.getStyleClass().setAll("error-label", "error-message");
+            }
+        });
+
+        updateRecurringButton.setOnAction(e -> {
+            if (selectedRecurringExpense == null) {
+                errorLabel.setText("Please select a recurring expense to update");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
+                return;
+            }
+
+            try {
+                double amount = Double.parseDouble(editRecurringAmountField.getText());
+                if (amount <= 0) {
+                    errorLabel.setText("Amount must be positive");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
+                    return;
+                }
+                String category = editRecurringCategoryCombo.getValue();
+                if (category == null || category.trim().isEmpty()) {
+                    errorLabel.setText("Category cannot be empty");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
+                    return;
+                }
+                LocalDate date = editRecurringDatePicker.getValue();
+                if (date == null) {
+                    errorLabel.setText("Please select a start date");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
+                    return;
+                }
+                String description = editRecurringDescField.getText().trim();
+                RecurrenceType frequency = editRecurringFreqCombo.getValue();
+                if (frequency == null) {
+                    errorLabel.setText("Please select a recurrence frequency");
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
+                    return;
+                }
+                LocalDate endDate = editRecurringEndDatePicker.getValue();
+
+                RecurringExpense newExpense = new RecurringExpense(amount, category, date, description, frequency, endDate);
+                manager.updateRecurringExpense(selectedRecurringExpense, newExpense);
+                try {
+                    storage.saveExpenses(manager.getExpenses());
+                    refreshTable();
+                    recurringList.setAll(manager.getBaseRecurringExpenses());
+                    clearEditRecurringForm();
+                    updateRecurringButton.setDisable(true);
+                    errorLabel.setText("Recurring expense updated successfully!");
+                    errorLabel.getStyleClass().setAll("error-label", "success-message");
+                } catch (Exception ex) {
+                    errorLabel.setText("Error updating recurring expense: " + ex.getMessage());
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
+                }
+            } catch (NumberFormatException ex) {
+                errorLabel.setText("Invalid amount: Please enter a valid number (e.g., 10.99)");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
+            }
+        });
+
+        deleteRecurringButton.setOnAction(e -> {
+            RecurringExpense selected = recurringTable.getSelectionModel().getSelectedItem();
+            if (selected == null) {
+                errorLabel.setText("Please select a recurring expense to delete");
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
+                return;
+            }
+
+            Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+            confirmation.setTitle("Confirm Deletion");
+            confirmation.setHeaderText(null);
+            confirmation.setContentText("Are you sure you want to delete this recurring expense?");
+
+            Optional<ButtonType> result = confirmation.showAndWait();
+            if (result.isPresent() && result.get() == ButtonType.OK) {
+                manager.deleteRecurringExpense(selected);
+                try {
+                    storage.saveExpenses(manager.getExpenses());
+                    refreshTable();
+                    recurringList.setAll(manager.getBaseRecurringExpenses());
+                    clearEditRecurringForm();
+                    updateRecurringButton.setDisable(true);
+                    errorLabel.setText("Recurring expense deleted successfully!");
+                    errorLabel.getStyleClass().setAll("error-label", "success-message");
+                } catch (Exception ex) {
+                    errorLabel.setText("Error deleting recurring expense: " + ex.getMessage());
+                    errorLabel.getStyleClass().setAll("error-label", "error-message");
+                }
             }
         });
 
@@ -733,10 +903,8 @@ public class ExpenseTrackerApp extends Application {
             }
         });
 
-        // Initial refresh
         refreshTable();
 
-        // Set minimum window size
         stage.setMinWidth(800);
         stage.setMinHeight(600);
         stage.setTitle("Expense Tracker");
@@ -759,6 +927,7 @@ public class ExpenseTrackerApp extends Application {
     private void refreshTable() {
         try {
             expenseList.setAll(manager.getExpenses());
+            recurringList.setAll(manager.getBaseRecurringExpenses());
             updateYearList();
             updateTotalExpenses();
             updateIncomeField();
@@ -772,6 +941,15 @@ public class ExpenseTrackerApp extends Application {
     private void updateUndoRedoButtons() {
         undoButton.setDisable(!manager.canUndo());
         redoButton.setDisable(!manager.canRedo());
+    }
+
+    private void clearEditRecurringForm() {
+        editRecurringAmountField.clear();
+        editRecurringCategoryCombo.setValue(null);
+        editRecurringDatePicker.setValue(null);
+        editRecurringDescField.clear();
+        editRecurringFreqCombo.setValue(null);
+        editRecurringEndDatePicker.setValue(null);
     }
 
     private void updateYearList() {
@@ -816,7 +994,6 @@ public class ExpenseTrackerApp extends Application {
 
         YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
 
-        // Compute filtered expenses
         List<Expense> filteredExpenses = expenseList.stream()
             .filter(expense -> {
                 switch (chartPeriod) {
@@ -839,10 +1016,8 @@ public class ExpenseTrackerApp extends Application {
             })
             .collect(Collectors.toList());
 
-        // Update expense table
         filteredData.setPredicate(expense -> filteredExpenses.contains(expense));
 
-        // Calculate total
         double total = filteredExpenses.stream().mapToDouble(Expense::getAmount).sum();
         totalLabel.setText(String.format("Total Expenses for %s %d: %.2f",
             selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, total));
@@ -851,7 +1026,6 @@ public class ExpenseTrackerApp extends Application {
         double moneySaved = income - total;
         moneySavedLabel.setText(String.format("Money Saved: %.2f", Math.max(0, moneySaved)));
 
-        // Update category totals table
         Map<String, Double> categoryMap = filteredExpenses.stream()
             .collect(Collectors.groupingBy(
                 Expense::getCategory,
@@ -863,7 +1037,6 @@ public class ExpenseTrackerApp extends Application {
             .sorted(Comparator.comparing(CategoryTotal::getCategory))
             .collect(Collectors.toList()));
 
-        // Update pie chart data with custom colors
         ObservableList<PieChart.Data> pieChartData = FXCollections.observableArrayList();
         String[] colors = {"#FF6F61", "#6B5B95", "#88B04B", "#F7B731", "#4ECDC4"};
         List<Map.Entry<String, Double>> sortedEntries = categoryMap.entrySet().stream()
@@ -886,7 +1059,6 @@ public class ExpenseTrackerApp extends Application {
         }
         categoryChart.setData(pieChartData);
 
-        // Update monthly trend chart
         monthlyTrendChart.getData().clear();
         XYChart.Series<String, Number> series = new XYChart.Series<>();
         Map<YearMonth, Double> monthlyTotals = expenseList.stream()
@@ -913,7 +1085,6 @@ public class ExpenseTrackerApp extends Application {
         monthlyTrendChart.getData().add(series);
     }
 
-    // Helper methods for creating styled controls
     private TextField createStyledTextField(String prompt) {
         TextField field = new TextField();
         field.setPromptText(prompt);
