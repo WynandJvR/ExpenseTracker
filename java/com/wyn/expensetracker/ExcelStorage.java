@@ -10,24 +10,23 @@ import java.util.List;
 public class ExcelStorage {
     private static final String BASE_DIR = System.getProperty("user.home") + File.separator + ".expenseTracker";
     private static final String DEFAULT_EXPENSES_FILE = BASE_DIR + File.separator + "expenses.xlsx";
-    private String lastSavedFilePath; // Store the last saved file path
+    private String lastSavedFilePath;
 
     public ExcelStorage() {
         File dir = new File(BASE_DIR);
         if (!dir.exists()) {
             dir.mkdirs();
         }
-        lastSavedFilePath = DEFAULT_EXPENSES_FILE; // Default path
+        lastSavedFilePath = DEFAULT_EXPENSES_FILE;
     }
 
-    // Modified saveExpenses to accept a file path
     public void saveExpenses(List<Expense> expenses, String filePath) throws IOException {
         Workbook workbook = new XSSFWorkbook();
         Sheet sheet = workbook.createSheet("Expenses");
 
         // Create header row
         Row headerRow = sheet.createRow(0);
-        String[] headers = {"Amount", "Category", "Date", "Description"};
+        String[] headers = {"Amount", "Category", "Date", "Description", "IsRecurring", "Frequency", "EndDate"};
         for (int i = 0; i < headers.length; i++) {
             Cell cell = headerRow.createCell(i);
             cell.setCellValue(headers[i]);
@@ -41,6 +40,15 @@ public class ExcelStorage {
             row.createCell(1).setCellValue(expense.getCategory());
             row.createCell(2).setCellValue(expense.getDate().toString());
             row.createCell(3).setCellValue(expense.getDescription());
+            if (expense instanceof RecurringExpense recurringExpense) {
+                row.createCell(4).setCellValue(true);
+                row.createCell(5).setCellValue(recurringExpense.getFrequency().toString());
+                row.createCell(6).setCellValue(recurringExpense.getEndDate() != null ? recurringExpense.getEndDate().toString() : "");
+            } else {
+                row.createCell(4).setCellValue(false);
+                row.createCell(5).setCellValue("");
+                row.createCell(6).setCellValue("");
+            }
         }
 
         // Auto-size columns
@@ -53,15 +61,13 @@ public class ExcelStorage {
             workbook.write(outputStream);
         }
         workbook.close();
-        lastSavedFilePath = filePath; // Update the last saved file path
+        lastSavedFilePath = filePath;
     }
 
-    // Original saveExpenses method for backward compatibility
     public void saveExpenses(List<Expense> expenses) throws IOException {
         saveExpenses(expenses, lastSavedFilePath);
     }
 
-    // Getter for last saved file path
     public String getLastSavedFilePath() {
         return lastSavedFilePath;
     }
@@ -83,8 +89,15 @@ public class ExcelStorage {
                     String category = row.getCell(1).getStringCellValue();
                     LocalDate date = LocalDate.parse(row.getCell(2).getStringCellValue());
                     String description = row.getCell(3) != null ? row.getCell(3).getStringCellValue() : "";
-
-                    expenses.add(new Expense(amount, category, date, description));
+                    boolean isRecurring = row.getCell(4) != null && row.getCell(4).getBooleanCellValue();
+                    if (isRecurring) {
+                        RecurrenceType frequency = RecurrenceType.valueOf(row.getCell(5).getStringCellValue());
+                        String endDateStr = row.getCell(6) != null ? row.getCell(6).getStringCellValue() : "";
+                        LocalDate endDate = endDateStr.isEmpty() ? null : LocalDate.parse(endDateStr);
+                        expenses.add(new RecurringExpense(amount, category, date, description, frequency, endDate));
+                    } else {
+                        expenses.add(new Expense(amount, category, date, description));
+                    }
                 } catch (Exception e) {
                     System.err.println("Error parsing row " + row.getRowNum() + ": " + e.getMessage());
                 }
