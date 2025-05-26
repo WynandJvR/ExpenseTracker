@@ -53,6 +53,8 @@ public class ExpenseTrackerApp extends Application {
     private PieChart categoryChart;
     private BarChart<String, Number> monthlyTrendChart;
     private ComboBox<String> chartPeriodCombo;
+    private Button undoButton;
+    private Button redoButton;
 
     @Override
     public void start(Stage stage) {
@@ -75,24 +77,24 @@ public class ExpenseTrackerApp extends Application {
             errorLabel.setText("Failed to load categories: " + e.getMessage());
         }
 
-       try {
-    manager.getExpenses().addAll(storage.loadExpenses());
-    manager.clearGeneratedRecurringIds(); // Clear any previous tracking
-    manager.generateRecurringExpenses(LocalDate.now()); // Generate recurring expenses up to today
-    System.out.println("Loaded " + manager.getExpenses().size() + " expenses");
-    if (manager.getExpenses().isEmpty()) {
-        // Add sample data only if this is the first run
-        if (!new File(storage.getExcelStorage().getLastSavedFilePath()).exists()) {
-            manager.addExpense(new Expense(50.0, "Food", LocalDate.now(), "Groceries"));
-            manager.addExpense(new Expense(30.0, "Transport", LocalDate.now(), "Bus fare"));
-            errorLabel.setText("No expenses found. Added sample expenses.");
-            storage.saveExpenses(manager.getExpenses()); // Save the sample data
+        try {
+            manager.getExpenses().addAll(storage.loadExpenses());
+            manager.clearGeneratedRecurringIds(); // Clear any previous tracking
+            manager.generateRecurringExpenses(LocalDate.now()); // Generate recurring expenses up to today
+            System.out.println("Loaded " + manager.getExpenses().size() + " expenses");
+            if (manager.getExpenses().isEmpty()) {
+                // Add sample data only if this is the first run
+                if (!new File(storage.getExcelStorage().getLastSavedFilePath()).exists()) {
+                    manager.executeCommand(new AddExpenseCommand(manager, new Expense(50.0, "Food", LocalDate.now(), "Groceries")));
+                    manager.executeCommand(new AddExpenseCommand(manager, new Expense(30.0, "Transport", LocalDate.now(), "Bus fare")));
+                    errorLabel.setText("No expenses found. Added sample expenses.");
+                    storage.saveExpenses(manager.getExpenses()); // Save the sample data
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error loading expenses: " + e.getMessage());
+            errorLabel.setText("Failed to load expenses: " + e.getMessage());
         }
-    }
-} catch (Exception e) {
-    System.err.println("Error loading expenses: " + e.getMessage());
-    errorLabel.setText("Failed to load expenses: " + e.getMessage());
-}
 
         try {
             incomes = storage.loadIncomes();
@@ -184,7 +186,11 @@ public class ExpenseTrackerApp extends Application {
         HBox actionButtons = new HBox(10);
         Button addButton = createStyledButton("Add Expense", "success-button");
         Button deleteButton = createStyledButton("Delete Selected", "danger-button");
-        actionButtons.getChildren().addAll(addButton, deleteButton);
+        undoButton = createStyledButton("Undo", "primary-button");
+        redoButton = createStyledButton("Redo", "primary-button");
+        undoButton.setDisable(true);
+        redoButton.setDisable(true);
+        actionButtons.getChildren().addAll(addButton, deleteButton, undoButton, redoButton);
 
         formBox.getChildren().addAll(
             formTitle,
@@ -572,18 +578,19 @@ public class ExpenseTrackerApp extends Application {
                     expense = new Expense(amount, category, date, description.isEmpty() ? "" : description);
                 }
 
-                manager.addExpense(expense);
+                manager.executeCommand(new AddExpenseCommand(manager, expense));
                 try {
                     storage.saveExpenses(manager.getExpenses());
                     manager.generateRecurringExpenses(LocalDate.now()); // Generate recurring expenses up to today
                     storage.saveExpenses(manager.getExpenses()); // Save again with generated expenses
                 } catch (Exception ex) {
-                    manager.getExpenses().remove(expense);
+                    manager.undo();
                     errorLabel.setText("Failed to save expense: " + ex.getMessage());
                     errorLabel.getStyleClass().setAll("error-label", "error-message");
                     return;
                 }
                 refreshTable();
+                updateUndoRedoButtons();
 
                 amountField.clear();
                 categoryCombo.setValue(null);
@@ -618,17 +625,46 @@ public class ExpenseTrackerApp extends Application {
 
             Optional<ButtonType> result = confirmation.showAndWait();
             if (result.isPresent() && result.get() == ButtonType.OK) {
-                manager.getExpenses().remove(selectedExpense);
+                manager.executeCommand(new DeleteExpenseCommand(manager, selectedExpense));
                 try {
                     storage.saveExpenses(manager.getExpenses());
                     refreshTable();
+                    updateUndoRedoButtons();
                     errorLabel.setText("Expense deleted successfully!");
                     errorLabel.getStyleClass().setAll("error-label", "success-message");
                 } catch (Exception ex) {
-                    manager.addExpense(selectedExpense);
+                    manager.undo();
                     errorLabel.setText("Error deleting expense: " + ex.getMessage());
                     errorLabel.getStyleClass().setAll("error-label", "error-message");
                 }
+            }
+        });
+
+        undoButton.setOnAction(e -> {
+            manager.undo();
+            try {
+                storage.saveExpenses(manager.getExpenses());
+                refreshTable();
+                updateUndoRedoButtons();
+                errorLabel.setText("Undo successful!");
+                errorLabel.getStyleClass().setAll("error-label", "success-message");
+            } catch (Exception ex) {
+                errorLabel.setText("Error during undo: " + ex.getMessage());
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
+            }
+        });
+
+        redoButton.setOnAction(e -> {
+            manager.redo();
+            try {
+                storage.saveExpenses(manager.getExpenses());
+                refreshTable();
+                updateUndoRedoButtons();
+                errorLabel.setText("Redo successful!");
+                errorLabel.getStyleClass().setAll("error-label", "success-message");
+            } catch (Exception ex) {
+                errorLabel.setText("Error during redo: " + ex.getMessage());
+                errorLabel.getStyleClass().setAll("error-label", "error-message");
             }
         });
 
@@ -726,10 +762,16 @@ public class ExpenseTrackerApp extends Application {
             updateYearList();
             updateTotalExpenses();
             updateIncomeField();
+            updateUndoRedoButtons();
         } catch (Exception e) {
             errorLabel.setText("Error refreshing table: " + e.getMessage());
             errorLabel.getStyleClass().setAll("error-label", "error-message");
         }
+    }
+
+    private void updateUndoRedoButtons() {
+        undoButton.setDisable(!manager.canUndo());
+        redoButton.setDisable(!manager.canRedo());
     }
 
     private void updateYearList() {

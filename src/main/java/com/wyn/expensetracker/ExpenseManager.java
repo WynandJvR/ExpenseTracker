@@ -5,14 +5,49 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Stack;
 
 public class ExpenseManager {
     private List<Expense> expenses;
     private Set<String> generatedRecurringIds; // Track generated recurring expenses
+    private Stack<Command> undoStack;
+    private Stack<Command> redoStack;
 
     public ExpenseManager() {
         expenses = new ArrayList<>();
         generatedRecurringIds = new HashSet<>();
+        undoStack = new Stack<>();
+        redoStack = new Stack<>();
+    }
+
+    public void executeCommand(Command command) {
+        command.execute();
+        undoStack.push(command);
+        redoStack.clear(); // Clear redo stack when a new command is executed
+    }
+
+    public void undo() {
+        if (!undoStack.isEmpty()) {
+            Command command = undoStack.pop();
+            command.undo();
+            redoStack.push(command);
+        }
+    }
+
+    public void redo() {
+        if (!redoStack.isEmpty()) {
+            Command command = redoStack.pop();
+            command.execute();
+            undoStack.push(command);
+        }
+    }
+
+    public boolean canUndo() {
+        return !undoStack.isEmpty();
+    }
+
+    public boolean canRedo() {
+        return !redoStack.isEmpty();
     }
 
     public void addExpense(Expense expense) {
