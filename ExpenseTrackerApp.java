@@ -127,13 +127,13 @@ public class ExpenseTrackerApp extends Application {
         VBox.setVgrow(leftPanel, Priority.NEVER); // Prevent stretching beyond content
 
         // Create header
-        Label headerLabel = new Label("Expense Tracker");
-        headerLabel.getStyleClass().add("header-label");
-        headerLabel.setWrapText(true);
+        //Label headerLabel = new Label("Expense Tracker");
+        //headerLabel.getStyleClass().add("header-label");
+        //headerLabel.setWrapText(true);
 
-        HBox headerBox = new HBox(headerLabel);
-        headerBox.setPadding(new Insets(0, 0, 20, 0));
-        headerBox.setAlignment(Pos.CENTER);
+        //HBox headerBox = new HBox(headerLabel);
+        //headerBox.setPadding(new Insets(0, 0, 20, 0));
+        //headerBox.setAlignment(Pos.CENTER);
 
         // Set up TabPane for Expenses and Recurring Expenses
         TabPane tabPane = new TabPane();
@@ -394,7 +394,7 @@ public class ExpenseTrackerApp extends Application {
 
         // Assemble left panel
         leftPanel.getChildren().addAll(
-            headerBox,
+            //headerBox,
             tabPane,
             new Separator(),
             incomeBox,
