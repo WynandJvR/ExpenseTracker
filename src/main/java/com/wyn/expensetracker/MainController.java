@@ -80,10 +80,26 @@ public class MainController {
     @FXML private ComboBox<String> chartPeriodCombo;
     @FXML private PieChart categoryChart;
     @FXML private BarChart<String, Number> monthlyTrendChart;
+    @FXML private Label statusSaveLabel;
+    @FXML private Label statusCountLabel;
+    @FXML private Label dashTotalSpent;
+    @FXML private Label dashTopCategory;
+    @FXML private Label dashTopCategoryAmount;
+    @FXML private Label dashBudgetStatus;
+    @FXML private Label dashMonthChange;
     @FXML private TableView<CategoryTotal> categoryTable;
+    @FXML private TableColumn<CategoryTotal, String> categoryNameColumn;
     @FXML private TableColumn<CategoryTotal, Double> categoryTotalColumn;
     @FXML private TableColumn<CategoryTotal, Double> budgetColumn;
     @FXML private TableColumn<CategoryTotal, Double> progressColumn;
+
+    // --- Constants ---
+    private static final String[] CATEGORY_COLORS = {
+        "#FF6F61", "#6B5B95", "#88B04B", "#F7B731", "#4ECDC4",
+        "#FC5C65", "#45AAF2", "#26DE81", "#FD9644", "#A55EEA",
+        "#778CA3", "#20BF6B", "#EB3B5A", "#3867D6", "#D1D8E0",
+        "#0FB9B1", "#FA8231", "#8854D0", "#2D98DA", "#E77F67"
+    };
 
     // --- Data ---
     private ExpenseManager manager;
@@ -205,6 +221,20 @@ public class MainController {
 
         // Category table
         categoryTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        categoryNameColumn.setCellFactory(tc -> new TableCell<CategoryTotal, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("");
+                } else {
+                    setText(item);
+                    String color = getCategoryColor(item);
+                    setStyle("-fx-background-color: " + color + "33; -fx-border-color: " + color + " transparent transparent transparent; -fx-border-width: 0 0 0 3;");
+                }
+            }
+        });
         categoryTotalColumn.setCellFactory(tc -> new TableCell<CategoryTotal, Double>() {
             @Override
             protected void updateItem(Double item, boolean empty) {
@@ -664,10 +694,14 @@ public class MainController {
             return;
         }
 
+        long generatedCount = manager.getExpenses().stream()
+            .filter(e -> e.getSourceRecurringExpense() == selected)
+            .count();
         Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
         confirmation.setTitle("Confirm Deletion");
         confirmation.setHeaderText(null);
-        confirmation.setContentText("Are you sure you want to delete this recurring expense?");
+        confirmation.setContentText(String.format(
+            "Are you sure you want to delete this recurring expense?\nThis will also remove %d generated expenses.", generatedCount));
 
         Optional<ButtonType> result = confirmation.showAndWait();
         if (result.isPresent() && result.get() == ButtonType.OK) {
@@ -1146,6 +1180,7 @@ public class MainController {
             updateCharts();
             updateIncomeField();
             updateUndoRedoButtons();
+            updateStatusBar();
         } catch (Exception e) {
             showMessage("Error refreshing table: " + e.getMessage(), true);
         }
@@ -1202,6 +1237,13 @@ public class MainController {
             moneySavedLabel.setText("Money Saved: 0.00");
             filteredData.setPredicate(e -> false);
             categoryTotals.clear();
+            dashTotalSpent.setText("0.00");
+            dashTopCategory.setText("-");
+            dashTopCategoryAmount.setText("");
+            dashBudgetStatus.setText("-");
+            dashBudgetStatus.getStyleClass().setAll("dashboard-card-value");
+            dashMonthChange.setText("-");
+            dashMonthChange.getStyleClass().setAll("dashboard-card-value");
             return;
         }
 
@@ -1259,6 +1301,69 @@ public class MainController {
                 budgets.getOrDefault(entry.getKey(), 0.0)))
             .sorted(Comparator.comparing(CategoryTotal::getCategory))
             .collect(Collectors.toList()));
+
+        updateDashboard(total, categoryMap, selectedYear, selectedMonth);
+    }
+
+    private void updateDashboard(double total, Map<String, Double> categoryMap,
+                                  int selectedYear, Month selectedMonth) {
+        // Total spent
+        dashTotalSpent.setText(String.format("%.2f", total));
+
+        // Top category
+        if (categoryMap.isEmpty()) {
+            dashTopCategory.setText("-");
+            dashTopCategoryAmount.setText("");
+        } else {
+            Map.Entry<String, Double> top = categoryMap.entrySet().stream()
+                .max(Map.Entry.comparingByValue()).orElse(null);
+            if (top != null) {
+                dashTopCategory.setText(top.getKey());
+                dashTopCategoryAmount.setText(String.format("%.2f", top.getValue()));
+            }
+        }
+
+        // Budget status
+        double totalBudget = 0;
+        double totalBudgeted = 0;
+        for (Map.Entry<String, Double> entry : categoryMap.entrySet()) {
+            double budget = budgets.getOrDefault(entry.getKey(), 0.0);
+            if (budget > 0) {
+                totalBudget += budget;
+                totalBudgeted += entry.getValue();
+            }
+        }
+        if (totalBudget > 0) {
+            double remaining = totalBudget - totalBudgeted;
+            if (remaining >= 0) {
+                dashBudgetStatus.setText(String.format("%.2f left", remaining));
+                dashBudgetStatus.getStyleClass().setAll("dashboard-card-value", "dashboard-positive");
+            } else {
+                dashBudgetStatus.setText(String.format("%.2f over", Math.abs(remaining)));
+                dashBudgetStatus.getStyleClass().setAll("dashboard-card-value", "dashboard-negative");
+            }
+        } else {
+            dashBudgetStatus.setText("No budgets");
+            dashBudgetStatus.getStyleClass().setAll("dashboard-card-value");
+        }
+
+        // Month-over-month change
+        YearMonth prevMonth = YearMonth.of(selectedYear, selectedMonth).minusMonths(1);
+        double prevTotal = expenseList.stream()
+            .filter(e -> YearMonth.from(e.getDate()).equals(prevMonth))
+            .mapToDouble(Expense::getAmount)
+            .sum();
+        if (prevTotal > 0) {
+            double change = total - prevTotal;
+            double pct = (change / prevTotal) * 100;
+            String arrow = change >= 0 ? "\u25B2" : "\u25BC";
+            dashMonthChange.setText(String.format("%s %.0f%%", arrow, Math.abs(pct)));
+            dashMonthChange.getStyleClass().setAll("dashboard-card-value",
+                change <= 0 ? "dashboard-positive" : "dashboard-negative");
+        } else {
+            dashMonthChange.setText("-");
+            dashMonthChange.getStyleClass().setAll("dashboard-card-value");
+        }
     }
 
     private void updateCharts() {
@@ -1294,20 +1399,18 @@ public class MainController {
                 Collectors.summingDouble(Expense::getAmount)));
 
         ObservableList<PieChart.Data> pieChartData = FXCollections.observableArrayList();
-        String[] colors = {"#FF6F61", "#6B5B95", "#88B04B", "#F7B731", "#4ECDC4"};
         List<Map.Entry<String, Double>> sortedEntries = categoryMap.entrySet().stream()
             .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
             .collect(Collectors.toList());
 
-        for (int i = 0; i < sortedEntries.size(); i++) {
-            Map.Entry<String, Double> entry = sortedEntries.get(i);
-            final int colorIndex = i % colors.length;
+        for (Map.Entry<String, Double> entry : sortedEntries) {
+            final String color = getCategoryColor(entry.getKey());
             PieChart.Data data = new PieChart.Data(
                 entry.getKey() + " (" + String.format("%.2f", entry.getValue()) + ")",
                 entry.getValue());
             data.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
-                    newNode.setStyle("-fx-pie-color: " + colors[colorIndex] + ";");
+                    newNode.setStyle("-fx-pie-color: " + color + ";");
                 }
             });
             pieChartData.add(data);
@@ -1347,6 +1450,22 @@ public class MainController {
             });
 
         monthlyTrendChart.getData().add(series);
+    }
+
+    private void updateStatusBar() {
+        statusSaveLabel.setText("Last saved: just now");
+        int total = expenseList.size();
+        long thisMonth = filteredData.size();
+        statusCountLabel.setText(String.format("%d expenses total | %d this month", total, thisMonth));
+    }
+
+    private void markSaved() {
+        statusSaveLabel.setText("Last saved: just now");
+    }
+
+    private String getCategoryColor(String category) {
+        int hash = Math.abs(category.hashCode());
+        return CATEGORY_COLORS[hash % CATEGORY_COLORS.length];
     }
 
     private void showMessage(String message, boolean isError) {

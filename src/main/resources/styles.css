@@ -540,6 +540,46 @@
     -fx-background-color: #5C6BC0;
 }
 
+/* Dashboard cards */
+.dashboard-card {
+    -fx-background-color: #333333;
+    -fx-padding: 12 15;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-border-color: #3A3A3A;
+    -fx-border-width: 1;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 4, 0, 0, 2);
+}
+
+.dashboard-card-title {
+    -fx-text-fill: #A0A0A0;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+}
+
+.dashboard-card-value {
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+}
+
+.dashboard-card-subtitle {
+    -fx-text-fill: #A0A0A0;
+    -fx-font-size: 11px;
+}
+
+.dashboard-positive {
+    -fx-text-fill: #4CAF50;
+}
+
+.dashboard-negative {
+    -fx-text-fill: #FF5252;
+}
+
+.dashboard-neutral {
+    -fx-text-fill: #FF9800;
+}
+
 /* Budget progress bar */
 .progress-bar {
     -fx-background-color: #424242;
@@ -562,6 +602,112 @@
     -fx-font-size: 14px;
     -fx-font-style: italic;
     -fx-padding: 20;
+}
+
+/* Period navigation */
+.nav-arrow {
+    -fx-background-color: transparent;
+    -fx-text-fill: #A0A0A0;
+    -fx-font-size: 16px;
+    -fx-padding: 4 10;
+    -fx-cursor: hand;
+    -fx-background-radius: 20;
+}
+
+.nav-arrow:hover {
+    -fx-background-color: #3A3A3A;
+    -fx-text-fill: #FFFFFF;
+}
+
+.nav-arrow:pressed {
+    -fx-background-color: #5C6BC0;
+    -fx-text-fill: #FFFFFF;
+}
+
+.period-display {
+    -fx-background-color: #333333;
+    -fx-background-radius: 6;
+    -fx-border-color: #3A3A3A;
+    -fx-border-radius: 6;
+    -fx-border-width: 1;
+}
+
+.period-combo {
+    -fx-background-color: transparent;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-padding: 2 4;
+    -fx-border-width: 0;
+}
+
+.period-combo .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+
+.period-combo .arrow-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0 2;
+}
+
+.period-combo .arrow {
+    -fx-background-color: #757575;
+    -fx-shape: "M0,0L4,4L8,0Z";
+}
+
+.period-combo:hover .arrow {
+    -fx-background-color: #FFFFFF;
+}
+
+.period-combo-popup .list-view {
+    -fx-background-color: #333333;
+}
+
+.period-combo-popup .list-view .list-cell {
+    -fx-background-color: #333333;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 14px;
+}
+
+.period-combo-popup .list-view .list-cell:hover {
+    -fx-background-color: #5C6BC0;
+}
+
+.period-combo-popup .list-view .list-cell:filled:selected {
+    -fx-background-color: #5C6BC0;
+}
+
+.today-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #5C6BC0;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-padding: 4 8;
+    -fx-cursor: hand;
+    -fx-border-color: #5C6BC0;
+    -fx-border-width: 1;
+    -fx-border-radius: 12;
+    -fx-background-radius: 12;
+}
+
+.today-button:hover {
+    -fx-background-color: #5C6BC0;
+    -fx-text-fill: #FFFFFF;
+}
+
+/* Status bar */
+.status-bar {
+    -fx-background-color: #252525;
+    -fx-border-color: #3A3A3A;
+    -fx-border-width: 1 0 0 0;
+}
+
+.status-text {
+    -fx-text-fill: #808080;
+    -fx-font-size: 11px;
 }
 
 /* Tooltip */
