@@ -92,8 +92,6 @@ public class ExpenseTrackerApp extends Application {
         // Load expenses and generate recurring expenses
         try {
             manager.loadExpenses(storage.loadExpenses());
-            manager.clearGeneratedRecurringIds();
-            manager.generateRecurringExpenses(LocalDate.now());
             System.out.println("Loaded " + manager.getExpenses().size() + " expenses");
             if (manager.getExpenses().isEmpty()) {
                 if (!new File(storage.getExcelStorage().getLastSavedFilePath()).exists()) {
@@ -622,7 +620,7 @@ public class ExpenseTrackerApp extends Application {
                     filePath = defaultFile.getAbsolutePath();
                 }
 
-                storage.saveExpenses(manager.getExpenses());
+                storage.saveExpenses(manager.getExpenses(), filePath);
                 errorLabel.setText("Expenses exported to Excel successfully at: " + filePath);
                 errorLabel.getStyleClass().setAll("error-label", "success-message");
             } catch (IOException ex) {
@@ -933,7 +931,7 @@ public class ExpenseTrackerApp extends Application {
                 LocalDate endDate = editRecurringEndDatePicker.getValue();
 
                 RecurringExpense newExpense = new RecurringExpense(amount, category, date, description, frequency, endDate);
-                manager.updateRecurringExpense(selectedRecurringExpense, newExpense);
+                manager.executeCommand(new UpdateRecurringExpenseCommand(manager, selectedRecurringExpense, newExpense));
                 try {
                     storage.saveExpenses(manager.getExpenses());
                     refreshTable();
@@ -968,7 +966,7 @@ public class ExpenseTrackerApp extends Application {
 
             Optional<ButtonType> result = confirmation.showAndWait();
             if (result.isPresent() && result.get() == ButtonType.OK) {
-                manager.deleteRecurringExpense(selected);
+                manager.executeCommand(new DeleteRecurringExpenseCommand(manager, selected));
                 try {
                     storage.saveExpenses(manager.getExpenses());
                     refreshTable();
@@ -1151,23 +1149,19 @@ public class ExpenseTrackerApp extends Application {
         }
 
         YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
+        String filter = searchField.getText();
+        String lowerCaseFilter = (filter != null && !filter.isEmpty()) ? filter.toLowerCase() : null;
 
-        List<Expense> filteredExpenses = expenseList.stream()
-            .filter(expense -> YearMonth.from(expense.getDate()).equals(selectedYearMonth))
-            .filter(expense -> {
-                String filter = searchField.getText();
-                if (filter == null || filter.isEmpty()) return true;
-                String lowerCaseFilter = filter.toLowerCase();
-                return String.valueOf(expense.getAmount()).contains(lowerCaseFilter) ||
-                       expense.getCategory().toLowerCase().contains(lowerCaseFilter) ||
-                       expense.getDate().toString().contains(lowerCaseFilter) ||
-                       (expense.getDescription() != null && expense.getDescription().toLowerCase().contains(lowerCaseFilter));
-            })
-            .collect(Collectors.toList());
+        filteredData.setPredicate(expense -> {
+            if (!YearMonth.from(expense.getDate()).equals(selectedYearMonth)) return false;
+            if (lowerCaseFilter == null) return true;
+            return String.valueOf(expense.getAmount()).contains(lowerCaseFilter) ||
+                   expense.getCategory().toLowerCase().contains(lowerCaseFilter) ||
+                   expense.getDate().toString().contains(lowerCaseFilter) ||
+                   (expense.getDescription() != null && expense.getDescription().toLowerCase().contains(lowerCaseFilter));
+        });
 
-        filteredData.setPredicate(expense -> filteredExpenses.contains(expense));
-
-        double total = filteredExpenses.stream()
+        double total = filteredData.stream()
             .mapToDouble(Expense::getAmount)
             .sum();
         totalLabel.setText(String.format("Total Expenses for %s %d: %.2f",
@@ -1175,9 +1169,15 @@ public class ExpenseTrackerApp extends Application {
 
         double income = incomes.getOrDefault(selectedYearMonth, 0.0);
         double moneySaved = income - total;
-        moneySavedLabel.setText(String.format("Money Saved: %.2f", Math.max(0, moneySaved)));
+        if (moneySaved >= 0) {
+            moneySavedLabel.setText(String.format("Money Saved: %.2f", moneySaved));
+            moneySavedLabel.getStyleClass().setAll("saved-label");
+        } else {
+            moneySavedLabel.setText(String.format("Overspent: %.2f", Math.abs(moneySaved)));
+            moneySavedLabel.getStyleClass().setAll("saved-label", "overspent-label");
+        }
 
-        Map<String, Double> categoryMap = filteredExpenses.stream()
+        Map<String, Double> categoryMap = filteredData.stream()
             .collect(Collectors.groupingBy(
                 Expense::getCategory,
                 Collectors.summingDouble(Expense::getAmount))
