@@ -70,6 +70,13 @@ public class ExpenseManager {
         }
     }
 
+    public void replaceExpense(Expense oldExpense, Expense newExpense) {
+        int index = expenses.indexOf(oldExpense);
+        if (index != -1) {
+            expenses.set(index, newExpense);
+        }
+    }
+
     public void removeExpense(Expense expense) {
         if (expense instanceof RecurringExpense) {
             baseRecurringExpenses.remove(expense);

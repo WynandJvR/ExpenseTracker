@@ -218,6 +218,44 @@ public class FileStorage {
         return parts.toArray(new String[0]);
     }
 	
+    public void saveBudgets(Map<String, Double> budgets) throws IOException {
+        try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "budgets.txt"))) {
+            for (Map.Entry<String, Double> entry : budgets.entrySet()) {
+                out.println(escapeCsv(entry.getKey()) + "," + entry.getValue());
+            }
+        }
+    }
+
+    public Map<String, Double> loadBudgets() throws IOException {
+        Map<String, Double> budgets = new HashMap<>();
+        File file = new File(BASE_DIR + File.separator + "budgets.txt");
+        if (!file.exists()) {
+            return budgets;
+        }
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            int lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                try {
+                    String[] parts = splitCsv(line);
+                    if (parts.length == 2) {
+                        String category = unescapeCsv(parts[0]);
+                        double budget = Double.parseDouble(parts[1]);
+                        if (budget >= 0) {
+                            budgets.put(category, budget);
+                        }
+                    } else {
+                        System.err.println("Malformed budget line at " + lineNumber + ": " + line);
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error parsing budget line " + lineNumber + ": " + e.getMessage());
+                }
+            }
+        }
+        return budgets;
+    }
+
 	public ExcelStorage getExcelStorage() {
     return excelStorage;
 }

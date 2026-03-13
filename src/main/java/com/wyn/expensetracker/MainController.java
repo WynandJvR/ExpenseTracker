@@ -15,6 +15,7 @@ import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.chart.*;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
@@ -81,6 +82,8 @@ public class MainController {
     @FXML private BarChart<String, Number> monthlyTrendChart;
     @FXML private TableView<CategoryTotal> categoryTable;
     @FXML private TableColumn<CategoryTotal, Double> categoryTotalColumn;
+    @FXML private TableColumn<CategoryTotal, Double> budgetColumn;
+    @FXML private TableColumn<CategoryTotal, Double> progressColumn;
 
     // --- Data ---
     private ExpenseManager manager;
@@ -92,6 +95,7 @@ public class MainController {
     private ObservableList<CategoryTotal> categoryTotals;
     private ObservableList<RecurringExpense> recurringList;
     private Map<YearMonth, Double> incomes;
+    private Map<String, Double> budgets;
     private RecurringExpense selectedRecurringExpense;
     private Stage stage;
 
@@ -107,6 +111,13 @@ public class MainController {
         this.categories = categories;
         this.incomes = incomes;
         this.stage = stage;
+
+        // Load budgets
+        try {
+            this.budgets = storage.loadBudgets();
+        } catch (IOException e) {
+            this.budgets = new HashMap<>();
+        }
 
         setupComboBoxes();
         setupTables();
@@ -174,12 +185,12 @@ public class MainController {
     }
 
     private void setupTables() {
-        // Expense table
+        // Expense table — editable via double-click
         expenseTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        setupColumnCellFactory(amountColumn, Pos.CENTER_RIGHT);
-        setupColumnCellFactory(expenseCategoryColumn, Pos.CENTER_LEFT);
-        setupColumnCellFactory(dateColumn, Pos.CENTER);
-        setupColumnCellFactory(descriptionColumn, Pos.CENTER_LEFT);
+        setupEditableAmountColumn();
+        setupEditableCategoryColumn();
+        setupEditableDateColumn();
+        setupEditableDescriptionColumn();
 
         expenseList = FXCollections.observableArrayList(manager.getExpenses());
         filteredData = new FilteredList<>(expenseList, p -> true);
@@ -201,6 +212,59 @@ public class MainController {
                 setText(empty || item == null ? null : String.format("%.2f", item));
             }
         });
+        budgetColumn.setCellFactory(tc -> new TableCell<CategoryTotal, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || item <= 0) {
+                    setText(empty ? null : "-");
+                } else {
+                    setText(String.format("%.2f", item));
+                }
+            }
+        });
+        progressColumn.setCellFactory(tc -> new TableCell<CategoryTotal, Double>() {
+            private final ProgressBar bar = new ProgressBar(0);
+            private final Label label = new Label();
+            private final StackPane pane = new StackPane(bar, label);
+            {
+                bar.setMaxWidth(Double.MAX_VALUE);
+                bar.setPrefHeight(18);
+                label.setStyle("-fx-text-fill: white; -fx-font-size: 11px; -fx-font-weight: bold;");
+            }
+
+            @Override
+            protected void updateItem(Double progress, boolean empty) {
+                super.updateItem(progress, empty);
+                if (empty || progress == null || progress == 0) {
+                    setGraphic(null);
+                    setText(empty ? null : "-");
+                } else {
+                    bar.setProgress(Math.min(progress, 1.0));
+                    label.setText(String.format("%.0f%%", progress * 100));
+                    if (progress < 0.8) {
+                        bar.setStyle("-fx-accent: #4CAF50;");
+                    } else if (progress <= 1.0) {
+                        bar.setStyle("-fx-accent: #FF9800;");
+                    } else {
+                        bar.setStyle("-fx-accent: #E53935;");
+                        bar.setProgress(1.0);
+                    }
+                    setGraphic(pane);
+                    setText(null);
+                }
+            }
+        });
+
+        // Right-click context menu for setting budgets
+        ContextMenu budgetMenu = new ContextMenu();
+        MenuItem setBudgetItem = new MenuItem("Set Budget...");
+        setBudgetItem.setOnAction(e -> handleSetBudget());
+        MenuItem clearBudgetItem = new MenuItem("Clear Budget");
+        clearBudgetItem.setOnAction(e -> handleClearBudget());
+        budgetMenu.getItems().addAll(setBudgetItem, clearBudgetItem);
+        categoryTable.setContextMenu(budgetMenu);
+
         categoryTotals = FXCollections.observableArrayList();
         categoryTable.setItems(categoryTotals);
     }
@@ -348,6 +412,20 @@ public class MainController {
                         break;
                     case F:
                         searchField.requestFocus();
+                        event.consume();
+                        break;
+                    default:
+                        break;
+                }
+            }
+            if (event.isAltDown()) {
+                switch (event.getCode()) {
+                    case LEFT:
+                        handlePrevMonth();
+                        event.consume();
+                        break;
+                    case RIGHT:
+                        handleNextMonth();
                         event.consume();
                         break;
                     default:
@@ -702,6 +780,334 @@ public class MainController {
         }
     }
 
+    // ======================== DATE NAVIGATION ========================
+
+    @FXML
+    private void handlePrevMonth() {
+        navigateMonth(-1);
+    }
+
+    @FXML
+    private void handleNextMonth() {
+        navigateMonth(1);
+    }
+
+    @FXML
+    private void handleThisMonth() {
+        int currentYear = LocalDate.now().getYear();
+        if (!yearList.contains(currentYear)) {
+            yearList.add(currentYear);
+            FXCollections.sort(yearList);
+        }
+        yearCombo.setValue(currentYear);
+        monthCombo.setValue(Month.of(LocalDate.now().getMonthValue()));
+    }
+
+    private void navigateMonth(int offset) {
+        Integer year = yearCombo.getValue();
+        Month month = monthCombo.getValue();
+        if (year == null || month == null) {
+            handleThisMonth();
+            return;
+        }
+        YearMonth current = YearMonth.of(year, month).plusMonths(offset);
+        if (!yearList.contains(current.getYear())) {
+            yearList.add(current.getYear());
+            FXCollections.sort(yearList);
+        }
+        yearCombo.setValue(current.getYear());
+        monthCombo.setValue(current.getMonth());
+    }
+
+    // ======================== INLINE EDITING ========================
+
+    private boolean canEditExpense(Expense expense) {
+        if (expense == null) return false;
+        if (expense.getRecurringId() != null) {
+            showMessage("Edit recurring expenses from the Recurring Expenses tab", true);
+            return false;
+        }
+        return true;
+    }
+
+    private void handleInlineEdit(Expense oldExpense, Expense newExpense) {
+        manager.executeCommand(new EditExpenseCommand(manager, oldExpense, newExpense));
+        try {
+            storage.saveExpenses(manager.getExpensesForSave());
+            refreshTable();
+            showMessage("Expense updated", false);
+        } catch (Exception ex) {
+            manager.undo();
+            refreshTable();
+            showMessage("Error saving edit: " + ex.getMessage(), true);
+        }
+    }
+
+    private void setupEditableAmountColumn() {
+        amountColumn.setCellFactory(col -> new TableCell<Expense, Double>() {
+            private TextField textField;
+            private boolean editing = false;
+
+            {
+                setOnMouseClicked(event -> {
+                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(getTableRow().getItem())) {
+                        startInlineEdit();
+                    }
+                });
+            }
+
+            private void startInlineEdit() {
+                editing = true;
+                textField = new TextField(getItem().toString());
+                textField.getStyleClass().add("text-field");
+                textField.setOnAction(e -> commitInlineEdit());
+                textField.setOnKeyPressed(e -> { if (e.getCode() == KeyCode.ESCAPE) cancelInlineEdit(); });
+                setGraphic(textField);
+                setText(null);
+                textField.selectAll();
+                textField.requestFocus();
+            }
+
+            private void commitInlineEdit() {
+                try {
+                    double val = Double.parseDouble(textField.getText());
+                    if (val <= 0) { showMessage("Amount must be positive", true); cancelInlineEdit(); return; }
+                    Expense old = getTableRow().getItem();
+                    editing = false;
+                    handleInlineEdit(old, new Expense(val, old.getCategory(), old.getDate(), old.getDescription()));
+                } catch (NumberFormatException ex) {
+                    showMessage("Invalid amount", true);
+                    cancelInlineEdit();
+                }
+            }
+
+            private void cancelInlineEdit() {
+                editing = false;
+                setText(getItem() == null ? null : getItem().toString());
+                setGraphic(null);
+            }
+
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); setGraphic(null); }
+                else if (editing && textField != null) { setGraphic(textField); setText(null); }
+                else { setText(item.toString()); setGraphic(null); setAlignment(Pos.CENTER_RIGHT); }
+            }
+        });
+    }
+
+    private void setupEditableCategoryColumn() {
+        expenseCategoryColumn.setCellFactory(col -> new TableCell<Expense, String>() {
+            private ComboBox<String> comboBox;
+            private boolean editing = false;
+
+            {
+                setOnMouseClicked(event -> {
+                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(getTableRow().getItem())) {
+                        startInlineEdit();
+                    }
+                });
+            }
+
+            private void startInlineEdit() {
+                editing = true;
+                comboBox = new ComboBox<>(categories);
+                comboBox.setValue(getItem());
+                comboBox.setEditable(true);
+                comboBox.getStyleClass().add("combo-box");
+                comboBox.setOnAction(e -> commitInlineEdit());
+                comboBox.setOnKeyPressed(e -> { if (e.getCode() == KeyCode.ESCAPE) cancelInlineEdit(); });
+                setGraphic(comboBox);
+                setText(null);
+                comboBox.requestFocus();
+            }
+
+            private void commitInlineEdit() {
+                String newCategory = comboBox.getValue();
+                if (newCategory == null || newCategory.trim().isEmpty()) {
+                    newCategory = comboBox.getEditor().getText().trim();
+                }
+                if (newCategory == null || newCategory.isEmpty()) {
+                    showMessage("Category cannot be empty", true);
+                    cancelInlineEdit();
+                    return;
+                }
+                if (!categories.contains(newCategory)) {
+                    categories.add(newCategory);
+                    try { storage.saveCategories(categories); } catch (Exception ex) { categories.remove(newCategory); }
+                }
+                Expense old = getTableRow().getItem();
+                editing = false;
+                handleInlineEdit(old, new Expense(old.getAmount(), newCategory, old.getDate(), old.getDescription()));
+            }
+
+            private void cancelInlineEdit() {
+                editing = false;
+                setText(getItem());
+                setGraphic(null);
+            }
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); setGraphic(null); }
+                else if (editing && comboBox != null) { setGraphic(comboBox); setText(null); }
+                else { setText(item); setGraphic(null); setAlignment(Pos.CENTER_LEFT); }
+            }
+        });
+    }
+
+    private void setupEditableDateColumn() {
+        dateColumn.setCellFactory(col -> new TableCell<Expense, LocalDate>() {
+            private DatePicker picker;
+            private boolean editing = false;
+
+            {
+                setOnMouseClicked(event -> {
+                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(getTableRow().getItem())) {
+                        startInlineEdit();
+                    }
+                });
+            }
+
+            private void startInlineEdit() {
+                editing = true;
+                picker = new DatePicker(getItem());
+                picker.getStyleClass().add("date-picker");
+                picker.setOnAction(e -> commitInlineEdit());
+                picker.setOnKeyPressed(e -> { if (e.getCode() == KeyCode.ESCAPE) cancelInlineEdit(); });
+                setGraphic(picker);
+                setText(null);
+                picker.requestFocus();
+            }
+
+            private void commitInlineEdit() {
+                LocalDate newDate = picker.getValue();
+                if (newDate == null) { cancelInlineEdit(); return; }
+                Expense old = getTableRow().getItem();
+                editing = false;
+                handleInlineEdit(old, new Expense(old.getAmount(), old.getCategory(), newDate, old.getDescription()));
+            }
+
+            private void cancelInlineEdit() {
+                editing = false;
+                setText(getItem() == null ? null : getItem().toString());
+                setGraphic(null);
+            }
+
+            @Override
+            protected void updateItem(LocalDate item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); setGraphic(null); }
+                else if (editing && picker != null) { setGraphic(picker); setText(null); }
+                else { setText(item.toString()); setGraphic(null); setAlignment(Pos.CENTER); }
+            }
+        });
+    }
+
+    private void setupEditableDescriptionColumn() {
+        descriptionColumn.setCellFactory(col -> new TableCell<Expense, String>() {
+            private TextField textField;
+            private boolean editing = false;
+
+            {
+                setOnMouseClicked(event -> {
+                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(getTableRow().getItem())) {
+                        startInlineEdit();
+                    }
+                });
+            }
+
+            private void startInlineEdit() {
+                editing = true;
+                textField = new TextField(getItem() != null ? getItem() : "");
+                textField.getStyleClass().add("text-field");
+                textField.setOnAction(e -> commitInlineEdit());
+                textField.setOnKeyPressed(e -> { if (e.getCode() == KeyCode.ESCAPE) cancelInlineEdit(); });
+                setGraphic(textField);
+                setText(null);
+                textField.selectAll();
+                textField.requestFocus();
+            }
+
+            private void commitInlineEdit() {
+                Expense old = getTableRow().getItem();
+                editing = false;
+                handleInlineEdit(old, new Expense(old.getAmount(), old.getCategory(), old.getDate(), textField.getText().trim()));
+            }
+
+            private void cancelInlineEdit() {
+                editing = false;
+                setText(getItem() != null ? getItem() : "");
+                setGraphic(null);
+            }
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) { setText(null); setGraphic(null); }
+                else if (editing && textField != null) { setGraphic(textField); setText(null); }
+                else { setText(item != null ? item : ""); setGraphic(null); setAlignment(Pos.CENTER_LEFT); }
+            }
+        });
+    }
+
+    // ======================== BUDGET HANDLERS ========================
+
+    private void handleSetBudget() {
+        CategoryTotal selected = categoryTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            showMessage("Please select a category to set a budget for", true);
+            return;
+        }
+
+        TextInputDialog dialog = new TextInputDialog(
+            selected.getBudget() > 0 ? String.format("%.2f", selected.getBudget()) : "");
+        dialog.setTitle("Set Budget");
+        dialog.setHeaderText("Set monthly budget for: " + selected.getCategory());
+        dialog.setContentText("Budget amount:");
+        dialog.getDialogPane().getStyleClass().add("dialog-pane");
+
+        dialog.showAndWait().ifPresent(input -> {
+            try {
+                double budget = input.isEmpty() ? 0.0 : Double.parseDouble(input);
+                if (budget < 0) {
+                    showMessage("Budget cannot be negative", true);
+                    return;
+                }
+                if (budget > 0) {
+                    budgets.put(selected.getCategory(), budget);
+                } else {
+                    budgets.remove(selected.getCategory());
+                }
+                storage.saveBudgets(budgets);
+                updateTotalExpenses();
+                showMessage("Budget set for " + selected.getCategory(), false);
+            } catch (NumberFormatException ex) {
+                showMessage("Invalid budget amount", true);
+            } catch (IOException ex) {
+                showMessage("Error saving budget: " + ex.getMessage(), true);
+            }
+        });
+    }
+
+    private void handleClearBudget() {
+        CategoryTotal selected = categoryTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            showMessage("Please select a category", true);
+            return;
+        }
+        budgets.remove(selected.getCategory());
+        try {
+            storage.saveBudgets(budgets);
+            updateTotalExpenses();
+            showMessage("Budget cleared for " + selected.getCategory(), false);
+        } catch (IOException ex) {
+            showMessage("Error saving budget: " + ex.getMessage(), true);
+        }
+    }
+
     // ======================== HELPERS ========================
 
     private void resetExpenseForm() {
@@ -849,7 +1255,8 @@ public class MainController {
             );
 
         categoryTotals.setAll(categoryMap.entrySet().stream()
-            .map(entry -> new CategoryTotal(entry.getKey(), entry.getValue()))
+            .map(entry -> new CategoryTotal(entry.getKey(), entry.getValue(),
+                budgets.getOrDefault(entry.getKey(), 0.0)))
             .sorted(Comparator.comparing(CategoryTotal::getCategory))
             .collect(Collectors.toList()));
     }
