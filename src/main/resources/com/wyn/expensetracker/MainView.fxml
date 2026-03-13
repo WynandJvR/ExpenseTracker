@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.control.cell.PropertyValueFactory?>
+<?import javafx.scene.chart.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="com.wyn.expensetracker.MainController"
+            styleClass="root-pane">
+    <center>
+        <SplitPane fx:id="splitPane" orientation="HORIZONTAL" dividerPositions="0.4">
+
+            <!-- ==================== LEFT PANEL ==================== -->
+            <ScrollPane fitToWidth="true" hbarPolicy="AS_NEEDED" styleClass="scroll-pane">
+                <VBox spacing="5" styleClass="left-panel">
+                    <padding><Insets top="20" right="20" bottom="20" left="20"/></padding>
+
+                    <!-- Tab Pane -->
+                    <TabPane fx:id="tabPane" styleClass="tab-pane">
+                        <tabs>
+
+                            <!-- ===== Expenses Tab ===== -->
+                            <Tab text="Expenses" closable="false">
+                                <VBox fx:id="expenseTabContent" spacing="5" styleClass="panel-box">
+                                    <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+
+                                    <Label text="Add New Expense" styleClass="section-title"/>
+
+                                    <Label text="Amount:" styleClass="form-label"/>
+                                    <TextField fx:id="amountField" promptText="e.g., 10.99" styleClass="text-field"/>
+
+                                    <Label text="Category:" styleClass="form-label"/>
+                                    <ComboBox fx:id="categoryCombo" promptText="Select or enter category" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+
+                                    <HBox spacing="10">
+                                        <padding><Insets top="5" bottom="5"/></padding>
+                                        <Button text="Add Category" styleClass="primary-button" onAction="#handleAddCategory"/>
+                                        <Button text="Remove Category" styleClass="danger-button" onAction="#handleRemoveCategory"/>
+                                    </HBox>
+
+                                    <Label text="Date:" styleClass="form-label"/>
+                                    <DatePicker fx:id="datePicker" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+
+                                    <Label text="Description (optional):" styleClass="form-label"/>
+                                    <TextField fx:id="descriptionField" promptText="Enter description" styleClass="text-field"/>
+
+                                    <HBox spacing="10">
+                                        <Button fx:id="addButton" text="Add Expense" styleClass="success-button" defaultButton="true" onAction="#handleAddExpense"/>
+                                        <Button fx:id="deleteButton" text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteExpense"/>
+                                        <Button fx:id="undoButton" text="Undo" styleClass="primary-button" disable="true" onAction="#handleUndo">
+                                            <tooltip><Tooltip text="Undo (Ctrl+Z)"/></tooltip>
+                                        </Button>
+                                        <Button fx:id="redoButton" text="Redo" styleClass="primary-button" disable="true" onAction="#handleRedo">
+                                            <tooltip><Tooltip text="Redo (Ctrl+Y)"/></tooltip>
+                                        </Button>
+                                    </HBox>
+                                </VBox>
+                            </Tab>
+
+                            <!-- ===== Recurring Expenses Tab ===== -->
+                            <Tab text="Recurring Expenses" closable="false">
+                                <VBox fx:id="recurringTabContent" spacing="5" styleClass="panel-box">
+                                    <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+
+                                    <!-- Add Recurring Form -->
+                                    <VBox spacing="5" styleClass="panel-box">
+                                        <Label text="Add New Recurring Expense" styleClass="section-title"/>
+
+                                        <Label text="Amount:" styleClass="form-label"/>
+                                        <TextField fx:id="addRecurringAmountField" promptText="e.g., 10.99" styleClass="text-field"/>
+
+                                        <Label text="Category:" styleClass="form-label"/>
+                                        <ComboBox fx:id="addRecurringCategoryCombo" promptText="Select or enter category" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+
+                                        <Label text="Start Date:" styleClass="form-label"/>
+                                        <DatePicker fx:id="addRecurringDatePicker" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+
+                                        <Label text="Description (optional):" styleClass="form-label"/>
+                                        <TextField fx:id="addRecurringDescField" promptText="Enter description" styleClass="text-field"/>
+
+                                        <Label text="Frequency:" styleClass="form-label"/>
+                                        <ComboBox fx:id="addRecurringFreqCombo" promptText="Select frequency" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+
+                                        <Label text="End Date (optional):" styleClass="form-label"/>
+                                        <DatePicker fx:id="addRecurringEndDatePicker" promptText="Select end date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+
+                                        <Button text="Add Recurring Expense" styleClass="success-button" onAction="#handleAddRecurring"/>
+                                    </VBox>
+
+                                    <Separator/>
+
+                                    <!-- Manage Recurring Expenses -->
+                                    <Label text="Manage Recurring Expenses" styleClass="section-title"/>
+                                    <TableView fx:id="recurringTable" styleClass="table-view" prefHeight="150">
+                                        <columns>
+                                            <TableColumn text="Amount" prefWidth="80">
+                                                <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Category" prefWidth="100">
+                                                <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Start Date" prefWidth="100">
+                                                <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Description" prefWidth="100">
+                                                <cellValueFactory><PropertyValueFactory property="description"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Frequency" prefWidth="80">
+                                                <cellValueFactory><PropertyValueFactory property="frequency"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="End Date" prefWidth="80">
+                                                <cellValueFactory><PropertyValueFactory property="endDate"/></cellValueFactory>
+                                            </TableColumn>
+                                        </columns>
+                                    </TableView>
+
+                                    <Separator/>
+
+                                    <!-- Edit Recurring Form -->
+                                    <VBox spacing="5" styleClass="panel-box">
+                                        <Label text="Edit Selected Recurring Expense" styleClass="section-title"/>
+
+                                        <Label text="Amount:" styleClass="form-label"/>
+                                        <TextField fx:id="editRecurringAmountField" promptText="e.g., 10.99" styleClass="text-field"/>
+
+                                        <Label text="Category:" styleClass="form-label"/>
+                                        <ComboBox fx:id="editRecurringCategoryCombo" promptText="Select category" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+
+                                        <Label text="Start Date:" styleClass="form-label"/>
+                                        <DatePicker fx:id="editRecurringDatePicker" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+
+                                        <Label text="Description (optional):" styleClass="form-label"/>
+                                        <TextField fx:id="editRecurringDescField" promptText="Enter description" styleClass="text-field"/>
+
+                                        <Label text="Frequency:" styleClass="form-label"/>
+                                        <ComboBox fx:id="editRecurringFreqCombo" promptText="Select frequency" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+
+                                        <Label text="End Date (optional):" styleClass="form-label"/>
+                                        <DatePicker fx:id="editRecurringEndDatePicker" promptText="Select end date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+
+                                        <HBox spacing="10">
+                                            <Button fx:id="updateRecurringButton" text="Update Expense" styleClass="success-button" disable="true" onAction="#handleUpdateRecurring"/>
+                                            <Button text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteRecurring"/>
+                                        </HBox>
+                                    </VBox>
+                                </VBox>
+                            </Tab>
+
+                        </tabs>
+                    </TabPane>
+
+                    <Separator/>
+
+                    <!-- Income &amp; Savings -->
+                    <VBox spacing="5" styleClass="panel-box">
+                        <Label text="Income &amp; Savings" styleClass="section-title"/>
+                        <Label text="Monthly Income:" styleClass="form-label"/>
+                        <TextField fx:id="incomeField" promptText="e.g., 5000.00" styleClass="text-field"/>
+                        <Separator/>
+                        <VBox spacing="5">
+                            <Label fx:id="totalLabel" text="Total Expenses: 0.00" styleClass="total-label"/>
+                            <Label fx:id="moneySavedLabel" text="Money Saved: 0.00" styleClass="saved-label"/>
+                        </VBox>
+                    </VBox>
+
+                    <Separator/>
+
+                    <!-- Search -->
+                    <VBox spacing="5" styleClass="panel-box">
+                        <Label text="Search Expenses" styleClass="section-title"/>
+                        <TextField fx:id="searchField" promptText="Search by amount, category, date, or description" styleClass="text-field"/>
+                    </VBox>
+
+                    <Label fx:id="errorLabel" styleClass="error-label"/>
+                </VBox>
+            </ScrollPane>
+
+            <!-- ==================== RIGHT PANEL ==================== -->
+            <ScrollPane fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane">
+                <VBox spacing="5" styleClass="right-panel">
+                    <padding><Insets top="20" right="20" bottom="20" left="20"/></padding>
+
+                    <!-- Period Selector -->
+                    <HBox spacing="10" alignment="CENTER_LEFT">
+                        <Label text="Select Period:" styleClass="section-title"/>
+                        <HBox spacing="10">
+                            <ComboBox fx:id="yearCombo" promptText="Year" styleClass="combo-box"/>
+                            <ComboBox fx:id="monthCombo" promptText="Month" styleClass="combo-box"/>
+                        </HBox>
+                    </HBox>
+
+                    <Separator/>
+
+                    <Label text="Expense Records" styleClass="section-title"/>
+
+                    <TableView fx:id="expenseTable" styleClass="table-view" prefHeight="400">
+                        <columns>
+                            <TableColumn fx:id="amountColumn" text="Amount" prefWidth="100">
+                                <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
+                            </TableColumn>
+                            <TableColumn fx:id="expenseCategoryColumn" text="Category" prefWidth="150">
+                                <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                            </TableColumn>
+                            <TableColumn fx:id="dateColumn" text="Date" prefWidth="120">
+                                <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
+                            </TableColumn>
+                            <TableColumn fx:id="descriptionColumn" text="Description" prefWidth="250">
+                                <cellValueFactory><PropertyValueFactory property="description"/></cellValueFactory>
+                            </TableColumn>
+                        </columns>
+                    </TableView>
+
+                    <Separator/>
+
+                    <Button fx:id="exportButton" text="Export to Excel" styleClass="success-button" onAction="#handleExport"/>
+
+                    <Separator/>
+
+                    <!-- Analytics -->
+                    <VBox spacing="5" styleClass="panel-box">
+                        <Label text="Expense Analytics" styleClass="section-title"/>
+                        <HBox spacing="10">
+                            <Label text="View by:" styleClass="form-label"/>
+                            <ComboBox fx:id="chartPeriodCombo" styleClass="combo-box"/>
+                        </HBox>
+                        <PieChart fx:id="categoryChart" title="Expenses by Category" legendVisible="true" prefHeight="250" styleClass="chart"/>
+                        <BarChart fx:id="monthlyTrendChart" title="Monthly Trend" legendVisible="false" prefHeight="250" styleClass="chart">
+                            <xAxis><CategoryAxis/></xAxis>
+                            <yAxis><NumberAxis/></yAxis>
+                        </BarChart>
+                    </VBox>
+
+                    <Separator/>
+
+                    <Label text="Expenses by Category" styleClass="table-title"/>
+                    <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="180">
+                        <columns>
+                            <TableColumn text="Category" prefWidth="120">
+                                <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                            </TableColumn>
+                            <TableColumn fx:id="categoryTotalColumn" text="Amount" prefWidth="80">
+                                <cellValueFactory><PropertyValueFactory property="total"/></cellValueFactory>
+                            </TableColumn>
+                        </columns>
+                    </TableView>
+                </VBox>
+            </ScrollPane>
+
+        </SplitPane>
+    </center>
+</BorderPane>

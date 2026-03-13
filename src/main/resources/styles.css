@@ -540,6 +540,14 @@
     -fx-background-color: #5C6BC0;
 }
 
+/* Empty state labels */
+.empty-state-label {
+    -fx-text-fill: #757575;
+    -fx-font-size: 14px;
+    -fx-font-style: italic;
+    -fx-padding: 20;
+}
+
 /* Tooltip */
 .tooltip {
     -fx-background-color: #424242;
