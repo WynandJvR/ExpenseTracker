@@ -11,7 +11,7 @@
             fx:controller="com.wyn.expensetracker.MainController"
             styleClass="root-pane">
     <center>
-        <SplitPane fx:id="splitPane" orientation="HORIZONTAL" dividerPositions="0.4">
+        <SplitPane fx:id="splitPane" orientation="HORIZONTAL" dividerPositions="0.3">
 
             <!-- ==================== LEFT PANEL ==================== -->
             <ScrollPane fitToWidth="true" hbarPolicy="AS_NEEDED" styleClass="scroll-pane">
@@ -174,6 +174,14 @@
                         <TextField fx:id="searchField" promptText="Search by amount, category, date, or description" styleClass="text-field"/>
                     </VBox>
 
+                    <Separator/>
+
+                    <!-- Settings -->
+                    <VBox spacing="5" styleClass="panel-box">
+                        <Label text="Currency" styleClass="section-title"/>
+                        <ComboBox fx:id="currencyCombo" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+                    </VBox>
+
                     <Label fx:id="errorLabel" styleClass="error-label"/>
                 </VBox>
             </ScrollPane>
@@ -243,7 +251,10 @@
 
                     <Separator/>
 
-                    <Button fx:id="exportButton" text="Export to Excel" styleClass="success-button" onAction="#handleExport"/>
+                    <HBox spacing="10">
+                        <Button text="Export All" styleClass="success-button" onAction="#handleExport"/>
+                        <Button text="Export Current View" styleClass="primary-button" onAction="#handleExportFiltered"/>
+                    </HBox>
 
                     <Separator/>
 

@@ -23,8 +23,31 @@ public class FileStorage {
     }
 
     public void saveExpenses(List<Expense> expenses, String filePath) throws IOException {
+        rotateBackups(filePath, 5);
+        rotateBackups(EXPENSES_FILE, 5);
         excelStorage.saveExpenses(expenses, filePath);
         saveToTextFile(expenses);
+    }
+
+    private void rotateBackups(String filePath, int maxBackups) {
+        File file = new File(filePath);
+        if (!file.exists()) return;
+        // Delete oldest backup
+        File oldest = new File(filePath + "." + maxBackups);
+        if (oldest.exists()) oldest.delete();
+        // Rotate existing backups
+        for (int i = maxBackups - 1; i >= 1; i--) {
+            File from = new File(filePath + "." + i);
+            File to = new File(filePath + "." + (i + 1));
+            if (from.exists()) from.renameTo(to);
+        }
+        // Copy current to .1
+        try {
+            java.nio.file.Files.copy(file.toPath(), new File(filePath + ".1").toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            System.err.println("Backup rotation failed: " + e.getMessage());
+        }
     }
 
     public void saveExpenses(List<Expense> expenses) throws IOException {
@@ -218,6 +241,28 @@ public class FileStorage {
         return parts.toArray(new String[0]);
     }
 	
+    public void saveCurrencySymbol(String symbol) throws IOException {
+        try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "settings.txt"))) {
+            out.println("currency=" + symbol);
+        }
+    }
+
+    public String loadCurrencySymbol() {
+        File file = new File(BASE_DIR + File.separator + "settings.txt");
+        if (!file.exists()) return "R";
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.startsWith("currency=")) {
+                    return line.substring("currency=".length()).trim();
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Error loading settings: " + e.getMessage());
+        }
+        return "R";
+    }
+
     public void saveBudgets(Map<String, Double> budgets) throws IOException {
         try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "budgets.txt"))) {
             for (Map.Entry<String, Double> entry : budgets.entrySet()) {
