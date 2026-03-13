@@ -62,16 +62,20 @@ public class ExpenseManager {
         if (expense.getCategory() == null || expense.getCategory().trim().isEmpty()) {
             throw new IllegalArgumentException("Category cannot be empty");
         }
-        expenses.add(expense);
         if (expense instanceof RecurringExpense) {
             baseRecurringExpenses.add((RecurringExpense) expense);
+            regenerateExpenses();
+        } else {
+            expenses.add(expense);
         }
     }
 
     public void removeExpense(Expense expense) {
-        expenses.remove(expense);
         if (expense instanceof RecurringExpense) {
             baseRecurringExpenses.remove(expense);
+            regenerateExpenses();
+        } else {
+            expenses.remove(expense);
         }
     }
 
@@ -94,6 +98,17 @@ public class ExpenseManager {
 
     public List<RecurringExpense> getBaseRecurringExpenses() {
         return baseRecurringExpenses;
+    }
+
+    public List<Expense> getExpensesForSave() {
+        List<Expense> result = new ArrayList<>();
+        result.addAll(baseRecurringExpenses);
+        for (Expense e : expenses) {
+            if (e.getRecurringId() == null) {
+                result.add(e);
+            }
+        }
+        return result;
     }
 
     public void generateRecurringExpenses(LocalDate upToDate) {
@@ -155,7 +170,8 @@ public class ExpenseManager {
 
     private String generateRecurringId(RecurringExpense expense, LocalDate date) {
         return expense.getAmount() + "|" + expense.getCategory() + "|" +
-               expense.getDate() + "|" + expense.getFrequency() + "|" + date;
+               expense.getDate() + "|" + expense.getFrequency() + "|" +
+               expense.getEndDate() + "|" + expense.getDescription() + "|" + date;
     }
 
     public void loadExpenses(List<Expense> loadedExpenses) {
