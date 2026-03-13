@@ -184,17 +184,40 @@
                     <padding><Insets top="20" right="20" bottom="20" left="20"/></padding>
 
                     <!-- Period Selector -->
-                    <HBox spacing="10" alignment="CENTER_LEFT">
-                        <Label text="Select Period:" styleClass="section-title"/>
-                        <Button text="&#x25C0;" styleClass="primary-button" onAction="#handlePrevMonth">
+                    <HBox spacing="8" alignment="CENTER">
+                        <Button text="&#x25C0;" styleClass="nav-arrow" onAction="#handlePrevMonth">
                             <tooltip><Tooltip text="Previous Month (Alt+Left)"/></tooltip>
                         </Button>
-                        <ComboBox fx:id="yearCombo" promptText="Year" styleClass="combo-box"/>
-                        <ComboBox fx:id="monthCombo" promptText="Month" styleClass="combo-box"/>
-                        <Button text="&#x25B6;" styleClass="primary-button" onAction="#handleNextMonth">
+                        <HBox spacing="6" alignment="CENTER" styleClass="period-display">
+                            <padding><Insets top="4" right="12" bottom="4" left="12"/></padding>
+                            <ComboBox fx:id="monthCombo" promptText="Month" styleClass="period-combo"/>
+                            <ComboBox fx:id="yearCombo" promptText="Year" styleClass="period-combo"/>
+                        </HBox>
+                        <Button text="&#x25B6;" styleClass="nav-arrow" onAction="#handleNextMonth">
                             <tooltip><Tooltip text="Next Month (Alt+Right)"/></tooltip>
                         </Button>
-                        <Button text="This Month" styleClass="primary-button" onAction="#handleThisMonth"/>
+                        <Button text="Today" styleClass="today-button" onAction="#handleThisMonth"/>
+                    </HBox>
+
+                    <!-- Dashboard Cards -->
+                    <HBox fx:id="dashboardCards" spacing="10" alignment="CENTER_LEFT">
+                        <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" prefWidth="150">
+                            <Label text="Total Spent" styleClass="dashboard-card-title"/>
+                            <Label fx:id="dashTotalSpent" text="0.00" styleClass="dashboard-card-value"/>
+                        </VBox>
+                        <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" prefWidth="150">
+                            <Label text="Top Category" styleClass="dashboard-card-title"/>
+                            <Label fx:id="dashTopCategory" text="-" styleClass="dashboard-card-value"/>
+                            <Label fx:id="dashTopCategoryAmount" text="" styleClass="dashboard-card-subtitle"/>
+                        </VBox>
+                        <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" prefWidth="150">
+                            <Label text="Budget Status" styleClass="dashboard-card-title"/>
+                            <Label fx:id="dashBudgetStatus" text="-" styleClass="dashboard-card-value"/>
+                        </VBox>
+                        <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" prefWidth="150">
+                            <Label text="vs Last Month" styleClass="dashboard-card-title"/>
+                            <Label fx:id="dashMonthChange" text="-" styleClass="dashboard-card-value"/>
+                        </VBox>
                     </HBox>
 
                     <Separator/>
@@ -231,7 +254,7 @@
                             <Label text="View by:" styleClass="form-label"/>
                             <ComboBox fx:id="chartPeriodCombo" styleClass="combo-box"/>
                         </HBox>
-                        <PieChart fx:id="categoryChart" title="Expenses by Category" legendVisible="true" prefHeight="250" styleClass="chart"/>
+                        <PieChart fx:id="categoryChart" title="Expenses by Category" legendVisible="false" prefHeight="250" styleClass="chart"/>
                         <BarChart fx:id="monthlyTrendChart" title="Monthly Trend" legendVisible="false" prefHeight="250" styleClass="chart">
                             <xAxis><CategoryAxis/></xAxis>
                             <yAxis><NumberAxis/></yAxis>
@@ -243,7 +266,7 @@
                     <Label text="Expenses by Category" styleClass="table-title"/>
                     <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="200">
                         <columns>
-                            <TableColumn text="Category" prefWidth="100">
+                            <TableColumn fx:id="categoryNameColumn" text="Category" prefWidth="100">
                                 <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
                             </TableColumn>
                             <TableColumn fx:id="categoryTotalColumn" text="Spent" prefWidth="80">
@@ -262,4 +285,12 @@
 
         </SplitPane>
     </center>
+    <bottom>
+        <HBox styleClass="status-bar" alignment="CENTER_LEFT" spacing="20">
+            <padding><Insets top="4" right="15" bottom="4" left="15"/></padding>
+            <Label fx:id="statusSaveLabel" text="Ready" styleClass="status-text"/>
+            <Region HBox.hgrow="ALWAYS"/>
+            <Label fx:id="statusCountLabel" text="" styleClass="status-text"/>
+        </HBox>
+    </bottom>
 </BorderPane>
