@@ -67,6 +67,7 @@ public class MainController {
     @FXML private Label moneySavedLabel;
     @FXML private TextField searchField;
     @FXML private Label errorLabel;
+    @FXML private ComboBox<String> currencyCombo;
 
     // --- Right panel ---
     @FXML private ComboBox<Integer> yearCombo;
@@ -112,6 +113,7 @@ public class MainController {
     private ObservableList<RecurringExpense> recurringList;
     private Map<YearMonth, Double> incomes;
     private Map<String, Double> budgets;
+    private String currencySymbol = "R";
     private RecurringExpense selectedRecurringExpense;
     private Stage stage;
 
@@ -188,6 +190,18 @@ public class MainController {
         // Chart period combo
         chartPeriodCombo.setItems(FXCollections.observableArrayList("All Time", "By Year", "By Month"));
         chartPeriodCombo.setValue("All Time");
+
+        // Currency combo
+        currencySymbol = storage.loadCurrencySymbol();
+        currencyCombo.setItems(FXCollections.observableArrayList("R", "$", "\u20AC", "\u00A3", "\u00A5", "CHF", "kr", "Rs"));
+        currencyCombo.setValue(currencySymbol);
+        currencyCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal != null) {
+                currencySymbol = newVal;
+                try { storage.saveCurrencySymbol(newVal); } catch (IOException e) { /* ignore */ }
+                refreshTable();
+            }
+        });
     }
 
     private <T> void setupComboCellFactory(ComboBox<T> combo) {
@@ -239,7 +253,7 @@ public class MainController {
             @Override
             protected void updateItem(Double item, boolean empty) {
                 super.updateItem(item, empty);
-                setText(empty || item == null ? null : String.format("%.2f", item));
+                setText(empty || item == null ? null : fmt(item));
             }
         });
         budgetColumn.setCellFactory(tc -> new TableCell<CategoryTotal, Double>() {
@@ -249,7 +263,7 @@ public class MainController {
                 if (empty || item == null || item <= 0) {
                     setText(empty ? null : "-");
                 } else {
-                    setText(String.format("%.2f", item));
+                    setText(fmt(item));
                 }
             }
         });
@@ -814,6 +828,41 @@ public class MainController {
         }
     }
 
+    @FXML
+    private void handleExportFiltered() {
+        if (filteredData.isEmpty()) {
+            showMessage("No expenses to export for the current view", true);
+            return;
+        }
+        try {
+            Integer year = yearCombo.getValue();
+            Month month = monthCombo.getValue();
+            String defaultName = (year != null && month != null)
+                ? String.format("expenses_%s_%d.xlsx", month.toString().toLowerCase(), year)
+                : "expenses_filtered.xlsx";
+
+            FileChooser fileChooser = new FileChooser();
+            fileChooser.setTitle("Export Current View to Excel");
+            fileChooser.setInitialDirectory(new File(System.getProperty("user.home")));
+            fileChooser.setInitialFileName(defaultName);
+            fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("Excel Files", "*.xlsx")
+            );
+            File selectedFile = fileChooser.showSaveDialog(stage);
+            if (selectedFile == null) {
+                showMessage("Export cancelled", true);
+                return;
+            }
+
+            List<Expense> toExport = new ArrayList<>(filteredData);
+            storage.getExcelStorage().saveExpenses(toExport, selectedFile.getAbsolutePath());
+            showMessage(String.format("Exported %d expenses to %s", toExport.size(), selectedFile.getName()), false);
+            markSaved();
+        } catch (IOException ex) {
+            showMessage("Failed to export: " + ex.getMessage(), true);
+        }
+    }
+
     // ======================== DATE NAVIGATION ========================
 
     @FXML
@@ -1233,11 +1282,11 @@ public class MainController {
         Month selectedMonth = monthCombo.getValue();
 
         if (selectedYear == null || selectedMonth == null) {
-            totalLabel.setText("Total Expenses: 0.00");
-            moneySavedLabel.setText("Money Saved: 0.00");
+            totalLabel.setText("Total Expenses: " + fmt(0));
+            moneySavedLabel.setText("Money Saved: " + fmt(0));
             filteredData.setPredicate(e -> false);
             categoryTotals.clear();
-            dashTotalSpent.setText("0.00");
+            dashTotalSpent.setText(fmt(0));
             dashTopCategory.setText("-");
             dashTopCategoryAmount.setText("");
             dashBudgetStatus.setText("-");
@@ -1277,16 +1326,16 @@ public class MainController {
         double total = filteredData.stream()
             .mapToDouble(Expense::getAmount)
             .sum();
-        totalLabel.setText(String.format("Total Expenses for %s %d: %.2f",
-                selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, total));
+        totalLabel.setText(String.format("Total Expenses for %s %d: %s",
+                selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, fmt(total)));
 
         double income = incomes.getOrDefault(selectedYearMonth, 0.0);
         double moneySaved = income - total;
         if (moneySaved >= 0) {
-            moneySavedLabel.setText(String.format("Money Saved: %.2f", moneySaved));
+            moneySavedLabel.setText("Money Saved: " + fmt(moneySaved));
             moneySavedLabel.getStyleClass().setAll("saved-label");
         } else {
-            moneySavedLabel.setText(String.format("Overspent: %.2f", Math.abs(moneySaved)));
+            moneySavedLabel.setText("Overspent: " + fmt(Math.abs(moneySaved)));
             moneySavedLabel.getStyleClass().setAll("saved-label", "overspent-label");
         }
 
@@ -1308,7 +1357,7 @@ public class MainController {
     private void updateDashboard(double total, Map<String, Double> categoryMap,
                                   int selectedYear, Month selectedMonth) {
         // Total spent
-        dashTotalSpent.setText(String.format("%.2f", total));
+        dashTotalSpent.setText(fmt(total));
 
         // Top category
         if (categoryMap.isEmpty()) {
@@ -1319,7 +1368,7 @@ public class MainController {
                 .max(Map.Entry.comparingByValue()).orElse(null);
             if (top != null) {
                 dashTopCategory.setText(top.getKey());
-                dashTopCategoryAmount.setText(String.format("%.2f", top.getValue()));
+                dashTopCategoryAmount.setText(fmt(top.getValue()));
             }
         }
 
@@ -1336,10 +1385,10 @@ public class MainController {
         if (totalBudget > 0) {
             double remaining = totalBudget - totalBudgeted;
             if (remaining >= 0) {
-                dashBudgetStatus.setText(String.format("%.2f left", remaining));
+                dashBudgetStatus.setText(fmt(remaining) + " left");
                 dashBudgetStatus.getStyleClass().setAll("dashboard-card-value", "dashboard-positive");
             } else {
-                dashBudgetStatus.setText(String.format("%.2f over", Math.abs(remaining)));
+                dashBudgetStatus.setText(fmt(Math.abs(remaining)) + " over");
                 dashBudgetStatus.getStyleClass().setAll("dashboard-card-value", "dashboard-negative");
             }
         } else {
@@ -1406,7 +1455,7 @@ public class MainController {
         for (Map.Entry<String, Double> entry : sortedEntries) {
             final String color = getCategoryColor(entry.getKey());
             PieChart.Data data = new PieChart.Data(
-                entry.getKey() + " (" + String.format("%.2f", entry.getValue()) + ")",
+                entry.getKey() + " (" + fmt(entry.getValue()) + ")",
                 entry.getValue());
             data.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
@@ -1463,19 +1512,38 @@ public class MainController {
         statusSaveLabel.setText("Last saved: just now");
     }
 
+    private String fmt(double amount) {
+        return currencySymbol + String.format("%.2f", amount);
+    }
+
     private String getCategoryColor(String category) {
         int hash = Math.abs(category.hashCode());
         return CATEGORY_COLORS[hash % CATEGORY_COLORS.length];
     }
 
+    private PauseTransition messageFade;
+
     private void showMessage(String message, boolean isError) {
         errorLabel.setText(message);
+        errorLabel.setOpacity(1.0);
         if (message.isEmpty()) {
             errorLabel.getStyleClass().setAll("error-label");
         } else if (isError) {
             errorLabel.getStyleClass().setAll("error-label", "error-message");
         } else {
             errorLabel.getStyleClass().setAll("error-label", "success-message");
+        }
+        // Auto-fade success messages after 3 seconds
+        if (!isError && !message.isEmpty()) {
+            if (messageFade != null) messageFade.stop();
+            messageFade = new PauseTransition(Duration.seconds(3));
+            messageFade.setOnFinished(e -> {
+                javafx.animation.FadeTransition fade = new javafx.animation.FadeTransition(Duration.millis(500), errorLabel);
+                fade.setFromValue(1.0);
+                fade.setToValue(0.0);
+                fade.play();
+            });
+            messageFade.playFromStart();
         }
     }
 }
