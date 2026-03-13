@@ -11,7 +11,7 @@ public class DeleteExpenseCommand implements Command {
 
     @Override
     public void execute() {
-        manager.getExpenses().remove(expense);
+        manager.removeExpense(expense);
     }
 
     @Override

@@ -68,6 +68,13 @@ public class ExpenseManager {
         }
     }
 
+    public void removeExpense(Expense expense) {
+        expenses.remove(expense);
+        if (expense instanceof RecurringExpense) {
+            baseRecurringExpenses.remove(expense);
+        }
+    }
+
     public void updateRecurringExpense(RecurringExpense oldExpense, RecurringExpense newExpense) {
         int index = baseRecurringExpenses.indexOf(oldExpense);
         if (index != -1) {
@@ -90,12 +97,12 @@ public class ExpenseManager {
     }
 
     public void generateRecurringExpenses(LocalDate upToDate) {
-        expenses.removeIf(e -> e.getRecurringId() != null && !baseRecurringExpenses.contains(e.getSourceRecurringExpense()));
+        expenses.removeIf(e -> e.getRecurringId() != null);
         generatedRecurringIds.clear();
 
         List<Expense> generatedExpenses = new ArrayList<>();
         for (RecurringExpense recurringExpense : baseRecurringExpenses) {
-            LocalDate currentDate = getNextRecurringDate(recurringExpense);
+            LocalDate currentDate = recurringExpense.getDate();
             LocalDate endDate = recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : upToDate;
 
             while (!currentDate.isAfter(endDate) && !currentDate.isAfter(upToDate)) {
@@ -137,10 +144,6 @@ public class ExpenseManager {
         generateRecurringExpenses(LocalDate.now());
     }
 
-    private LocalDate getNextRecurringDate(RecurringExpense expense) {
-        return getNextRecurringDate(expense, expense.getDate());
-    }
-
     private LocalDate getNextRecurringDate(RecurringExpense expense, LocalDate fromDate) {
         return switch (expense.getFrequency()) {
             case DAILY -> fromDate.plusDays(1);
@@ -153,10 +156,6 @@ public class ExpenseManager {
     private String generateRecurringId(RecurringExpense expense, LocalDate date) {
         return expense.getAmount() + "|" + expense.getCategory() + "|" +
                expense.getDate() + "|" + expense.getFrequency() + "|" + date;
-    }
-
-    public void clearGeneratedRecurringIds() {
-        generatedRecurringIds.clear();
     }
 
     public void loadExpenses(List<Expense> loadedExpenses) {

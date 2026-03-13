@@ -16,6 +16,6 @@ public class AddExpenseCommand implements Command {
 
     @Override
     public void undo() {
-        manager.getExpenses().remove(expense);
+        manager.removeExpense(expense);
     }
 }
