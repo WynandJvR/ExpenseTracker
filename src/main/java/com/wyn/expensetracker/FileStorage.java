@@ -241,26 +241,52 @@ public class FileStorage {
         return parts.toArray(new String[0]);
     }
 	
-    public void saveCurrencySymbol(String symbol) throws IOException {
-        try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "settings.txt"))) {
-            out.println("currency=" + symbol);
-        }
-    }
-
-    public String loadCurrencySymbol() {
+    private Map<String, String> loadSettings() {
+        Map<String, String> settings = new HashMap<>();
         File file = new File(BASE_DIR + File.separator + "settings.txt");
-        if (!file.exists()) return "R";
+        if (!file.exists()) return settings;
         try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                if (line.startsWith("currency=")) {
-                    return line.substring("currency=".length()).trim();
+                int eq = line.indexOf('=');
+                if (eq > 0) {
+                    settings.put(line.substring(0, eq).trim(), line.substring(eq + 1).trim());
                 }
             }
         } catch (IOException e) {
             System.err.println("Error loading settings: " + e.getMessage());
         }
-        return "R";
+        return settings;
+    }
+
+    private void saveSetting(String key, String value) throws IOException {
+        Map<String, String> settings = loadSettings();
+        settings.put(key, value);
+        try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "settings.txt"))) {
+            for (Map.Entry<String, String> entry : settings.entrySet()) {
+                out.println(entry.getKey() + "=" + entry.getValue());
+            }
+        }
+    }
+
+    public void saveCurrencySymbol(String symbol) throws IOException {
+        saveSetting("currency", symbol);
+    }
+
+    public String loadCurrencySymbol() {
+        return loadSettings().getOrDefault("currency", "R");
+    }
+
+    public void saveRecurringIncome(double amount) throws IOException {
+        saveSetting("recurringIncome", String.valueOf(amount));
+    }
+
+    public double loadRecurringIncome() {
+        try {
+            return Double.parseDouble(loadSettings().getOrDefault("recurringIncome", "0"));
+        } catch (NumberFormatException e) {
+            return 0.0;
+        }
     }
 
     public void saveBudgets(Map<String, Double> budgets) throws IOException {

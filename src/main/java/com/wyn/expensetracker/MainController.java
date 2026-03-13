@@ -62,6 +62,7 @@ public class MainController {
     @FXML private Button updateRecurringButton;
 
     // --- Left panel: Income & Search ---
+    @FXML private TextField recurringIncomeField;
     @FXML private TextField incomeField;
     @FXML private Label totalLabel;
     @FXML private Label moneySavedLabel;
@@ -114,6 +115,8 @@ public class MainController {
     private Map<YearMonth, Double> incomes;
     private Map<String, Double> budgets;
     private String currencySymbol = "R";
+    private double recurringIncome = 0.0;
+    private boolean suppressIncomeListener = false;
     private RecurringExpense selectedRecurringExpense;
     private Stage stage;
 
@@ -190,6 +193,24 @@ public class MainController {
         // Chart period combo
         chartPeriodCombo.setItems(FXCollections.observableArrayList("All Time", "By Year", "By Month"));
         chartPeriodCombo.setValue("All Time");
+
+        // Recurring income
+        recurringIncome = storage.loadRecurringIncome();
+        if (recurringIncome > 0) {
+            recurringIncomeField.setText(String.format("%.2f", recurringIncome));
+        }
+        recurringIncomeField.textProperty().addListener((obs, oldVal, newVal) -> {
+            try {
+                recurringIncome = (newVal == null || newVal.isEmpty()) ? 0.0 : Double.parseDouble(newVal);
+                if (recurringIncome < 0) { recurringIncome = 0; return; }
+                storage.saveRecurringIncome(recurringIncome);
+                updateIncomeField();
+            } catch (NumberFormatException e) {
+                // ignore while typing
+            } catch (IOException e) {
+                showMessage("Error saving recurring income: " + e.getMessage(), true);
+            }
+        });
 
         // Currency combo
         currencySymbol = storage.loadCurrencySymbol();
@@ -388,14 +409,26 @@ public class MainController {
             updateIncomeField();
         });
 
-        // Income field
+        // Income field — manual per-month override
         incomeField.textProperty().addListener((observable, oldValue, newValue) -> {
+            if (suppressIncomeListener) return;
             Integer selectedYear = yearCombo.getValue();
             Month selectedMonth = monthCombo.getValue();
             if (selectedYear == null || selectedMonth == null) return;
             YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
             try {
-                double incomeValue = newValue.isEmpty() ? 0.0 : Double.parseDouble(newValue);
+                if (newValue == null || newValue.isEmpty()) {
+                    // Clear manual override — fall back to recurring
+                    incomes.remove(selectedYearMonth);
+                    try {
+                        storage.saveIncomes(incomes);
+                    } catch (IOException ex) {
+                        showMessage("Error saving incomes: " + ex.getMessage(), true);
+                    }
+                    updateTotalExpenses();
+                    return;
+                }
+                double incomeValue = Double.parseDouble(newValue);
                 if (incomeValue < 0) {
                     showMessage("Income cannot be negative", true);
                     return;
@@ -1241,15 +1274,27 @@ public class MainController {
     }
 
     private void updateIncomeField() {
+        suppressIncomeListener = true;
         Integer selectedYear = yearCombo.getValue();
         Month selectedMonth = monthCombo.getValue();
         if (selectedYear == null || selectedMonth == null) {
             incomeField.setText("");
+            incomeField.setPromptText("Leave empty to use recurring");
+            suppressIncomeListener = false;
             return;
         }
         YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
-        Double income = incomes.get(selectedYearMonth);
-        incomeField.setText(income != null ? String.format("%.2f", income) : "");
+        Double manualIncome = incomes.get(selectedYearMonth);
+        if (manualIncome != null) {
+            incomeField.setText(String.format("%.2f", manualIncome));
+            incomeField.setPromptText("Clear to use recurring");
+        } else {
+            incomeField.setText("");
+            incomeField.setPromptText(recurringIncome > 0
+                ? String.format("Using recurring: %.2f", recurringIncome)
+                : "Leave empty to use recurring");
+        }
+        suppressIncomeListener = false;
     }
 
     private void updateYearList() {
@@ -1329,7 +1374,7 @@ public class MainController {
         totalLabel.setText(String.format("Total Expenses for %s %d: %s",
                 selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, fmt(total)));
 
-        double income = incomes.getOrDefault(selectedYearMonth, 0.0);
+        double income = incomes.getOrDefault(selectedYearMonth, recurringIncome);
         double moneySaved = income - total;
         if (moneySaved >= 0) {
             moneySavedLabel.setText("Money Saved: " + fmt(moneySaved));
