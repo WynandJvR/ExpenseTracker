@@ -157,8 +157,10 @@
                     <!-- Income &amp; Savings -->
                     <VBox spacing="5" styleClass="panel-box">
                         <Label text="Income &amp; Savings" styleClass="section-title"/>
-                        <Label text="Monthly Income:" styleClass="form-label"/>
-                        <TextField fx:id="incomeField" promptText="e.g., 5000.00" styleClass="text-field"/>
+                        <Label text="Recurring Monthly Income:" styleClass="form-label"/>
+                        <TextField fx:id="recurringIncomeField" promptText="e.g., 15000.00" styleClass="text-field"/>
+                        <Label text="This Month (override):" styleClass="form-label"/>
+                        <TextField fx:id="incomeField" promptText="Leave empty to use recurring" styleClass="text-field"/>
                         <Separator/>
                         <VBox spacing="5">
                             <Label fx:id="totalLabel" text="Total Expenses: 0.00" styleClass="total-label"/>
