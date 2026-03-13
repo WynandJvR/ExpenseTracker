@@ -1,5 +1,6 @@
 package com.wyn.expensetracker;
 
+import javafx.animation.FadeTransition;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -68,6 +69,9 @@ public class MainController {
     @FXML private Label moneySavedLabel;
     @FXML private TextField searchField;
     @FXML private Label errorLabel;
+    @FXML private Label expenseErrorLabel;
+    @FXML private Label addRecurringErrorLabel;
+    @FXML private Label editRecurringErrorLabel;
     @FXML private ComboBox<String> currencyCombo;
 
     // --- Right panel ---
@@ -191,8 +195,9 @@ public class MainController {
         setupComboCellFactory(monthCombo);
 
         // Chart period combo
-        chartPeriodCombo.setItems(FXCollections.observableArrayList("All Time", "By Year", "By Month"));
-        chartPeriodCombo.setValue("All Time");
+        chartPeriodCombo.setItems(FXCollections.observableArrayList(
+            "All Time", "Last 12 Months", "Last 6 Months", "By Year", "By Month"));
+        chartPeriodCombo.setValue("Last 12 Months");
 
         // Recurring income
         recurringIncome = storage.loadRecurringIncome();
@@ -688,30 +693,30 @@ public class MainController {
     @FXML
     private void handleUpdateRecurring() {
         if (selectedRecurringExpense == null) {
-            showMessage("Please select a recurring expense to update", true);
+            showMessageOn("Please select a recurring expense to update", true, editRecurringErrorLabel);
             return;
         }
 
         try {
             double amount = Double.parseDouble(editRecurringAmountField.getText());
             if (amount <= 0) {
-                showMessage("Amount must be positive", true);
+                showMessageOn("Amount must be positive", true, editRecurringErrorLabel);
                 return;
             }
             String category = editRecurringCategoryCombo.getValue();
             if (category == null || category.trim().isEmpty()) {
-                showMessage("Category cannot be empty", true);
+                showMessageOn("Category cannot be empty", true, editRecurringErrorLabel);
                 return;
             }
             LocalDate date = editRecurringDatePicker.getValue();
             if (date == null) {
-                showMessage("Please select a start date", true);
+                showMessageOn("Please select a start date", true, editRecurringErrorLabel);
                 return;
             }
             String description = editRecurringDescField.getText().trim();
             RecurrenceType frequency = editRecurringFreqCombo.getValue();
             if (frequency == null) {
-                showMessage("Please select a recurrence frequency", true);
+                showMessageOn("Please select a recurrence frequency", true, editRecurringErrorLabel);
                 return;
             }
             LocalDate endDate = editRecurringEndDatePicker.getValue();
@@ -724,12 +729,12 @@ public class MainController {
                 recurringList.setAll(manager.getBaseRecurringExpenses());
                 clearEditRecurringForm();
                 updateRecurringButton.setDisable(true);
-                showMessage("Recurring expense updated successfully!", false);
+                showMessageOn("Recurring expense updated successfully!", false, editRecurringErrorLabel);
             } catch (Exception ex) {
-                showMessage("Error updating recurring expense: " + ex.getMessage(), true);
+                showMessageOn("Error updating recurring expense: " + ex.getMessage(), true, editRecurringErrorLabel);
             }
         } catch (NumberFormatException ex) {
-            showMessage("Invalid amount: Please enter a valid number (e.g., 10.99)", true);
+            showMessageOn("Invalid amount: Please enter a valid number (e.g., 10.99)", true, editRecurringErrorLabel);
         }
     }
 
@@ -737,7 +742,7 @@ public class MainController {
     private void handleDeleteRecurring() {
         RecurringExpense selected = recurringTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            showMessage("Please select a recurring expense to delete", true);
+            showMessageOn("Please select a recurring expense to delete", true, editRecurringErrorLabel);
             return;
         }
 
@@ -759,9 +764,9 @@ public class MainController {
                 recurringList.setAll(manager.getBaseRecurringExpenses());
                 clearEditRecurringForm();
                 updateRecurringButton.setDisable(true);
-                showMessage("Recurring expense deleted successfully!", false);
+                showMessageOn("Recurring expense deleted successfully!", false, editRecurringErrorLabel);
             } catch (Exception ex) {
-                showMessage("Error deleting recurring expense: " + ex.getMessage(), true);
+                showMessageOn("Error deleting recurring expense: " + ex.getMessage(), true, editRecurringErrorLabel);
             }
         }
     }
@@ -1472,25 +1477,33 @@ public class MainController {
         }
 
         YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
+        YearMonth now = YearMonth.now();
 
         List<Expense> chartExpenses = expenseList.stream()
             .filter(expense -> {
+                YearMonth ym = YearMonth.from(expense.getDate());
                 switch (chartPeriod) {
                     case "By Year":
                         return expense.getDate().getYear() == selectedYear;
                     case "By Month":
-                        return YearMonth.from(expense.getDate()).equals(selectedYearMonth);
+                        return ym.equals(selectedYearMonth);
+                    case "Last 6 Months":
+                        return !ym.isBefore(now.minusMonths(5)) && !ym.isAfter(now);
+                    case "Last 12 Months":
+                        return !ym.isBefore(now.minusMonths(11)) && !ym.isAfter(now);
                     default: // All Time
                         return true;
                 }
             })
             .collect(Collectors.toList());
 
-        // PieChart
+        // --- PieChart ---
         Map<String, Double> categoryMap = chartExpenses.stream()
             .collect(Collectors.groupingBy(
                 Expense::getCategory,
                 Collectors.summingDouble(Expense::getAmount)));
+
+        double pieTotal = categoryMap.values().stream().mapToDouble(Double::doubleValue).sum();
 
         ObservableList<PieChart.Data> pieChartData = FXCollections.observableArrayList();
         List<Map.Entry<String, Double>> sortedEntries = categoryMap.entrySet().stream()
@@ -1499,51 +1512,121 @@ public class MainController {
 
         for (Map.Entry<String, Double> entry : sortedEntries) {
             final String color = getCategoryColor(entry.getKey());
+            final String category = entry.getKey();
+            final double amount = entry.getValue();
+            double pct = pieTotal > 0 ? (amount / pieTotal) * 100 : 0;
             PieChart.Data data = new PieChart.Data(
-                entry.getKey() + " (" + fmt(entry.getValue()) + ")",
-                entry.getValue());
+                category + " (" + String.format("%.0f%%", pct) + ")",
+                amount);
             data.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
                     newNode.setStyle("-fx-pie-color: " + color + ";");
+                    Tooltip tooltip = new Tooltip(category + ": " + fmt(amount)
+                        + " (" + String.format("%.1f%%", pieTotal > 0 ? (amount / pieTotal) * 100 : 0) + ")");
+                    tooltip.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, tooltip);
                 }
             });
             pieChartData.add(data);
         }
         categoryChart.setData(pieChartData);
+        categoryChart.setAnimated(true);
 
-        // BarChart
+        // --- BarChart ---
+        monthlyTrendChart.setAnimated(false);
         monthlyTrendChart.getData().clear();
-        XYChart.Series<String, Number> series = new XYChart.Series<>();
-        Map<YearMonth, Double> monthlyTotals = expenseList.stream()
-            .collect(Collectors.groupingBy(
-                expense -> YearMonth.from(expense.getDate()),
-                Collectors.summingDouble(Expense::getAmount)));
+        monthlyTrendChart.setAnimated(true);
 
-        monthlyTotals.entrySet().stream()
-            .sorted(Map.Entry.comparingByKey())
-            .filter(entry -> {
-                switch (chartPeriod) {
-                    case "By Year":
-                        return entry.getKey().getYear() == selectedYear;
-                    case "By Month":
-                        return entry.getKey().equals(selectedYearMonth);
-                    default: // All Time
-                        return true;
-                }
-            })
-            .forEach(entry -> {
-                XYChart.Data<String, Number> data = new XYChart.Data<>(
-                    entry.getKey().getMonth().toString() + " " + entry.getKey().getYear(),
-                    entry.getValue());
+        boolean isDailyMode = "By Month".equals(chartPeriod);
+
+        XYChart.Series<String, Number> series = new XYChart.Series<>();
+
+        if (isDailyMode) {
+            // Daily breakdown for the selected month
+            Map<Integer, Double> dailyTotals = chartExpenses.stream()
+                .collect(Collectors.groupingBy(
+                    expense -> expense.getDate().getDayOfMonth(),
+                    Collectors.summingDouble(Expense::getAmount)));
+
+            int daysInMonth = selectedYearMonth.lengthOfMonth();
+            for (int day = 1; day <= daysInMonth; day++) {
+                double total = dailyTotals.getOrDefault(day, 0.0);
+                final int d = day;
+                XYChart.Data<String, Number> data = new XYChart.Data<>(String.valueOf(day), total);
                 data.nodeProperty().addListener((obs, oldNode, newNode) -> {
                     if (newNode != null) {
-                        newNode.setStyle("-fx-bar-fill: #4CAF50;");
+                        boolean isToday = selectedYearMonth.equals(YearMonth.now())
+                            && d == LocalDate.now().getDayOfMonth();
+                        String barColor = isToday ? "#FF6F61" : "#4CAF50";
+                        newNode.setStyle("-fx-bar-fill: " + barColor + ";");
+                        Tooltip tooltip = new Tooltip("Day " + d + ": " + fmt(total));
+                        tooltip.setStyle("-fx-font-size: 13px;");
+                        Tooltip.install(newNode, tooltip);
                     }
                 });
                 series.getData().add(data);
-            });
+            }
+            monthlyTrendChart.setTitle("Daily Spending — "
+                + selectedMonth.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + selectedYear);
+        } else {
+            // Monthly trend
+            Map<YearMonth, Double> monthlyTotals = expenseList.stream()
+                .collect(Collectors.groupingBy(
+                    expense -> YearMonth.from(expense.getDate()),
+                    Collectors.summingDouble(Expense::getAmount)));
+
+            monthlyTotals.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .filter(entry -> {
+                    YearMonth ym = entry.getKey();
+                    switch (chartPeriod) {
+                        case "By Year":
+                            return ym.getYear() == selectedYear;
+                        case "Last 6 Months":
+                            return !ym.isBefore(now.minusMonths(5)) && !ym.isAfter(now);
+                        case "Last 12 Months":
+                            return !ym.isBefore(now.minusMonths(11)) && !ym.isAfter(now);
+                        default: // All Time
+                            return true;
+                    }
+                })
+                .forEach(entry -> {
+                    String label = entry.getKey().getMonth()
+                        .getDisplayName(TextStyle.SHORT, Locale.getDefault())
+                        + " '" + String.format("%02d", entry.getKey().getYear() % 100);
+                    final double amount = entry.getValue();
+                    final YearMonth ym = entry.getKey();
+                    XYChart.Data<String, Number> data = new XYChart.Data<>(label, amount);
+                    data.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                        if (newNode != null) {
+                            boolean isCurrent = ym.equals(selectedYearMonth);
+                            String barColor = isCurrent ? "#FF6F61" : "#4CAF50";
+                            newNode.setStyle("-fx-bar-fill: " + barColor + ";");
+                            Tooltip tooltip = new Tooltip(
+                                ym.getMonth().getDisplayName(TextStyle.FULL, Locale.getDefault())
+                                + " " + ym.getYear() + ": " + fmt(amount));
+                            tooltip.setStyle("-fx-font-size: 13px;");
+                            Tooltip.install(newNode, tooltip);
+                        }
+                    });
+                    series.getData().add(data);
+                });
+            monthlyTrendChart.setTitle("Monthly Trend");
+        }
 
         monthlyTrendChart.getData().add(series);
+
+        // Fade-in animation for both charts
+        animateChartFadeIn(categoryChart);
+        animateChartFadeIn(monthlyTrendChart);
+    }
+
+    private void animateChartFadeIn(Node chart) {
+        chart.setOpacity(0);
+        FadeTransition fade = new FadeTransition(Duration.millis(300), chart);
+        fade.setFromValue(0);
+        fade.setToValue(1);
+        fade.play();
     }
 
     private void updateStatusBar() {
@@ -1569,21 +1652,41 @@ public class MainController {
     private PauseTransition messageFade;
 
     private void showMessage(String message, boolean isError) {
-        errorLabel.setText(message);
-        errorLabel.setOpacity(1.0);
-        if (message.isEmpty()) {
-            errorLabel.getStyleClass().setAll("error-label");
-        } else if (isError) {
-            errorLabel.getStyleClass().setAll("error-label", "error-message");
+        // Route to the correct label based on the active tab
+        Label target;
+        int activeTab = tabPane.getSelectionModel().getSelectedIndex();
+        if (activeTab == 1) {
+            target = addRecurringErrorLabel;
         } else {
-            errorLabel.getStyleClass().setAll("error-label", "success-message");
+            target = expenseErrorLabel;
+        }
+        showMessageOn(message, isError, target);
+    }
+
+    private void showMessageOn(String message, boolean isError, Label target) {
+        // Clear all error labels first
+        for (Label lbl : new Label[]{errorLabel, expenseErrorLabel, addRecurringErrorLabel, editRecurringErrorLabel}) {
+            if (lbl != target) {
+                lbl.setText("");
+                lbl.setOpacity(0);
+            }
+        }
+
+        target.setText(message);
+        target.setOpacity(1.0);
+        if (message.isEmpty()) {
+            target.getStyleClass().setAll("error-label");
+        } else if (isError) {
+            target.getStyleClass().setAll("error-label", "error-message");
+        } else {
+            target.getStyleClass().setAll("error-label", "success-message");
         }
         // Auto-fade success messages after 3 seconds
         if (!isError && !message.isEmpty()) {
             if (messageFade != null) messageFade.stop();
             messageFade = new PauseTransition(Duration.seconds(3));
             messageFade.setOnFinished(e -> {
-                javafx.animation.FadeTransition fade = new javafx.animation.FadeTransition(Duration.millis(500), errorLabel);
+                FadeTransition fade = new FadeTransition(Duration.millis(500), target);
                 fade.setFromValue(1.0);
                 fade.setToValue(0.0);
                 fade.play();

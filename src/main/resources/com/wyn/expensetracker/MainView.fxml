@@ -57,6 +57,7 @@
                                             <tooltip><Tooltip text="Redo (Ctrl+Y)"/></tooltip>
                                         </Button>
                                     </HBox>
+                                    <Label fx:id="expenseErrorLabel" styleClass="error-label"/>
                                 </VBox>
                             </Tab>
 
@@ -75,6 +76,12 @@
                                         <Label text="Category:" styleClass="form-label"/>
                                         <ComboBox fx:id="addRecurringCategoryCombo" promptText="Select or enter category" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
 
+                                        <HBox spacing="10">
+                                            <padding><Insets top="5" bottom="5"/></padding>
+                                            <Button text="Add Category" styleClass="primary-button" onAction="#handleAddCategory"/>
+                                            <Button text="Remove Category" styleClass="danger-button" onAction="#handleRemoveCategory"/>
+                                        </HBox>
+
                                         <Label text="Start Date:" styleClass="form-label"/>
                                         <DatePicker fx:id="addRecurringDatePicker" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
 
@@ -88,6 +95,7 @@
                                         <DatePicker fx:id="addRecurringEndDatePicker" promptText="Select end date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
 
                                         <Button text="Add Recurring Expense" styleClass="success-button" onAction="#handleAddRecurring"/>
+                                        <Label fx:id="addRecurringErrorLabel" styleClass="error-label"/>
                                     </VBox>
 
                                     <Separator/>
@@ -145,6 +153,7 @@
                                             <Button fx:id="updateRecurringButton" text="Update Expense" styleClass="success-button" disable="true" onAction="#handleUpdateRecurring"/>
                                             <Button text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteRecurring"/>
                                         </HBox>
+                                        <Label fx:id="editRecurringErrorLabel" styleClass="error-label"/>
                                     </VBox>
                                 </VBox>
                             </Tab>
