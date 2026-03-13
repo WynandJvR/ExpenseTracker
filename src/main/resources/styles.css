@@ -540,6 +540,22 @@
     -fx-background-color: #5C6BC0;
 }
 
+/* Budget progress bar */
+.progress-bar {
+    -fx-background-color: #424242;
+    -fx-background-radius: 3;
+}
+
+.progress-bar .track {
+    -fx-background-color: #424242;
+    -fx-background-radius: 3;
+}
+
+.progress-bar .bar {
+    -fx-background-radius: 3;
+    -fx-background-insets: 0;
+}
+
 /* Empty state labels */
 .empty-state-label {
     -fx-text-fill: #757575;

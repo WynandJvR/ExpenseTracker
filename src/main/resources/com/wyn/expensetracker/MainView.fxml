@@ -186,10 +186,15 @@
                     <!-- Period Selector -->
                     <HBox spacing="10" alignment="CENTER_LEFT">
                         <Label text="Select Period:" styleClass="section-title"/>
-                        <HBox spacing="10">
-                            <ComboBox fx:id="yearCombo" promptText="Year" styleClass="combo-box"/>
-                            <ComboBox fx:id="monthCombo" promptText="Month" styleClass="combo-box"/>
-                        </HBox>
+                        <Button text="&#x25C0;" styleClass="primary-button" onAction="#handlePrevMonth">
+                            <tooltip><Tooltip text="Previous Month (Alt+Left)"/></tooltip>
+                        </Button>
+                        <ComboBox fx:id="yearCombo" promptText="Year" styleClass="combo-box"/>
+                        <ComboBox fx:id="monthCombo" promptText="Month" styleClass="combo-box"/>
+                        <Button text="&#x25B6;" styleClass="primary-button" onAction="#handleNextMonth">
+                            <tooltip><Tooltip text="Next Month (Alt+Right)"/></tooltip>
+                        </Button>
+                        <Button text="This Month" styleClass="primary-button" onAction="#handleThisMonth"/>
                     </HBox>
 
                     <Separator/>
@@ -236,13 +241,19 @@
                     <Separator/>
 
                     <Label text="Expenses by Category" styleClass="table-title"/>
-                    <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="180">
+                    <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="200">
                         <columns>
-                            <TableColumn text="Category" prefWidth="120">
+                            <TableColumn text="Category" prefWidth="100">
                                 <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
                             </TableColumn>
-                            <TableColumn fx:id="categoryTotalColumn" text="Amount" prefWidth="80">
+                            <TableColumn fx:id="categoryTotalColumn" text="Spent" prefWidth="80">
                                 <cellValueFactory><PropertyValueFactory property="total"/></cellValueFactory>
+                            </TableColumn>
+                            <TableColumn fx:id="budgetColumn" text="Budget" prefWidth="80">
+                                <cellValueFactory><PropertyValueFactory property="budget"/></cellValueFactory>
+                            </TableColumn>
+                            <TableColumn fx:id="progressColumn" text="Progress" prefWidth="120">
+                                <cellValueFactory><PropertyValueFactory property="progress"/></cellValueFactory>
                             </TableColumn>
                         </columns>
                     </TableView>
