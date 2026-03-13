@@ -98,7 +98,7 @@ public class ExpenseTrackerApp extends Application {
                     manager.executeCommand(new AddExpenseCommand(manager, new Expense(50.0, "Food", LocalDate.now(), "Groceries")));
                     manager.executeCommand(new AddExpenseCommand(manager, new Expense(30.0, "Transport", LocalDate.now(), "Bus fare")));
                     errorLabel.setText("No expenses found. Added sample expenses.");
-                    storage.saveExpenses(manager.getExpenses());
+                    storage.saveExpenses(manager.getExpensesForSave());
                 }
             }
         } catch (Exception e) {
@@ -620,7 +620,7 @@ public class ExpenseTrackerApp extends Application {
                     filePath = defaultFile.getAbsolutePath();
                 }
 
-                storage.saveExpenses(manager.getExpenses(), filePath);
+                storage.saveExpenses(manager.getExpensesForSave(), filePath);
                 errorLabel.setText("Expenses exported to Excel successfully at: " + filePath);
                 errorLabel.getStyleClass().setAll("error-label", "success-message");
             } catch (IOException ex) {
@@ -732,7 +732,7 @@ public class ExpenseTrackerApp extends Application {
                 Expense expense = new Expense(amount, category, date, description.isEmpty() ? "" : description);
                 manager.executeCommand(new AddExpenseCommand(manager, expense));
                 try {
-                    storage.saveExpenses(manager.getExpenses());
+                    storage.saveExpenses(manager.getExpensesForSave());
                 } catch (Exception ex) {
                     manager.undo();
                     errorLabel.setText("Failed to save expense: " + ex.getMessage());
@@ -803,9 +803,9 @@ public class ExpenseTrackerApp extends Application {
                 RecurringExpense expense = new RecurringExpense(amount, category, date, description.isEmpty() ? "" : description, frequency, endDate);
                 manager.executeCommand(new AddExpenseCommand(manager, expense));
                 try {
-                    storage.saveExpenses(manager.getExpenses());
+                    storage.saveExpenses(manager.getExpensesForSave());
                     manager.generateRecurringExpenses(LocalDate.now());
-                    storage.saveExpenses(manager.getExpenses());
+                    storage.saveExpenses(manager.getExpensesForSave());
                     recurringList.setAll(manager.getBaseRecurringExpenses());
                 } catch (Exception ex) {
                     manager.undo();
@@ -850,7 +850,7 @@ public class ExpenseTrackerApp extends Application {
             if (result.isPresent() && result.get() == ButtonType.OK) {
                 manager.executeCommand(new DeleteExpenseCommand(manager, selectedExpense));
                 try {
-                    storage.saveExpenses(manager.getExpenses());
+                    storage.saveExpenses(manager.getExpensesForSave());
                     refreshTable();
                     errorLabel.setText("Expense deleted successfully!");
                     errorLabel.getStyleClass().setAll("error-label", "success-message");
@@ -866,7 +866,7 @@ public class ExpenseTrackerApp extends Application {
         undoButton.setOnAction(e -> {
             manager.undo();
             try {
-                storage.saveExpenses(manager.getExpenses());
+                storage.saveExpenses(manager.getExpensesForSave());
                 refreshTable();
                 recurringList.setAll(manager.getBaseRecurringExpenses());
                 updateUndoRedoButtons();
@@ -882,7 +882,7 @@ public class ExpenseTrackerApp extends Application {
         redoButton.setOnAction(e -> {
             manager.redo();
             try {
-                storage.saveExpenses(manager.getExpenses());
+                storage.saveExpenses(manager.getExpensesForSave());
                 refreshTable();
                 recurringList.setAll(manager.getBaseRecurringExpenses());
                 updateUndoRedoButtons();
@@ -933,7 +933,7 @@ public class ExpenseTrackerApp extends Application {
                 RecurringExpense newExpense = new RecurringExpense(amount, category, date, description, frequency, endDate);
                 manager.executeCommand(new UpdateRecurringExpenseCommand(manager, selectedRecurringExpense, newExpense));
                 try {
-                    storage.saveExpenses(manager.getExpenses());
+                    storage.saveExpenses(manager.getExpensesForSave());
                     refreshTable();
                     recurringList.setAll(manager.getBaseRecurringExpenses());
                     clearEditRecurringForm();
@@ -968,7 +968,7 @@ public class ExpenseTrackerApp extends Application {
             if (result.isPresent() && result.get() == ButtonType.OK) {
                 manager.executeCommand(new DeleteRecurringExpenseCommand(manager, selected));
                 try {
-                    storage.saveExpenses(manager.getExpenses());
+                    storage.saveExpenses(manager.getExpensesForSave());
                     refreshTable();
                     recurringList.setAll(manager.getBaseRecurringExpenses());
                     clearEditRecurringForm();

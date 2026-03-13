@@ -16,7 +16,6 @@ public class DeleteRecurringExpenseCommand implements Command {
 
     @Override
     public void undo() {
-        manager.getBaseRecurringExpenses().add(expense);
-        manager.generateRecurringExpenses(java.time.LocalDate.now());
+        manager.addExpense(expense);
     }
 }
