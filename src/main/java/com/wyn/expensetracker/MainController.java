@@ -1085,6 +1085,163 @@ public class MainController {
     }
 
     @FXML
+    private void handleDetectRecurring() {
+        RecurringPatternDetector detector = new RecurringPatternDetector();
+        List<RecurringPatternDetector.DetectedPattern> patterns = detector.detectPatterns(
+            manager.getExpenses(), manager.getBaseRecurringExpenses());
+
+        if (patterns.isEmpty()) {
+            showMessage("No recurring patterns detected in your expenses.", false);
+            return;
+        }
+
+        showDetectedPatternsDialog(patterns);
+    }
+
+    private void showDetectedPatternsDialog(List<RecurringPatternDetector.DetectedPattern> patterns) {
+        Stage dialog = new Stage();
+        dialog.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        dialog.initOwner(stage);
+        dialog.setTitle("Detected Recurring Patterns");
+
+        Label header = new Label("We found " + patterns.size() + " potential recurring "
+            + (patterns.size() == 1 ? "expense" : "expenses") + " in your history.");
+        header.getStyleClass().add("section-title");
+        header.setWrapText(true);
+
+        Label subtitle = new Label("Select the ones you'd like to convert to recurring expenses.");
+        subtitle.getStyleClass().add("form-label");
+        subtitle.setWrapText(true);
+
+        // Build a table of detected patterns with checkboxes
+        TableView<RecurringPatternDetector.DetectedPattern> patternTable = new TableView<>();
+        patternTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        patternTable.setEditable(true);
+
+        TableColumn<RecurringPatternDetector.DetectedPattern, Boolean> selectCol = new TableColumn<>("");
+        selectCol.setCellValueFactory(cd -> cd.getValue().selectedProperty());
+        selectCol.setCellFactory(javafx.scene.control.cell.CheckBoxTableCell.forTableColumn(selectCol));
+        selectCol.setEditable(true);
+        selectCol.setPrefWidth(40);
+
+        TableColumn<RecurringPatternDetector.DetectedPattern, String> descCol = new TableColumn<>("Description");
+        descCol.setCellValueFactory(new PropertyValueFactory<>("description"));
+        descCol.setPrefWidth(150);
+
+        TableColumn<RecurringPatternDetector.DetectedPattern, String> catCol = new TableColumn<>("Category");
+        catCol.setCellValueFactory(new PropertyValueFactory<>("category"));
+        catCol.setPrefWidth(100);
+
+        TableColumn<RecurringPatternDetector.DetectedPattern, Double> amtCol = new TableColumn<>("Avg Amount");
+        amtCol.setCellValueFactory(new PropertyValueFactory<>("averageAmount"));
+        amtCol.setPrefWidth(90);
+        amtCol.setCellFactory(tc -> new TableCell<RecurringPatternDetector.DetectedPattern, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : fmt(item));
+            }
+        });
+
+        TableColumn<RecurringPatternDetector.DetectedPattern, RecurrenceType> freqCol = new TableColumn<>("Frequency");
+        freqCol.setCellValueFactory(new PropertyValueFactory<>("frequency"));
+        freqCol.setPrefWidth(80);
+
+        TableColumn<RecurringPatternDetector.DetectedPattern, Integer> countCol = new TableColumn<>("Occurrences");
+        countCol.setCellValueFactory(new PropertyValueFactory<>("occurrences"));
+        countCol.setPrefWidth(80);
+
+        TableColumn<RecurringPatternDetector.DetectedPattern, LocalDate> dateCol = new TableColumn<>("First Seen");
+        dateCol.setCellValueFactory(new PropertyValueFactory<>("earliestDate"));
+        dateCol.setPrefWidth(100);
+
+        patternTable.getColumns().addAll(selectCol, descCol, catCol, amtCol, freqCol, countCol, dateCol);
+        patternTable.getItems().addAll(patterns);
+        patternTable.setPrefHeight(Math.min(300, 50 + patterns.size() * 30));
+
+        // Select all / deselect all
+        Button selectAllBtn = new Button("Select All");
+        selectAllBtn.getStyleClass().add("primary-button");
+        selectAllBtn.setOnAction(e -> patterns.forEach(p -> p.setSelected(true)));
+
+        Button deselectAllBtn = new Button("Deselect All");
+        deselectAllBtn.getStyleClass().add("primary-button");
+        deselectAllBtn.setOnAction(e -> patterns.forEach(p -> p.setSelected(false)));
+
+        HBox selectionButtons = new HBox(10, selectAllBtn, deselectAllBtn);
+
+        CheckBox removeOriginals = new CheckBox("Remove original one-time expenses after conversion");
+        removeOriginals.setSelected(true);
+        removeOriginals.getStyleClass().add("form-label");
+
+        Label statusLabel = new Label();
+        statusLabel.getStyleClass().add("error-label");
+
+        Button convertBtn = new Button("Convert Selected to Recurring");
+        convertBtn.getStyleClass().add("success-button");
+        convertBtn.setOnAction(e -> {
+            List<RecurringPatternDetector.DetectedPattern> selected = patterns.stream()
+                .filter(RecurringPatternDetector.DetectedPattern::isSelected)
+                .collect(Collectors.toList());
+            if (selected.isEmpty()) {
+                statusLabel.setText("Please select at least one pattern.");
+                statusLabel.getStyleClass().setAll("error-label", "error-message");
+                return;
+            }
+
+            int converted = 0;
+            for (RecurringPatternDetector.DetectedPattern pattern : selected) {
+                RecurringExpense recurring = new RecurringExpense(
+                    pattern.getAverageAmount(),
+                    pattern.getCategory(),
+                    pattern.getEarliestDate(),
+                    pattern.getDescription() != null ? pattern.getDescription() : "",
+                    pattern.getFrequency(),
+                    null // no end date
+                );
+                manager.executeCommand(new AddExpenseCommand(manager, recurring));
+
+                if (removeOriginals.isSelected()) {
+                    for (Expense original : pattern.getMatchingExpenses()) {
+                        manager.executeCommand(new DeleteExpenseCommand(manager, original));
+                    }
+                }
+                converted++;
+            }
+
+            try {
+                manager.generateRecurringExpenses(LocalDate.now());
+                storage.saveExpenses(manager.getExpensesForSave());
+                recurringList.setAll(manager.getBaseRecurringExpenses());
+                refreshTable();
+            } catch (IOException ex) {
+                showMessage("Failed to save: " + ex.getMessage(), true);
+            }
+
+            showMessage(converted + " recurring " + (converted == 1 ? "expense" : "expenses")
+                + " created successfully!", false);
+            dialog.close();
+        });
+
+        Button cancelBtn = new Button("Cancel");
+        cancelBtn.getStyleClass().add("danger-button");
+        cancelBtn.setOnAction(e -> dialog.close());
+
+        HBox actionButtons = new HBox(10, convertBtn, cancelBtn);
+        actionButtons.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+
+        VBox content = new VBox(12, header, subtitle, patternTable, selectionButtons,
+            removeOriginals, statusLabel, actionButtons);
+        content.setPadding(new javafx.geometry.Insets(20));
+        content.getStyleClass().add("root-pane");
+
+        Scene scene = new Scene(content, 700, 500);
+        scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        dialog.setScene(scene);
+        dialog.showAndWait();
+    }
+
+    @FXML
     private void handleAddCategory() {
         TextInputDialog dialog = new TextInputDialog();
         dialog.initOwner(stage);
@@ -2862,7 +3019,7 @@ public class MainController {
 
         ImportReviewDialog dialog = new ImportReviewDialog(
             stage, allItems, categories, currencySymbol, null, categorizationRules,
-            manager.getExpenses());
+            manager.getExpenses(), manager.getBaseRecurringExpenses());
         List<Expense> expenses = dialog.showAndWait();
         if (expenses != null && !expenses.isEmpty()) {
             saveLearnedRules(dialog);

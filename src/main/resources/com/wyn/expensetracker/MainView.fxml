@@ -111,6 +111,11 @@
 
                                     <Separator/>
 
+                                    <!-- Detect Recurring Patterns -->
+                                    <Button text="Detect Recurring Patterns" styleClass="primary-button" onAction="#handleDetectRecurring" maxWidth="1.7976931348623157E308"/>
+
+                                    <Separator/>
+
                                     <!-- Manage Recurring Expenses -->
                                     <Label text="Manage Recurring Expenses" styleClass="section-title"/>
                                     <TableView fx:id="recurringTable" styleClass="table-view" prefHeight="150">
