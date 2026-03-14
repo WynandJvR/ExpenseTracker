@@ -73,6 +73,8 @@ public class MainController {
     @FXML private Label addRecurringErrorLabel;
     @FXML private Label editRecurringErrorLabel;
     @FXML private ComboBox<String> currencyCombo;
+    @FXML private VBox incomeFieldsBox;
+    @FXML private Button toggleIncomeButton;
 
     // --- Left panel: Import tab ---
     @FXML private Label importErrorLabel;
@@ -936,6 +938,16 @@ public class MainController {
         } catch (IOException ex) {
             showMessage("Failed to export: " + ex.getMessage(), true);
         }
+    }
+
+    // ======================== INCOME TOGGLE ========================
+
+    @FXML
+    private void handleToggleIncome() {
+        boolean show = !incomeFieldsBox.isVisible();
+        incomeFieldsBox.setVisible(show);
+        incomeFieldsBox.setManaged(show);
+        toggleIncomeButton.setText(show ? "Hide" : "Edit");
     }
 
     // ======================== DATE NAVIGATION ========================
