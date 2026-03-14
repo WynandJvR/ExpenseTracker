@@ -410,6 +410,66 @@
                                             <PieChart fx:id="recurringVsOneTimeChart" title="Recurring vs One-Time" legendVisible="true" prefHeight="280" styleClass="chart"/>
                                         </VBox>
                                     </Tab>
+
+                                    <!-- Projections Tab -->
+                                    <Tab text="Projections" fx:id="projectionsTab">
+                                        <VBox spacing="10" fx:id="projectionsContent">
+                                            <padding><Insets top="10" right="5" bottom="10" left="5"/></padding>
+
+                                            <!-- Period &amp; Methodology Header -->
+                                            <VBox spacing="4" styleClass="projection-header">
+                                                <Label fx:id="projPeriodLabel" text="" styleClass="projection-period-label"/>
+                                                <Label fx:id="projMethodLabel" text="" styleClass="projection-method-label" wrapText="true"/>
+                                            </VBox>
+
+                                            <!-- Summary Cards -->
+                                            <HBox spacing="10" alignment="CENTER_LEFT" fx:id="projectionCards">
+                                                <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" prefWidth="140">
+                                                    <Label text="Projected Expenses" styleClass="dashboard-card-title"/>
+                                                    <Label fx:id="projExpenses" text="-" styleClass="dashboard-card-value"/>
+                                                    <Label fx:id="projExpensesSubtitle" text="" styleClass="dashboard-card-subtitle"/>
+                                                </VBox>
+                                                <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" prefWidth="140">
+                                                    <Label text="Projected Income" styleClass="dashboard-card-title"/>
+                                                    <Label fx:id="projIncome" text="-" styleClass="dashboard-card-value"/>
+                                                    <Label fx:id="projIncomeSubtitle" text="" styleClass="dashboard-card-subtitle"/>
+                                                </VBox>
+                                                <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" prefWidth="140">
+                                                    <Label text="Net Savings" styleClass="dashboard-card-title"/>
+                                                    <Label fx:id="projNetSavings" text="-" styleClass="dashboard-card-value"/>
+                                                    <Label fx:id="projNetSavingsSubtitle" text="" styleClass="dashboard-card-subtitle"/>
+                                                </VBox>
+                                                <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" prefWidth="140">
+                                                    <Label text="6-Month Savings" styleClass="dashboard-card-title"/>
+                                                    <Label fx:id="projCumulativeSavings" text="-" styleClass="dashboard-card-value"/>
+                                                </VBox>
+                                            </HBox>
+
+                                            <!-- Trend Indicator -->
+                                            <Label fx:id="projTrendIndicator" text="" styleClass="projection-trend-label"/>
+
+                                            <!-- No Data Label -->
+                                            <Label fx:id="projNoDataLabel" text="" styleClass="chart-subtitle" managed="false" visible="false"/>
+
+                                            <!-- Chart 1: 6-Month Financial Outlook -->
+                                            <LineChart fx:id="projOutlookChart" title="6-Month Financial Outlook" legendVisible="true" prefHeight="280" createSymbols="true" styleClass="chart">
+                                                <xAxis><CategoryAxis/></xAxis>
+                                                <yAxis><NumberAxis/></yAxis>
+                                            </LineChart>
+
+                                            <!-- Chart 2: Balance Trajectory -->
+                                            <AreaChart fx:id="projBalanceChart" title="Balance Trajectory" legendVisible="true" prefHeight="280" createSymbols="false" styleClass="chart projection-area-chart">
+                                                <xAxis><CategoryAxis/></xAxis>
+                                                <yAxis><NumberAxis/></yAxis>
+                                            </AreaChart>
+
+                                            <!-- Chart 3: Projected Category Breakdown -->
+                                            <StackedBarChart fx:id="projCategoryChart" title="Projected Category Breakdown" legendVisible="false" prefHeight="300" styleClass="chart">
+                                                <xAxis><CategoryAxis/></xAxis>
+                                                <yAxis><NumberAxis/></yAxis>
+                                            </StackedBarChart>
+                                        </VBox>
+                                    </Tab>
                                 </tabs>
                             </TabPane>
                         </VBox>
