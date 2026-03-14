@@ -1,7 +1,13 @@
 package com.wyn.expensetracker;
 
 import javafx.animation.FadeTransition;
+import javafx.animation.Interpolator;
+import javafx.animation.KeyFrame;
+import javafx.animation.KeyValue;
 import javafx.animation.PauseTransition;
+import javafx.animation.Timeline;
+import javafx.beans.property.DoubleProperty;
+import javafx.beans.property.SimpleDoubleProperty;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -16,6 +22,8 @@ import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.chart.*;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
@@ -32,6 +40,11 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class MainController {
+
+    // --- Layout ---
+    @FXML private SplitPane splitPane;
+    @FXML private ScrollPane leftScrollPane;
+    @FXML private Button toggleSidebarButton;
 
     // --- Left panel: Expense tab ---
     @FXML private TabPane tabPane;
@@ -97,7 +110,8 @@ public class MainController {
     @FXML private Button exportButton;
     @FXML private ComboBox<String> chartPeriodCombo;
     @FXML private PieChart categoryChart;
-    @FXML private BarChart<String, Number> monthlyTrendChart;
+    @FXML private StackedBarChart<String, Number> monthlyTrendChart;
+    @FXML private FlowPane trendChartLegend;
     @FXML private Label statusSaveLabel;
     @FXML private Label statusCountLabel;
     @FXML private Label dashTotalSpent;
@@ -151,6 +165,10 @@ public class MainController {
     private CategorizationRules categorizationRules;
     private ReceiptScanner receiptScanner;
     private ObservableList<ImportLog> importLogs;
+    private boolean sidebarCollapsed = false;
+    private boolean sidebarAnimating = false;
+    private double savedDividerPosition = 0.3;
+    private Node leftPane;
 
     @FXML
     public void initialize() {
@@ -188,6 +206,9 @@ public class MainController {
         setupListeners();
         setupEmptyStates();
         setupRulesTable();
+
+        // Store reference to left pane for sidebar toggle
+        leftPane = leftScrollPane;
 
         // Initial date pickers
         datePicker.setValue(LocalDate.now());
@@ -547,6 +568,10 @@ public class MainController {
                         searchField.requestFocus();
                         event.consume();
                         break;
+                    case B:
+                        handleToggleSidebar();
+                        event.consume();
+                        break;
                     default:
                         break;
                 }
@@ -569,6 +594,46 @@ public class MainController {
     }
 
     // ======================== EVENT HANDLERS ========================
+
+    @FXML
+    private void handleToggleSidebar() {
+        if (sidebarAnimating) return;
+        sidebarAnimating = true;
+
+        double fromPos, toPos;
+        if (sidebarCollapsed) {
+            // Expanding — make left pane visible before animating
+            leftPane.setVisible(true);
+            leftPane.setManaged(true);
+            fromPos = splitPane.getDividerPositions()[0];
+            toPos = savedDividerPosition;
+        } else {
+            // Collapsing — save current position
+            savedDividerPosition = splitPane.getDividerPositions()[0];
+            fromPos = savedDividerPosition;
+            toPos = 0.0;
+        }
+
+        DoubleProperty dividerProxy = new SimpleDoubleProperty(fromPos);
+        dividerProxy.addListener((obs, oldVal, newVal) ->
+            splitPane.setDividerPositions(newVal.doubleValue())
+        );
+
+        Timeline timeline = new Timeline(
+            new KeyFrame(Duration.ZERO, new KeyValue(dividerProxy, fromPos)),
+            new KeyFrame(Duration.millis(250), new KeyValue(dividerProxy, toPos, Interpolator.EASE_BOTH))
+        );
+        timeline.setOnFinished(e -> {
+            if (!sidebarCollapsed) {
+                // Just finished collapsing
+                leftPane.setVisible(false);
+                leftPane.setManaged(false);
+            }
+            sidebarCollapsed = !sidebarCollapsed;
+            sidebarAnimating = false;
+        });
+        timeline.play();
+    }
 
     @FXML
     private void handleAddExpense() {
@@ -1739,42 +1804,31 @@ public class MainController {
         boolean isDailyMode = "By Month".equals(chartPeriod);
 
         List<String> barLabels = new ArrayList<>();
-        XYChart.Series<String, Number> series = new XYChart.Series<>();
+
+        // Collect all categories present in the data
+        Set<String> allCategories = new LinkedHashSet<>();
+
+        // Map: barLabel -> (category -> amount)
+        Map<String, Map<String, Double>> barCategoryTotals = new LinkedHashMap<>();
 
         if (isDailyMode) {
-            Map<Integer, Double> dailyTotals = chartExpenses.stream()
-                .collect(Collectors.groupingBy(
-                    expense -> expense.getDate().getDayOfMonth(),
-                    Collectors.summingDouble(Expense::getAmount)));
-
             int daysInMonth = selectedYearMonth.lengthOfMonth();
             for (int weekStart = 1; weekStart <= daysInMonth; weekStart += 7) {
                 int weekEnd = Math.min(weekStart + 6, daysInMonth);
-                double weekTotal = 0;
-                for (int day = weekStart; day <= weekEnd; day++) {
-                    weekTotal += dailyTotals.getOrDefault(day, 0.0);
-                }
-                final double wTotal = weekTotal;
+                String label = weekStart + "\u2013" + weekEnd;
+                barLabels.add(label);
+
                 final int ws = weekStart;
                 final int we = weekEnd;
-                String label = ws + "\u2013" + we;
-                barLabels.add(label);
-                XYChart.Data<String, Number> data = new XYChart.Data<>(label, weekTotal);
-                data.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                    if (newNode != null) {
-                        boolean containsToday = selectedYearMonth.equals(YearMonth.now())
-                            && LocalDate.now().getDayOfMonth() >= ws
-                            && LocalDate.now().getDayOfMonth() <= we;
-                        String barColor = containsToday ? "#FF6F61" : "#4CAF50";
-                        newNode.setStyle("-fx-bar-fill: " + barColor + ";");
-                        Tooltip tooltip = new Tooltip(
-                            selectedMonth.getDisplayName(TextStyle.SHORT, Locale.getDefault())
-                            + " " + ws + "\u2013" + we + ": " + fmt(wTotal));
-                        tooltip.setStyle("-fx-font-size: 13px;");
-                        Tooltip.install(newNode, tooltip);
+                Map<String, Double> catTotals = new LinkedHashMap<>();
+                for (Expense e : chartExpenses) {
+                    int day = e.getDate().getDayOfMonth();
+                    if (day >= ws && day <= we) {
+                        catTotals.merge(e.getCategory(), e.getAmount(), Double::sum);
+                        allCategories.add(e.getCategory());
                     }
-                });
-                series.getData().add(data);
+                }
+                barCategoryTotals.put(label, catTotals);
             }
             monthlyTrendChart.setTitle("Weekly Spending \u2014 "
                 + selectedMonth.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + selectedYear);
@@ -1794,32 +1848,68 @@ public class MainController {
             YearMonth cursor = rangeStart;
             while (!cursor.isAfter(rangeEnd)) {
                 final YearMonth ym = cursor;
-                final double amount = monthlyTotals.getOrDefault(ym, 0.0);
                 String label = ym.getMonth()
                     .getDisplayName(TextStyle.SHORT, Locale.getDefault())
                     + (sameYear ? "" : " '" + String.format("%02d", ym.getYear() % 100));
                 barLabels.add(label);
-                XYChart.Data<String, Number> data = new XYChart.Data<>(label, amount);
-                data.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                    if (newNode != null) {
-                        boolean isCurrent = ym.equals(selectedYearMonth);
-                        String barColor = isCurrent ? "#FF6F61" : "#4CAF50";
-                        newNode.setStyle("-fx-bar-fill: " + barColor + ";");
-                        Tooltip tooltip = new Tooltip(
-                            ym.getMonth().getDisplayName(TextStyle.FULL, Locale.getDefault())
-                            + " " + ym.getYear() + ": " + fmt(amount));
-                        tooltip.setStyle("-fx-font-size: 13px;");
-                        Tooltip.install(newNode, tooltip);
+
+                Map<String, Double> catTotals = new LinkedHashMap<>();
+                for (Expense e : expenseList) {
+                    if (YearMonth.from(e.getDate()).equals(ym)) {
+                        catTotals.merge(e.getCategory(), e.getAmount(), Double::sum);
+                        allCategories.add(e.getCategory());
                     }
-                });
-                series.getData().add(data);
+                }
+                barCategoryTotals.put(label, catTotals);
                 cursor = cursor.plusMonths(1);
             }
             monthlyTrendChart.setTitle("Monthly Trend");
         }
 
+        // Create one series per category for stacked bars
+        for (String category : allCategories) {
+            XYChart.Series<String, Number> series = new XYChart.Series<>();
+            series.setName(category);
+            final String color = getCategoryColor(category);
+
+            for (String label : barLabels) {
+                double amount = barCategoryTotals.get(label).getOrDefault(category, 0.0);
+                XYChart.Data<String, Number> data = new XYChart.Data<>(label, amount);
+                final String barLabel = label;
+                final double amt = amount;
+                data.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                    if (newNode != null) {
+                        newNode.setStyle("-fx-bar-fill: " + color + ";");
+                        if (amt > 0) {
+                            Tooltip tooltip = new Tooltip(category + " (" + barLabel + "): " + fmt(amt));
+                            tooltip.setStyle("-fx-font-size: 13px;");
+                            Tooltip.install(newNode, tooltip);
+                        }
+                    }
+                });
+                series.getData().add(data);
+            }
+            monthlyTrendChart.getData().add(series);
+        }
+
         xAxis.setCategories(FXCollections.observableArrayList(barLabels));
-        monthlyTrendChart.getData().add(series);
+        monthlyTrendChart.setLegendVisible(false);
+
+        // Build custom legend below the chart
+        trendChartLegend.getChildren().clear();
+        for (String category : allCategories) {
+            String color = getCategoryColor(category);
+            javafx.scene.shape.Rectangle swatch = new javafx.scene.shape.Rectangle(10, 10);
+            swatch.setFill(javafx.scene.paint.Color.web(color));
+            swatch.setArcWidth(2);
+            swatch.setArcHeight(2);
+            Label lbl = new Label(category);
+            lbl.setStyle("-fx-text-fill: #F5F5F5; -fx-font-size: 11px; -fx-font-weight: bold;");
+            HBox item = new HBox(4, swatch, lbl);
+            item.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+            trendChartLegend.getChildren().add(item);
+        }
+
         monthlyTrendChart.setAnimated(true);
     }
 
