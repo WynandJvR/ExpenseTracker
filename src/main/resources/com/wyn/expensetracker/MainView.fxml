@@ -187,24 +187,7 @@
                                     <Separator/>
 
                                     <Label text="Import History" styleClass="section-title"/>
-                                    <Label text="Past imports. Select one and delete to remove all its expenses." styleClass="form-label"/>
-                                    <TableView fx:id="importLogTable" styleClass="table-view" prefHeight="120">
-                                        <columns>
-                                            <TableColumn text="Date" prefWidth="130">
-                                                <cellValueFactory><PropertyValueFactory property="timestampDisplay"/></cellValueFactory>
-                                            </TableColumn>
-                                            <TableColumn text="Source" prefWidth="150">
-                                                <cellValueFactory><PropertyValueFactory property="sourceFile"/></cellValueFactory>
-                                            </TableColumn>
-                                            <TableColumn text="Type" prefWidth="80">
-                                                <cellValueFactory><PropertyValueFactory property="sourceType"/></cellValueFactory>
-                                            </TableColumn>
-                                            <TableColumn text="Items" prefWidth="60">
-                                                <cellValueFactory><PropertyValueFactory property="itemCount"/></cellValueFactory>
-                                            </TableColumn>
-                                        </columns>
-                                    </TableView>
-                                    <Button text="Delete Selected Import" styleClass="danger-button" onAction="#handleDeleteImport"/>
+                                    <Button text="View Import History..." styleClass="primary-button" onAction="#handleShowImportHistory" maxWidth="1.7976931348623157E308"/>
 
                                     <Separator/>
 

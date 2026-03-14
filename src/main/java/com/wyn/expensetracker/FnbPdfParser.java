@@ -98,10 +98,9 @@ public class FnbPdfParser implements BankStatementParser {
                 currentYear = resolveYear(month, previousMonth, currentYear, startYear, endYear);
                 previousMonth = month;
 
-                description = CARD_NUMBER.matcher(description).replaceAll("").trim();
-                description = description.replaceAll("\\s{2,}", " ");
-
-                if (description.isEmpty()) description = "Unknown Transaction";
+                String stripped = CARD_NUMBER.matcher(description).replaceAll("").trim();
+                stripped = stripped.replaceAll("\\s{2,}", " ");
+                description = stripped.isEmpty() ? description : stripped;
 
                 double amount = Double.parseDouble(amountStr);
                 if (amount <= 0) continue;

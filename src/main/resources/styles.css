@@ -883,6 +883,79 @@
     -fx-fill-opacity: 0.25;
 }
 
+/* Import: history list */
+.import-history-list {
+    -fx-background-color: #2A2A2A;
+    -fx-background-insets: 0;
+    -fx-padding: 2;
+    -fx-background-radius: 6;
+    -fx-border-color: #3A3A3A;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+}
+
+.import-history-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.import-history-list .list-cell:filled {
+    -fx-background-color: #333333;
+    -fx-background-radius: 4;
+}
+
+.import-history-list .list-cell:filled:odd {
+    -fx-background-color: #2E2E2E;
+}
+
+.import-history-list .list-cell:filled:selected {
+    -fx-background-color: #5C6BC0;
+}
+
+.import-history-list .list-cell:filled:selected .label {
+    -fx-text-fill: #FFFFFF !important;
+}
+
+.import-history-list .list-cell:filled:hover {
+    -fx-background-color: #4A4A4A;
+}
+
+.import-history-list .list-cell:filled:selected:hover {
+    -fx-background-color: #6979CC;
+}
+
+.import-history-list .list-cell:empty {
+    -fx-background-color: transparent;
+}
+
+.import-history-list .placeholder .label {
+    -fx-text-fill: #757575;
+}
+
+/* Compact danger button */
+.danger-button-small {
+    -fx-background-color: transparent;
+    -fx-text-fill: #E53935;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-padding: 3 8;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+    -fx-border-color: #E53935;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+}
+
+.danger-button-small:hover {
+    -fx-background-color: #E53935;
+    -fx-text-fill: #FFFFFF;
+}
+
+.danger-button-small:pressed {
+    -fx-background-color: #C62828;
+    -fx-text-fill: #FFFFFF;
+}
+
 /* Import: OCR text area */
 .ocr-text-area {
     -fx-control-inner-background: #1E1E1E;
@@ -916,6 +989,19 @@
 .status-manual {
     -fx-text-fill: #2196F3;
     -fx-font-weight: bold;
+}
+
+.status-duplicate {
+    -fx-text-fill: #F44336;
+    -fx-font-weight: bold;
+}
+
+.duplicate-row {
+    -fx-background-color: rgba(244, 67, 54, 0.15);
+}
+
+.duplicate-row:odd {
+    -fx-background-color: rgba(244, 67, 54, 0.20);
 }
 
 /* Import: CSV preview area */

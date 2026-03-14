@@ -28,14 +28,28 @@ public class ImportReviewDialog {
     private List<Expense> result = null;
     private final Label summaryLabel;
     private final Map<String, String> learnedRules = new LinkedHashMap<>();
+    private int duplicateCount;
 
     public ImportReviewDialog(Stage owner, List<ImportItem> importItems,
                               ObservableList<String> categories, String currencySymbol,
-                              String rawText, CategorizationRules categorizationRules) {
+                              String rawText, CategorizationRules categorizationRules,
+                              List<Expense> existingExpenses) {
         this.categorizationRules = categorizationRules;
         this.items = FXCollections.observableArrayList(importItems);
         this.categories = categories;
         this.currencySymbol = currencySymbol;
+
+        // Run duplicate detection
+        this.duplicateCount = DuplicateDetector.flagDuplicates(
+            new ArrayList<>(this.items), existingExpenses);
+
+        // Mark duplicate status and auto-deselect
+        for (ImportItem item : items) {
+            if (item.isDuplicate()) {
+                item.setStatus("Duplicate");
+                item.setSelected(false);
+            }
+        }
 
         dialogStage = new Stage();
         dialogStage.initModality(Modality.WINDOW_MODAL);
@@ -47,8 +61,32 @@ public class ImportReviewDialog {
         summaryLabel.getStyleClass().add("section-title");
         updateSummary();
 
+        // Auto-deselect duplicates checkbox
+        CheckBox autoDeselectDuplicates = new CheckBox("Auto-deselect duplicates");
+        autoDeselectDuplicates.setSelected(true);
+
         // Table
         TableView<ImportItem> table = createTable();
+
+        // Wire checkbox listener after table exists
+        autoDeselectDuplicates.selectedProperty().addListener((obs, wasSelected, isSelected) -> {
+            for (ImportItem item : items) {
+                if (item.isDuplicate()) {
+                    item.setSelected(!isSelected);
+                }
+            }
+            table.refresh();
+            updateSummary();
+        });
+
+        // Top bar with summary and duplicate controls
+        HBox topBar = new HBox(10, summaryLabel);
+        topBar.setAlignment(Pos.CENTER_LEFT);
+        if (duplicateCount > 0) {
+            Label dupLabel = new Label("(" + duplicateCount + " potential duplicate" + (duplicateCount == 1 ? "" : "s") + ")");
+            dupLabel.getStyleClass().add("status-duplicate");
+            topBar.getChildren().addAll(dupLabel, autoDeselectDuplicates);
+        }
 
         // Buttons
         HBox buttonBar = createButtonBar(table);
@@ -66,7 +104,7 @@ public class ImportReviewDialog {
             ocrArea.setWrapText(true);
 
             SplitPane splitPane = new SplitPane();
-            VBox leftPane = new VBox(5, summaryLabel, table);
+            VBox leftPane = new VBox(5, topBar, table);
             VBox.setVgrow(table, Priority.ALWAYS);
             leftPane.setPadding(new Insets(5));
 
@@ -82,7 +120,7 @@ public class ImportReviewDialog {
             mainBox.getChildren().addAll(splitPane, buttonBar);
         } else {
             VBox.setVgrow(table, Priority.ALWAYS);
-            mainBox.getChildren().addAll(summaryLabel, table, buttonBar);
+            mainBox.getChildren().addAll(topBar, table, buttonBar);
         }
 
         Scene scene = new Scene(mainBox, 950, 650);
@@ -328,10 +366,10 @@ public class ImportReviewDialog {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
                     setText(null);
-                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual");
+                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual", "status-duplicate");
                 } else {
                     setText(item);
-                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual");
+                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual", "status-duplicate");
                     if ("Auto-categorized".equals(item)) {
                         getStyleClass().add("status-auto");
                     } else if ("Uncategorized".equals(item)) {
@@ -340,11 +378,36 @@ public class ImportReviewDialog {
                         getStyleClass().add("status-transfer");
                     } else if ("Manual".equals(item)) {
                         getStyleClass().add("status-manual");
+                    } else if ("Duplicate".equals(item)) {
+                        getStyleClass().add("status-duplicate");
                     }
                 }
             }
         });
         statusCol.setPrefWidth(120);
+
+        // Highlight duplicate rows
+        table.setRowFactory(tv -> new TableRow<>() {
+            @Override
+            protected void updateItem(ImportItem item, boolean empty) {
+                super.updateItem(item, empty);
+                getStyleClass().removeAll("duplicate-row");
+                if (empty || item == null) {
+                    setTooltip(null);
+                } else if (item.isDuplicate()) {
+                    getStyleClass().add("duplicate-row");
+                    Expense match = item.getDuplicateMatch();
+                    if (match != null) {
+                        setTooltip(new Tooltip(String.format(
+                            "Potential duplicate of: %s on %s (%s %.2f)",
+                            match.getDescription(), match.getDate(),
+                            currencySymbol, match.getAmount())));
+                    }
+                } else {
+                    setTooltip(null);
+                }
+            }
+        });
 
         table.getColumns().addAll(selectCol, amountCol, categoryCol, dateCol, descCol, statusCol);
         return table;

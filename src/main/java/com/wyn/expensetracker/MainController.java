@@ -93,7 +93,7 @@ public class MainController {
     // --- Left panel: Import tab ---
     @FXML private Label importErrorLabel;
     @FXML private TableView<CategorizationRules.RuleEntry> rulesTable;
-    @FXML private TableView<ImportLog> importLogTable;
+    // importHistoryList removed — shown in dialog via handleShowImportHistory
 
     // --- Right panel: Filters ---
     @FXML private ComboBox<String> filterCategoryCombo;
@@ -2402,13 +2402,12 @@ public class MainController {
     private void setupRulesTable() {
         rulesTable.setItems(categorizationRules.getRuleEntries());
 
-        // Import log table
+        // Import logs
         try {
             importLogs = FXCollections.observableArrayList(storage.loadImportLogs());
         } catch (IOException e) {
             importLogs = FXCollections.observableArrayList();
         }
-        importLogTable.setItems(importLogs);
     }
 
     @FXML
@@ -2487,7 +2486,8 @@ public class MainController {
                     }
                     showMessage("Found " + items.size() + " items.", false);
                     ImportReviewDialog dialog = new ImportReviewDialog(
-                        stage, items, categories, currencySymbol, ocrText, categorizationRules);
+                        stage, items, categories, currencySymbol, ocrText, categorizationRules,
+                        manager.getExpenses());
                     List<Expense> expenses = dialog.showAndWait();
                     if (expenses != null && !expenses.isEmpty()) {
                         saveLearnedRules(dialog);
@@ -2509,52 +2509,83 @@ public class MainController {
     @FXML
     private void handleImportStatement() {
         FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Import Bank Statement");
+        fileChooser.setTitle("Import Bank Statements");
         fileChooser.getExtensionFilters().addAll(
             new FileChooser.ExtensionFilter("Bank Statements", "*.pdf", "*.csv"),
             new FileChooser.ExtensionFilter("PDF Files", "*.pdf"),
             new FileChooser.ExtensionFilter("CSV Files", "*.csv"),
             new FileChooser.ExtensionFilter("All Files", "*.*")
         );
-        File file = fileChooser.showOpenDialog(stage);
-        if (file == null) return;
+        List<File> files = fileChooser.showOpenMultipleDialog(stage);
+        if (files == null || files.isEmpty()) return;
 
-        try {
-            String fileName = file.getName().toLowerCase();
-            List<ImportItem> items;
+        List<ImportItem> allItems = new ArrayList<>();
+        List<String> fileNames = new ArrayList<>();
 
-            if (fileName.endsWith(".pdf")) {
-                items = parsePdfStatement(file);
-            } else {
-                items = parseCsvStatement(file);
-            }
+        for (File file : files) {
+            try {
+                String fileName = file.getName().toLowerCase();
+                List<ImportItem> items;
 
-            if (items == null) return; // User cancelled column mapping or error already shown
-
-            // Auto-categorize
-            for (ImportItem item : items) {
-                String cat = categorizationRules.categorize(item.getDescription());
-                if (cat != null) {
-                    item.setCategory(cat);
-                    item.setStatus("Auto-categorized");
+                if (fileName.endsWith(".pdf")) {
+                    items = parsePdfStatement(file);
+                } else {
+                    items = parseCsvStatement(file);
                 }
+
+                if (items != null && !items.isEmpty()) {
+                    for (ImportItem item : items) {
+                        item.setSourceFile(file.getName());
+                    }
+                    allItems.addAll(items);
+                    fileNames.add(file.getName());
+                }
+            } catch (Exception e) {
+                showMessage("Failed to parse " + file.getName() + ": " + e.getMessage(), true);
+            }
+        }
+
+        if (allItems.isEmpty()) {
+            showMessage("No transactions found in the selected files.", true);
+            return;
+        }
+
+        // Auto-categorize
+        for (ImportItem item : allItems) {
+            String cat = categorizationRules.categorize(item.getDescription());
+            if (cat != null) {
+                item.setCategory(cat);
+                item.setStatus("Auto-categorized");
+            }
+        }
+
+        ImportReviewDialog dialog = new ImportReviewDialog(
+            stage, allItems, categories, currencySymbol, null, categorizationRules,
+            manager.getExpenses());
+        List<Expense> expenses = dialog.showAndWait();
+        if (expenses != null && !expenses.isEmpty()) {
+            saveLearnedRules(dialog);
+
+            // Build a map from each selected ImportItem to its resulting Expense.
+            // The review dialog returns expenses in the same order as selected items.
+            List<ImportItem> selectedItems = allItems.stream()
+                .filter(i -> i.isSelected() && i.getAmount() > 0)
+                .collect(java.util.stream.Collectors.toList());
+
+            // Group expenses by source file
+            Map<String, List<Expense>> expensesByFile = new LinkedHashMap<>();
+            for (int i = 0; i < expenses.size() && i < selectedItems.size(); i++) {
+                String src = selectedItems.get(i).getSourceFile();
+                if (src == null) src = "Unknown";
+                expensesByFile.computeIfAbsent(src, k -> new ArrayList<>()).add(expenses.get(i));
             }
 
-            if (items.isEmpty()) {
-                showMessage("No transactions found in the file.", true);
-                return;
+            // Import each file's expenses separately
+            for (Map.Entry<String, List<Expense>> entry : expensesByFile.entrySet()) {
+                String fileName = entry.getKey();
+                String type = fileName.toLowerCase().endsWith(".pdf") ? "PDF" : "CSV";
+                importExpenses(entry.getValue(), fileName, type);
             }
-
-            ImportReviewDialog dialog = new ImportReviewDialog(
-                stage, items, categories, currencySymbol, null, categorizationRules);
-            List<Expense> expenses = dialog.showAndWait();
-            if (expenses != null && !expenses.isEmpty()) {
-                saveLearnedRules(dialog);
-                String type = fileName.endsWith(".pdf") ? "PDF" : "CSV";
-                importExpenses(expenses, file.getName(), type);
-            }
-        } catch (Exception e) {
-            showMessage("Import failed: " + e.getMessage(), true);
         }
     }
 
@@ -2864,63 +2895,107 @@ public class MainController {
     }
 
     @FXML
+    private void handleShowImportHistory() {
+        javafx.stage.Stage dialog = new javafx.stage.Stage();
+        dialog.initOwner(stage);
+        dialog.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        dialog.setTitle("Import History");
+
+        // Table
+        TableView<ImportLog> table = new TableView<>();
+        table.setItems(importLogs);
+        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        TableColumn<ImportLog, String> dateCol = new TableColumn<>("Date");
+        dateCol.setCellValueFactory(new PropertyValueFactory<>("timestampDisplay"));
+        dateCol.setMinWidth(140);
+
+        TableColumn<ImportLog, String> sourceCol = new TableColumn<>("Source");
+        sourceCol.setCellValueFactory(new PropertyValueFactory<>("sourceFile"));
+        sourceCol.setMinWidth(180);
+
+        TableColumn<ImportLog, String> typeCol = new TableColumn<>("Type");
+        typeCol.setCellValueFactory(new PropertyValueFactory<>("sourceType"));
+        typeCol.setMinWidth(80);
+
+        TableColumn<ImportLog, Number> itemsCol = new TableColumn<>("Items");
+        itemsCol.setCellValueFactory(new PropertyValueFactory<>("itemCount"));
+        itemsCol.setMinWidth(60);
+
+        table.getColumns().addAll(dateCol, sourceCol, typeCol, itemsCol);
+        table.setPlaceholder(new Label("No imports yet"));
+
+        // Delete button
+        Button deleteBtn = new Button("Delete Selected Import");
+        deleteBtn.getStyleClass().add("danger-button");
+        deleteBtn.disableProperty().bind(table.getSelectionModel().selectedItemProperty().isNull());
+        deleteBtn.setOnAction(e -> {
+            ImportLog selected = table.getSelectionModel().getSelectedItem();
+            if (selected == null) return;
+
+            long count = manager.getExpenses().stream()
+                .filter(exp -> selected.getImportId().equals(exp.getImportId()))
+                .count();
+
+            Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+            confirmation.initOwner(dialog);
+            confirmation.setTitle("Delete Import");
+            confirmation.setHeaderText("Delete import from " + selected.getSourceFile() + "?");
+            confirmation.setContentText("This will remove " + count + " expense(s) that were imported on " +
+                selected.getTimestampDisplay() + ".");
+            confirmation.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+            confirmation.getDialogPane().getStyleClass().add("dialog-pane");
+
+            if (confirmation.showAndWait().orElse(null) != ButtonType.OK) return;
+
+            List<Expense> toRemove = manager.getExpenses().stream()
+                .filter(exp -> selected.getImportId().equals(exp.getImportId()))
+                .collect(java.util.stream.Collectors.toList());
+
+            if (!toRemove.isEmpty()) {
+                manager.executeCommand(new Command() {
+                    @Override public void execute() {
+                        for (Expense exp : toRemove) manager.removeExpense(exp);
+                    }
+                    @Override public void undo() {
+                        for (Expense exp : toRemove) manager.addExpense(exp);
+                    }
+                });
+            }
+
+            importLogs.remove(selected);
+            try {
+                storage.saveImportLogs(new ArrayList<>(importLogs));
+                storage.saveExpenses(manager.getExpensesForSave());
+            } catch (IOException ex) {
+                showMessage("Failed to save after delete: " + ex.getMessage(), true);
+                return;
+            }
+
+            refreshTable();
+            showMessage(count + " expenses from import deleted.", false);
+        });
+
+        // Layout
+        HBox buttonBar = new HBox(deleteBtn);
+        buttonBar.setAlignment(Pos.CENTER_RIGHT);
+        buttonBar.setPadding(new javafx.geometry.Insets(10, 0, 0, 0));
+
+        VBox root = new VBox(10, table, buttonBar);
+        root.setPadding(new javafx.geometry.Insets(20));
+        root.getStyleClass().add("dialog-pane");
+        VBox.setVgrow(table, javafx.scene.layout.Priority.ALWAYS);
+
+        Scene scene = new Scene(root, 560, 400);
+        scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        dialog.setScene(scene);
+        dialog.showAndWait();
+    }
+
+    @FXML
     private void handleDeleteImport() {
-        ImportLog selected = importLogTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            showMessage("Please select an import to delete", true);
-            return;
-        }
-
-        // Count how many expenses will be removed
-        long count = manager.getExpenses().stream()
-            .filter(e -> selected.getImportId().equals(e.getImportId()))
-            .count();
-
-        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
-        confirmation.setTitle("Delete Import");
-        confirmation.setHeaderText("Delete import from " + selected.getSourceFile() + "?");
-        confirmation.setContentText("This will remove " + count + " expense(s) that were imported on " +
-            selected.getTimestampDisplay() + ".");
-        confirmation.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
-        confirmation.getDialogPane().getStyleClass().add("dialog-pane");
-
-        if (confirmation.showAndWait().orElse(null) != javafx.scene.control.ButtonType.OK) {
-            return;
-        }
-
-        // Remove all expenses with this import ID
-        List<Expense> toRemove = manager.getExpenses().stream()
-            .filter(e -> selected.getImportId().equals(e.getImportId()))
-            .collect(java.util.stream.Collectors.toList());
-
-        if (!toRemove.isEmpty()) {
-            // Undoable command: execute removes, undo re-adds
-            manager.executeCommand(new Command() {
-                @Override public void execute() {
-                    for (Expense exp : toRemove) {
-                        manager.removeExpense(exp);
-                    }
-                }
-                @Override public void undo() {
-                    for (Expense exp : toRemove) {
-                        manager.addExpense(exp);
-                    }
-                }
-            });
-        }
-
-        // Remove the log entry
-        importLogs.remove(selected);
-        try {
-            storage.saveImportLogs(new ArrayList<>(importLogs));
-            storage.saveExpenses(manager.getExpensesForSave());
-        } catch (IOException ex) {
-            showMessage("Failed to save after delete: " + ex.getMessage(), true);
-            return;
-        }
-
-        refreshTable();
-        showMessage(count + " expenses from import deleted.", false);
+        // Legacy handler kept for FXML compatibility — opens the history dialog instead
+        handleShowImportHistory();
     }
 
     private void updateFilterCategoryCombo() {
