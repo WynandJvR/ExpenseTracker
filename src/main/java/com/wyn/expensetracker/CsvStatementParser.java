@@ -82,6 +82,7 @@ public class CsvStatementParser {
                 ImportItem item = new ImportItem(amount, description, date);
                 if (!isExpense) {
                     item.setDescription("[CREDIT] " + description);
+                    item.setIncome(true);
                     item.setSelected(false);
                 }
                 item.setStatus("Uncategorized");

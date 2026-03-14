@@ -11,6 +11,7 @@ public class ImportItem {
     private final StringProperty description = new SimpleStringProperty("");
     private final StringProperty status = new SimpleStringProperty("Uncategorized");
     private final BooleanProperty duplicate = new SimpleBooleanProperty(false);
+    private final BooleanProperty income = new SimpleBooleanProperty(false);
     private Expense duplicateMatch;
     private String sourceFile;
 
@@ -57,6 +58,11 @@ public class ImportItem {
 
     public Expense getDuplicateMatch() { return duplicateMatch; }
     public void setDuplicateMatch(Expense val) { this.duplicateMatch = val; }
+
+    // Income
+    public boolean isIncome() { return income.get(); }
+    public void setIncome(boolean val) { income.set(val); }
+    public BooleanProperty incomeProperty() { return income; }
 
     // Source file tracking (for per-file import logs)
     public String getSourceFile() { return sourceFile; }

@@ -261,7 +261,7 @@ public class MainController {
             "All Time", "Last 12 Months", "Last 6 Months", "By Year", "By Month"));
         chartPeriodCombo.setValue("Last 12 Months");
 
-        // Recurring income
+        // Projected recurring income
         recurringIncome = storage.loadRecurringIncome();
         if (recurringIncome > 0) {
             recurringIncomeField.setText(String.format("%.2f", recurringIncome));
@@ -324,20 +324,31 @@ public class MainController {
         sortedData.comparatorProperty().bind(expenseTable.comparatorProperty());
         expenseTable.setItems(sortedData);
 
-        // Row factory: dim excluded rows + right-click context menu
+        // Row factory: style excluded/income rows + right-click context menu
         expenseTable.setRowFactory(tv -> {
             TableRow<Expense> row = new TableRow<>() {
                 @Override
                 protected void updateItem(Expense item, boolean empty) {
                     super.updateItem(item, empty);
-                    getStyleClass().removeAll("excluded-row");
+                    getStyleClass().removeAll("excluded-row", "income-row", "refund-row");
                     if (empty || item == null) {
                         setOpacity(1.0);
+                        setStyle("");
                     } else if (item.isExcluded()) {
                         getStyleClass().add("excluded-row");
                         setOpacity(0.45);
+                        setStyle("");
+                    } else if (item.isRefund()) {
+                        getStyleClass().add("refund-row");
+                        setOpacity(1.0);
+                        setStyle("-fx-background-color: rgba(171, 71, 188, 0.12);");
+                    } else if (item.isIncome()) {
+                        getStyleClass().add("income-row");
+                        setOpacity(1.0);
+                        setStyle("-fx-background-color: rgba(76, 175, 80, 0.12);");
                     } else {
                         setOpacity(1.0);
+                        setStyle("");
                     }
                 }
             };
@@ -355,6 +366,42 @@ public class MainController {
                     refreshTable();
                 }
             });
+            MenuItem toggleIncome = new MenuItem("Mark as Income");
+            toggleIncome.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null) {
+                    item.setIncome(!item.isIncome());
+                    try {
+                        storage.saveExpenses(manager.getExpensesForSave());
+                    } catch (IOException ex) {
+                        showMessage("Failed to save: " + ex.getMessage(), true);
+                    }
+                    refreshTable();
+                }
+            });
+            MenuItem toggleRefund = new MenuItem("Mark as Refund");
+            toggleRefund.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null) {
+                    item.setRefund(!item.isRefund());
+                    if (item.isRefund() && !item.isIncome()) {
+                        item.setIncome(true); // Refunds are income (money received)
+                    }
+                    try {
+                        storage.saveExpenses(manager.getExpensesForSave());
+                    } catch (IOException ex) {
+                        showMessage("Failed to save: " + ex.getMessage(), true);
+                    }
+                    refreshTable();
+                }
+            });
+            MenuItem makeRecurring = new MenuItem("Make Recurring...");
+            makeRecurring.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null && item.getRecurringId() == null && !(item instanceof RecurringExpense)) {
+                    showMakeRecurringDialog(item);
+                }
+            });
             menu.setOnShowing(e -> {
                 Expense item = row.getItem();
                 if (item != null && item.isExcluded()) {
@@ -362,8 +409,21 @@ public class MainController {
                 } else {
                     toggleExclude.setText("Exclude from Analytics");
                 }
+                if (item != null && item.isIncome()) {
+                    toggleIncome.setText("Mark as Expense");
+                } else {
+                    toggleIncome.setText("Mark as Income");
+                }
+                if (item != null && item.isRefund()) {
+                    toggleRefund.setText("Unmark as Refund");
+                } else {
+                    toggleRefund.setText("Mark as Refund");
+                }
+                // Only show "Make Recurring" for one-time expenses (not already recurring)
+                makeRecurring.setVisible(item != null && item.getRecurringId() == null
+                    && !(item instanceof RecurringExpense));
             });
-            menu.getItems().add(toggleExclude);
+            menu.getItems().addAll(toggleExclude, toggleIncome, toggleRefund, new SeparatorMenuItem(), makeRecurring);
             row.setContextMenu(menu);
             return row;
         });
@@ -519,19 +579,23 @@ public class MainController {
             searchDebounce.playFromStart();
         });
 
-        // Period selectors
+        // Period selectors — skip during refreshTable() which calls these methods itself
         yearCombo.valueProperty().addListener((observable, oldValue, newValue) -> {
-            updateTotalExpenses();
-            updateCharts();
-            updateIncomeField();
+            if (!refreshingTable) {
+                updateTotalExpenses();
+                updateCharts();
+                updateIncomeField();
+            }
         });
         monthCombo.valueProperty().addListener((observable, oldValue, newValue) -> {
-            updateTotalExpenses();
-            updateCharts();
-            updateIncomeField();
+            if (!refreshingTable) {
+                updateTotalExpenses();
+                updateCharts();
+                updateIncomeField();
+            }
         });
 
-        // Income field — manual per-month override
+        // Income field — projected per-month override
         incomeField.textProperty().addListener((observable, oldValue, newValue) -> {
             if (suppressIncomeListener) return;
             Integer selectedYear = yearCombo.getValue();
@@ -851,6 +915,90 @@ public class MainController {
         } catch (Exception ex) {
             showMessage("Error: " + ex.getMessage(), true);
         }
+    }
+
+    private void showMakeRecurringDialog(Expense expense) {
+        Stage dialog = new Stage();
+        dialog.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        dialog.initOwner(stage);
+        dialog.setTitle("Make Recurring");
+
+        Label header = new Label(String.format("Convert \"%s\" (%s) to recurring",
+            expense.getDescription() != null && !expense.getDescription().isEmpty()
+                ? expense.getDescription() : expense.getCategory(),
+            fmt(expense.getAmount())));
+        header.getStyleClass().add("section-title");
+        header.setWrapText(true);
+
+        Label freqLabel = new Label("Frequency:");
+        freqLabel.getStyleClass().add("form-label");
+        ComboBox<RecurrenceType> freqCombo = new ComboBox<>(
+            FXCollections.observableArrayList(RecurrenceType.values()));
+        freqCombo.setPromptText("Select frequency...");
+        freqCombo.setMaxWidth(Double.MAX_VALUE);
+        freqCombo.getStyleClass().add("combo-box");
+
+        Label endLabel = new Label("End Date (optional):");
+        endLabel.getStyleClass().add("form-label");
+        DatePicker endDatePicker = new DatePicker();
+        endDatePicker.setMaxWidth(Double.MAX_VALUE);
+        endDatePicker.getStyleClass().add("date-picker");
+        endDatePicker.setPromptText("No end date");
+
+        Label errorLabel2 = new Label();
+        errorLabel2.getStyleClass().add("error-label");
+
+        Button confirmBtn = new Button("Make Recurring");
+        confirmBtn.getStyleClass().add("success-button");
+        confirmBtn.setOnAction(e -> {
+            RecurrenceType freq = freqCombo.getValue();
+            if (freq == null) {
+                errorLabel2.setText("Please select a frequency");
+                return;
+            }
+            LocalDate endDate = endDatePicker.getValue();
+
+            // Create recurring expense with same details
+            RecurringExpense recurring = new RecurringExpense(
+                expense.getAmount(), expense.getCategory(), expense.getDate(),
+                expense.getDescription() != null ? expense.getDescription() : "",
+                freq, endDate);
+            if (expense.isIncome()) recurring.setIncome(true);
+
+            // Remove the one-time expense and add the recurring one
+            manager.executeCommand(new DeleteExpenseCommand(manager, expense));
+            manager.executeCommand(new AddExpenseCommand(manager, recurring));
+            try {
+                manager.generateRecurringExpenses(LocalDate.now());
+                storage.saveExpenses(manager.getExpensesForSave());
+                recurringList.setAll(manager.getBaseRecurringExpenses());
+            } catch (IOException ex) {
+                manager.undo();
+                manager.undo();
+                showMessage("Failed to save: " + ex.getMessage(), true);
+                dialog.close();
+                return;
+            }
+            refreshTable();
+            showMessage("Expense converted to recurring (" + freq.toString().toLowerCase() + ")", false);
+            dialog.close();
+        });
+
+        Button cancelBtn = new Button("Cancel");
+        cancelBtn.getStyleClass().add("danger-button");
+        cancelBtn.setOnAction(e -> dialog.close());
+
+        HBox buttons = new HBox(10, confirmBtn, cancelBtn);
+        buttons.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+
+        VBox content = new VBox(12, header, freqLabel, freqCombo, endLabel, endDatePicker, errorLabel2, buttons);
+        content.setPadding(new javafx.geometry.Insets(20));
+        content.getStyleClass().add("root-pane");
+
+        Scene scene = new Scene(content, 400, 300);
+        scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        dialog.setScene(scene);
+        dialog.showAndWait();
     }
 
     @FXML
@@ -1498,33 +1646,35 @@ public class MainController {
         Month selectedMonth = monthCombo.getValue();
         if (selectedYear == null || selectedMonth == null) {
             incomeField.setText("");
-            incomeField.setPromptText("Leave empty to use recurring");
+            incomeField.setPromptText("Leave empty to use default");
             suppressIncomeListener = false;
             return;
         }
         YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
-        Double manualIncome = incomes.get(selectedYearMonth);
-        if (manualIncome != null) {
-            incomeField.setText(String.format("%.2f", manualIncome));
-            incomeField.setPromptText("Clear to use recurring");
+        Double monthProjected = incomes.get(selectedYearMonth);
+        if (monthProjected != null) {
+            incomeField.setText(String.format("%.2f", monthProjected));
+            incomeField.setPromptText("Clear to use default");
         } else {
             incomeField.setText("");
             incomeField.setPromptText(recurringIncome > 0
-                ? String.format("Using recurring: %.2f", recurringIncome)
-                : "Leave empty to use recurring");
+                ? String.format("Using default: %.2f", recurringIncome)
+                : "Set projected income");
         }
         suppressIncomeListener = false;
     }
 
     private void updateYearList() {
+        // Capture selections BEFORE setAll — setAll can clear ComboBox selection
+        Integer selectedYear = yearCombo.getValue();
+        Month selectedMonth = monthCombo.getValue();
+
         Set<Integer> years = new TreeSet<>();
         for (Expense expense : expenseList) {
             years.add(expense.getDate().getYear());
         }
         yearList.setAll(years);
 
-        Integer selectedYear = yearCombo.getValue();
-        Month selectedMonth = monthCombo.getValue();
         if (selectedYear != null && yearList.contains(selectedYear)) {
             yearCombo.setValue(selectedYear);
         } else {
@@ -1536,7 +1686,10 @@ public class MainController {
             }
         }
 
-        if (yearCombo.getValue() != null && selectedMonth == null) {
+        // Restore month — setAll on yearList may have indirectly cleared it
+        if (selectedMonth != null) {
+            monthCombo.setValue(selectedMonth);
+        } else if (yearCombo.getValue() != null) {
             monthCombo.setValue(Month.of(LocalDate.now().getMonthValue()));
         }
     }
@@ -1608,24 +1761,35 @@ public class MainController {
         }
 
         double total = filteredData.stream()
-            .filter(e -> !e.isExcluded())
+            .filter(e -> !e.isExcluded() && !e.isIncome())
             .mapToDouble(Expense::getAmount)
             .sum();
+        double actualIncome = filteredData.stream()
+            .filter(e -> !e.isExcluded() && e.isIncome())
+            .mapToDouble(Expense::getAmount)
+            .sum();
+        double projectedIncome = incomes.getOrDefault(selectedYearMonth, recurringIncome);
+
+        // Use actual income when available, otherwise fall back to projected
+        boolean hasActualIncome = actualIncome > 0;
+        double income = hasActualIncome ? actualIncome : projectedIncome;
+
         totalLabel.setText(String.format("Total Expenses for %s %d: %s",
                 selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, fmt(total)));
 
-        double income = incomes.getOrDefault(selectedYearMonth, recurringIncome);
         double moneySaved = income - total;
         if (moneySaved >= 0) {
-            moneySavedLabel.setText("Money Saved: " + fmt(moneySaved));
+            String label = hasActualIncome ? "Money Saved: " : "Projected Savings: ";
+            moneySavedLabel.setText(label + fmt(moneySaved));
             moneySavedLabel.getStyleClass().setAll("saved-label");
         } else {
-            moneySavedLabel.setText("Overspent: " + fmt(Math.abs(moneySaved)));
+            String label = hasActualIncome ? "Overspent: " : "Projected Overspend: ";
+            moneySavedLabel.setText(label + fmt(Math.abs(moneySaved)));
             moneySavedLabel.getStyleClass().setAll("saved-label", "overspent-label");
         }
 
         Map<String, Double> categoryMap = filteredData.stream()
-            .filter(e -> !e.isExcluded())
+            .filter(e -> !e.isExcluded() && !e.isIncome())
             .collect(Collectors.groupingBy(
                 Expense::getCategory,
                 Collectors.summingDouble(Expense::getAmount))
@@ -1641,7 +1805,7 @@ public class MainController {
         YearMonth prevYearMonth = selectedYearMonth.minusMonths(1);
         double prevTotal = expenseList.stream()
             .filter(expense -> {
-                if (expense.isExcluded()) return false;
+                if (expense.isExcluded() || expense.isIncome()) return false;
                 if (!YearMonth.from(expense.getDate()).equals(prevYearMonth)) return false;
                 if (filterByCategory && !expense.getCategory().equals(selectedCategory)) return false;
                 if (expense.getAmount() < fMin || expense.getAmount() > fMax) return false;
@@ -1716,7 +1880,7 @@ public class MainController {
     private List<Expense> filterExpensesByPeriod(String chartPeriod, int selectedYear,
                                                     YearMonth selectedYearMonth, YearMonth now) {
         return expenseList.stream()
-            .filter(expense -> !expense.isExcluded())
+            .filter(expense -> !expense.isExcluded() && !expense.isIncome())
             .filter(expense -> {
                 YearMonth ym = YearMonth.from(expense.getDate());
                 switch (chartPeriod) {
@@ -1889,7 +2053,7 @@ public class MainController {
                 + selectedMonth.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + selectedYear);
         } else {
             Map<YearMonth, Double> monthlyTotals = expenseList.stream()
-                .filter(expense -> !expense.isExcluded())
+                .filter(expense -> !expense.isExcluded() && !expense.isIncome())
                 .collect(Collectors.groupingBy(
                     expense -> YearMonth.from(expense.getDate()),
                     Collectors.summingDouble(Expense::getAmount)));
@@ -1911,7 +2075,7 @@ public class MainController {
 
                 Map<String, Double> catTotals = new LinkedHashMap<>();
                 for (Expense e : expenseList) {
-                    if (YearMonth.from(e.getDate()).equals(ym)) {
+                    if (!e.isExcluded() && !e.isIncome() && YearMonth.from(e.getDate()).equals(ym)) {
                         catTotals.merge(e.getCategory(), e.getAmount(), Double::sum);
                         allCategories.add(e.getCategory());
                     }
@@ -1981,7 +2145,13 @@ public class MainController {
         xAxis.setAutoRanging(false);
 
         Map<YearMonth, Double> monthlyExpenses = expenseList.stream()
-            .filter(expense -> !expense.isExcluded())
+            .filter(expense -> !expense.isExcluded() && !expense.isIncome())
+            .collect(Collectors.groupingBy(
+                expense -> YearMonth.from(expense.getDate()),
+                Collectors.summingDouble(Expense::getAmount)));
+
+        Map<YearMonth, Double> monthlyItemIncome = expenseList.stream()
+            .filter(expense -> !expense.isExcluded() && expense.isIncome())
             .collect(Collectors.groupingBy(
                 expense -> YearMonth.from(expense.getDate()),
                 Collectors.summingDouble(Expense::getAmount)));
@@ -2007,7 +2177,9 @@ public class MainController {
             labels.add(label);
 
             double expenseAmt = monthlyExpenses.getOrDefault(ym, 0.0);
-            double incomeAmt = incomes.getOrDefault(ym, recurringIncome);
+            double actualInc = monthlyItemIncome.getOrDefault(ym, 0.0);
+            double projectedInc = incomes.getOrDefault(ym, recurringIncome);
+            double incomeAmt = actualInc > 0 ? actualInc : projectedInc;
 
             final double fIncome = incomeAmt;
             final double fExpense = expenseAmt;
@@ -2059,7 +2231,7 @@ public class MainController {
 
         // Only include categories that have a budget
         Map<String, Double> actualByCategory = expenseList.stream()
-            .filter(e -> !e.isExcluded())
+            .filter(e -> !e.isExcluded() && !e.isIncome())
             .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
             .collect(Collectors.groupingBy(Expense::getCategory, Collectors.summingDouble(Expense::getAmount)));
 
@@ -2136,7 +2308,7 @@ public class MainController {
         yAxis.setLabel("Amount");
 
         Map<Integer, Double> dailyTotals = expenseList.stream()
-            .filter(e -> !e.isExcluded())
+            .filter(e -> !e.isExcluded() && !e.isIncome())
             .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
             .collect(Collectors.groupingBy(
                 e -> e.getDate().getDayOfMonth(),
@@ -2213,7 +2385,7 @@ public class MainController {
         xAxis.setAutoRanging(false);
 
         Map<YearMonth, Double> monthlyTotals = expenseList.stream()
-            .filter(e -> !e.isExcluded())
+            .filter(e -> !e.isExcluded() && !e.isIncome())
             .collect(Collectors.groupingBy(
                 e -> YearMonth.from(e.getDate()),
                 Collectors.summingDouble(Expense::getAmount)));
@@ -2314,7 +2486,7 @@ public class MainController {
         }
 
         Map<YearMonth, Double> monthlyTotals = expenseList.stream()
-            .filter(e -> !e.isExcluded())
+            .filter(e -> !e.isExcluded() && !e.isIncome())
             .filter(e -> e.getDate().getYear() == selectedYear || e.getDate().getYear() == prevYear)
             .collect(Collectors.groupingBy(
                 e -> YearMonth.from(e.getDate()),
@@ -2811,26 +2983,25 @@ public class MainController {
     }
 
     private void importExpenses(List<Expense> expenses, String sourceFile, String sourceType) {
-        // Separate income from expenses
-        List<Expense> actualExpenses = new ArrayList<>();
-        List<Expense> incomeItems = new ArrayList<>();
+        // Count income items (income flag already set by ImportReviewDialog)
+        int incomeCount = 0;
+        double totalIncomeAdded = 0;
         for (Expense exp : expenses) {
-            if ("Income".equalsIgnoreCase(exp.getCategory())) {
-                incomeItems.add(exp);
-            } else {
-                actualExpenses.add(exp);
+            if (exp.isIncome()) {
+                incomeCount++;
+                totalIncomeAdded += exp.getAmount();
             }
         }
 
-        // Tag expenses with a unique import ID
+        // Tag all items with a unique import ID
         String importId = "IMP-" + System.currentTimeMillis();
-        for (Expense exp : actualExpenses) {
+        for (Expense exp : expenses) {
             exp.setImportId(importId);
         }
 
-        // Add expenses
-        if (!actualExpenses.isEmpty()) {
-            BulkAddExpenseCommand cmd = new BulkAddExpenseCommand(manager, actualExpenses);
+        // Add all items (expenses + income) to the manager
+        if (!expenses.isEmpty()) {
+            BulkAddExpenseCommand cmd = new BulkAddExpenseCommand(manager, expenses);
             manager.executeCommand(cmd);
             try {
                 storage.saveExpenses(manager.getExpensesForSave());
@@ -2842,29 +3013,8 @@ public class MainController {
             }
         }
 
-        // Add income to monthly income tracker
-        double totalIncomeAdded = 0;
-        if (!incomeItems.isEmpty()) {
-            Map<YearMonth, Double> incomeByMonth = new LinkedHashMap<>();
-            for (Expense inc : incomeItems) {
-                YearMonth ym = YearMonth.from(inc.getDate());
-                incomeByMonth.merge(ym, inc.getAmount(), Double::sum);
-            }
-            for (Map.Entry<YearMonth, Double> entry : incomeByMonth.entrySet()) {
-                double existing = incomes.getOrDefault(entry.getKey(), 0.0);
-                incomes.put(entry.getKey(), existing + entry.getValue());
-                totalIncomeAdded += entry.getValue();
-            }
-            try {
-                storage.saveIncomes(incomes);
-            } catch (IOException ex) {
-                System.err.println("Failed to save incomes: " + ex.getMessage());
-            }
-        }
-
         // Log the import
-        int totalItems = actualExpenses.size() + incomeItems.size();
-        ImportLog log = new ImportLog(importId, java.time.LocalDateTime.now(), sourceFile, sourceType, totalItems);
+        ImportLog log = new ImportLog(importId, java.time.LocalDateTime.now(), sourceFile, sourceType, expenses.size());
         importLogs.add(log);
         try {
             storage.saveImportLogs(new ArrayList<>(importLogs));
@@ -2876,10 +3026,11 @@ public class MainController {
 
         // Build summary message
         StringBuilder msg = new StringBuilder();
-        msg.append(actualExpenses.size()).append(" expenses imported");
+        int expenseCount = expenses.size() - incomeCount;
+        msg.append(expenseCount).append(" expenses imported");
         if (totalIncomeAdded > 0) {
             msg.append(", ").append(fmt(totalIncomeAdded)).append(" income added across ")
-               .append(incomeItems.size()).append(" transaction(s)");
+               .append(incomeCount).append(" transaction(s)");
         }
         msg.append("!");
         showMessage(msg.toString(), false);

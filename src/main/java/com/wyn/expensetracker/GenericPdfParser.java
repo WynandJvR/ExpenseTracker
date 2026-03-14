@@ -109,6 +109,7 @@ public class GenericPdfParser implements BankStatementParser {
             ImportItem item = new ImportItem(amount, description, date);
             if (isCredit) {
                 item.setDescription("[CREDIT] " + description);
+                item.setIncome(true);
                 item.setSelected(false);
             }
             item.setStatus("Uncategorized");

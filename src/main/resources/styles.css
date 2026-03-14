@@ -996,6 +996,12 @@
     -fx-font-weight: bold;
 }
 
+.status-refund {
+    -fx-text-fill: #AB47BC;
+    -fx-font-weight: bold;
+    -fx-font-style: italic;
+}
+
 .duplicate-row {
     -fx-background-color: rgba(244, 67, 54, 0.15);
 }

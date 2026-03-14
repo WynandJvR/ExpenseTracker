@@ -19,22 +19,45 @@ public class CategorizationRules {
         String compact = normalized.replace(" ", "");
         for (Map.Entry<String, String> entry : rules.entrySet()) {
             String keyLower = entry.getKey().toLowerCase();
+            boolean matched = false;
             // Try exact substring match first
             if (lower.contains(keyLower)) {
-                return entry.getValue();
+                matched = true;
             }
-            // Try normalized match (strips punctuation, special chars, collapses whitespace)
-            String keyNormalized = normalize(keyLower);
-            if (normalized.contains(keyNormalized)) {
-                return entry.getValue();
+            if (!matched) {
+                // Try normalized match (strips punctuation, special chars, collapses whitespace)
+                String keyNormalized = normalize(keyLower);
+                if (normalized.contains(keyNormalized)) {
+                    matched = true;
+                }
+                if (!matched) {
+                    // Try compact match (also strip spaces) for cases like "Mr.D" vs "Mr D"
+                    String keyCompact = keyNormalized.replace(" ", "");
+                    if (keyCompact.length() >= 3 && compact.contains(keyCompact)) {
+                        matched = true;
+                    }
+                }
             }
-            // Try compact match (also strip spaces) for cases like "Mr.D" vs "Mr D"
-            String keyCompact = keyNormalized.replace(" ", "");
-            if (keyCompact.length() >= 3 && compact.contains(keyCompact)) {
+            if (matched) {
+                // Don't categorize outgoing payments as Income
+                if ("Income".equalsIgnoreCase(entry.getValue()) && isOutgoingDescription(lower)) {
+                    continue;
+                }
                 return entry.getValue();
             }
         }
         return null;
+    }
+
+    /**
+     * Detect descriptions that indicate outgoing money (debits), so they
+     * are not incorrectly categorized as Income by keyword matches.
+     */
+    private static boolean isOutgoingDescription(String lowerDescription) {
+        return lowerDescription.contains("payment to ")
+            || lowerDescription.contains("pmt to ")
+            || lowerDescription.contains("transfer to ")
+            || lowerDescription.contains("betaling aan ");
     }
 
     /**

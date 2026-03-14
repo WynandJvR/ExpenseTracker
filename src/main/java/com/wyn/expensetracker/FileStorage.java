@@ -65,11 +65,13 @@ public class FileStorage {
                 } else {
                     String importId = expense.getImportId() != null ? expense.getImportId() : "";
                     String excludedFlag = expense.isExcluded() ? ",EXCLUDED" : "";
+                    String incomeFlag = expense.isIncome() ? ",INCOME" : "";
+                    String refundFlag = expense.isRefund() ? ",REFUND" : "";
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
                             escapeCsv(expense.getDescription()) + "," +
-                            "REGULAR," + importId + excludedFlag);
+                            "REGULAR," + importId + excludedFlag + incomeFlag + refundFlag);
                 }
             }
         });
@@ -112,8 +114,10 @@ public class FileStorage {
                             if (parts.length >= 6 && !parts[5].isEmpty()) {
                                 exp.setImportId(parts[5]);
                             }
-                            if (parts.length >= 7 && "EXCLUDED".equals(parts[6])) {
-                                exp.setExcluded(true);
+                            for (int i = 6; i < parts.length; i++) {
+                                if ("EXCLUDED".equals(parts[i])) exp.setExcluded(true);
+                                if ("INCOME".equals(parts[i])) exp.setIncome(true);
+                                if ("REFUND".equals(parts[i])) exp.setRefund(true);
                             }
                             expenses.add(exp);
                         } else {
