@@ -741,9 +741,11 @@ public class MainController {
         }
 
         Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmation.initOwner(stage);
         confirmation.setTitle("Confirm Deletion");
         confirmation.setHeaderText(null);
         confirmation.setContentText("Are you sure you want to delete this expense?");
+        confirmation.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
 
         Optional<ButtonType> result = confirmation.showAndWait();
         if (result.isPresent() && result.get() == ButtonType.OK) {
@@ -911,10 +913,12 @@ public class MainController {
             .filter(e -> e.getSourceRecurringExpense() == selected)
             .count();
         Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmation.initOwner(stage);
         confirmation.setTitle("Confirm Deletion");
         confirmation.setHeaderText(null);
         confirmation.setContentText(String.format(
             "Are you sure you want to delete this recurring expense?\nThis will also remove %d generated expenses.", generatedCount));
+        confirmation.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
 
         Optional<ButtonType> result = confirmation.showAndWait();
         if (result.isPresent() && result.get() == ButtonType.OK) {
@@ -935,10 +939,11 @@ public class MainController {
     @FXML
     private void handleAddCategory() {
         TextInputDialog dialog = new TextInputDialog();
+        dialog.initOwner(stage);
         dialog.setTitle("Add Category");
         dialog.setHeaderText("Enter a new category:");
         dialog.setContentText("Category:");
-        dialog.getDialogPane().getStyleClass().add("dialog-pane");
+        dialog.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
 
         dialog.showAndWait().ifPresent(category -> {
             category = category.trim();
@@ -1388,10 +1393,11 @@ public class MainController {
 
         TextInputDialog dialog = new TextInputDialog(
             selected.getBudget() > 0 ? String.format("%.2f", selected.getBudget()) : "");
+        dialog.initOwner(stage);
         dialog.setTitle("Set Budget");
         dialog.setHeaderText("Set monthly budget for: " + selected.getCategory());
         dialog.setContentText("Budget amount:");
-        dialog.getDialogPane().getStyleClass().add("dialog-pane");
+        dialog.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
 
         dialog.showAndWait().ifPresent(input -> {
             try {
@@ -2529,6 +2535,7 @@ public class MainController {
                         alert.initOwner(stage);
                         alert.setTitle("No Items Found");
                         alert.setHeaderText("Could not extract any line items from this receipt.");
+                        alert.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
                         TextArea ocrArea = new TextArea(ocrText);
                         ocrArea.setEditable(false);
                         ocrArea.setWrapText(true);
@@ -2773,8 +2780,14 @@ public class MainController {
         layout.setPadding(new javafx.geometry.Insets(15));
         layout.getStyleClass().add("root-pane");
 
-        Scene scene = new Scene(layout, 450, 550);
+        javafx.scene.control.ScrollPane scrollPane = new javafx.scene.control.ScrollPane(layout);
+        scrollPane.setFitToWidth(true);
+        scrollPane.getStyleClass().add("root-pane");
+
+        Scene scene = new Scene(scrollPane, 450, 550);
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        mappingStage.setMinWidth(350);
+        mappingStage.setMinHeight(400);
         mappingStage.setScene(scene);
         mappingStage.showAndWait();
 
@@ -2920,13 +2933,16 @@ public class MainController {
         cancelBtn.setOnAction(e -> ruleStage.close());
 
         javafx.scene.layout.HBox btnBox = new javafx.scene.layout.HBox(10, addBtn, cancelBtn);
+        btnBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
 
         VBox layout = new VBox(8, titleLabel, keywordLabel, keywordField, catLabel, catCombo, btnBox);
         layout.setPadding(new javafx.geometry.Insets(15));
         layout.getStyleClass().add("root-pane");
 
-        Scene scene = new Scene(layout, 350, 280);
+        Scene scene = new Scene(layout, 380, 300);
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        ruleStage.setMinWidth(300);
+        ruleStage.setMinHeight(250);
         ruleStage.setScene(scene);
         ruleStage.showAndWait();
     }

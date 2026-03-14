@@ -458,7 +458,6 @@ public class ImportReviewDialog {
             dialog.getDialogPane().setContent(catPicker);
             dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
             dialog.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
-            dialog.getDialogPane().getStyleClass().add("root-pane");
 
             dialog.showAndWait().ifPresent(bt -> {
                 if (bt == ButtonType.OK) {
