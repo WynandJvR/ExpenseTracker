@@ -9,6 +9,7 @@ public class Expense {
     private String description;
     private String recurringId;
     private RecurringExpense sourceRecurringExpense;
+    private String importId;
 
     public Expense(double amount, String category, LocalDate date, String description) {
         this.amount = amount;
@@ -45,6 +46,14 @@ public class Expense {
 
     public RecurringExpense getSourceRecurringExpense() {
         return sourceRecurringExpense;
+    }
+
+    public String getImportId() {
+        return importId;
+    }
+
+    public void setImportId(String importId) {
+        this.importId = importId;
     }
 
     @Override

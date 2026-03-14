@@ -74,6 +74,16 @@ public class MainController {
     @FXML private Label editRecurringErrorLabel;
     @FXML private ComboBox<String> currencyCombo;
 
+    // --- Left panel: Import tab ---
+    @FXML private Label importErrorLabel;
+    @FXML private TableView<CategorizationRules.RuleEntry> rulesTable;
+    @FXML private TableView<ImportLog> importLogTable;
+
+    // --- Right panel: Filters ---
+    @FXML private ComboBox<String> filterCategoryCombo;
+    @FXML private TextField filterMinAmount;
+    @FXML private TextField filterMaxAmount;
+
     // --- Right panel ---
     @FXML private ComboBox<Integer> yearCombo;
     @FXML private ComboBox<Month> monthCombo;
@@ -123,6 +133,9 @@ public class MainController {
     private boolean suppressIncomeListener = false;
     private RecurringExpense selectedRecurringExpense;
     private Stage stage;
+    private CategorizationRules categorizationRules;
+    private ReceiptScanner receiptScanner;
+    private ObservableList<ImportLog> importLogs;
 
     @FXML
     public void initialize() {
@@ -144,10 +157,22 @@ public class MainController {
             this.budgets = new HashMap<>();
         }
 
+        // Load categorization rules
+        categorizationRules = new CategorizationRules();
+        try {
+            categorizationRules.loadFrom(storage.loadCategorizationRules());
+        } catch (IOException e) {
+            System.err.println("Failed to load categorization rules: " + e.getMessage());
+        }
+
+        // Initialize receipt scanner
+        receiptScanner = new ReceiptScanner();
+
         setupComboBoxes();
         setupTables();
         setupListeners();
         setupEmptyStates();
+        setupRulesTable();
 
         // Initial date pickers
         datePicker.setValue(LocalDate.now());
@@ -228,6 +253,12 @@ public class MainController {
                 refreshTable();
             }
         });
+
+        // Filter category combo — "All Categories" + actual categories
+        updateFilterCategoryCombo();
+        filterCategoryCombo.valueProperty().addListener((obs, oldVal, newVal) -> refreshTable());
+        filterMinAmount.textProperty().addListener((obs, oldVal, newVal) -> refreshTable());
+        filterMaxAmount.textProperty().addListener((obs, oldVal, newVal) -> refreshTable());
     }
 
     private <T> void setupComboCellFactory(ComboBox<T> combo) {
@@ -370,7 +401,10 @@ public class MainController {
             if (newTab != null) {
                 tabPane.applyCss();
                 tabPane.layout();
-                VBox content = newTab == tabPane.getTabs().get(0) ? expenseTabContent : recurringTabContent;
+                VBox content;
+                if (newTab == tabPane.getTabs().get(0)) content = expenseTabContent;
+                else if (newTab == tabPane.getTabs().get(1)) content = recurringTabContent;
+                else content = (VBox) newTab.getContent();
                 content.applyCss();
                 content.layout();
                 tabPane.setPrefHeight(content.prefHeight(-1) + 40);
@@ -1263,6 +1297,7 @@ public class MainController {
             expenseList.setAll(manager.getExpenses());
             recurringList.setAll(manager.getBaseRecurringExpenses());
             updateYearList();
+            updateFilterCategoryCombo();
             updateTotalExpenses();
             updateCharts();
             updateIncomeField();
@@ -1350,8 +1385,28 @@ public class MainController {
         String filter = searchField.getText();
         String lowerCaseFilter = (filter != null && !filter.isEmpty()) ? filter.toLowerCase() : null;
 
+        // Category filter
+        String selectedCategory = filterCategoryCombo.getValue();
+        boolean filterByCategory = selectedCategory != null && !"All Categories".equals(selectedCategory);
+
+        // Amount range filter
+        double minAmount = 0;
+        double maxAmount = Double.MAX_VALUE;
+        try {
+            String minText = filterMinAmount.getText();
+            if (minText != null && !minText.isEmpty()) minAmount = Double.parseDouble(minText);
+        } catch (NumberFormatException ignored) {}
+        try {
+            String maxText = filterMaxAmount.getText();
+            if (maxText != null && !maxText.isEmpty()) maxAmount = Double.parseDouble(maxText);
+        } catch (NumberFormatException ignored) {}
+        final double fMin = minAmount;
+        final double fMax = maxAmount;
+
         filteredData.setPredicate(expense -> {
             if (!YearMonth.from(expense.getDate()).equals(selectedYearMonth)) return false;
+            if (filterByCategory && !expense.getCategory().equals(selectedCategory)) return false;
+            if (expense.getAmount() < fMin || expense.getAmount() > fMax) return false;
             if (lowerCaseFilter == null) return true;
             return String.valueOf(expense.getAmount()).contains(lowerCaseFilter) ||
                    expense.getCategory().toLowerCase().contains(lowerCaseFilter) ||
@@ -1640,6 +1695,511 @@ public class MainController {
         statusSaveLabel.setText("Last saved: just now");
     }
 
+    // ======================== IMPORT ========================
+
+    private void setupRulesTable() {
+        rulesTable.setItems(categorizationRules.getRuleEntries());
+
+        // Import log table
+        try {
+            importLogs = FXCollections.observableArrayList(storage.loadImportLogs());
+        } catch (IOException e) {
+            importLogs = FXCollections.observableArrayList();
+        }
+        importLogTable.setItems(importLogs);
+    }
+
+    @FXML
+    private void handleScanReceipt() {
+        if (!receiptScanner.isTessDataAvailable()) {
+            showMessage("OCR not available. Place eng.traineddata in ~/.expenseTracker/tessdata/", true);
+            return;
+        }
+
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Select Receipt Image");
+        fileChooser.getExtensionFilters().addAll(
+            new FileChooser.ExtensionFilter("Image Files", "*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.tif"),
+            new FileChooser.ExtensionFilter("All Files", "*.*")
+        );
+        File file = fileChooser.showOpenDialog(stage);
+        if (file == null) return;
+
+        showMessage("Processing receipt...", false);
+
+        Thread ocrThread = new Thread(() -> {
+            try {
+                String ocrText = receiptScanner.performOcr(file);
+                List<ImportItem> items = receiptScanner.parseReceipt(ocrText, LocalDate.now());
+
+                // Auto-categorize
+                for (ImportItem item : items) {
+                    String cat = categorizationRules.categorize(item.getDescription());
+                    if (cat != null) {
+                        item.setCategory(cat);
+                        item.setStatus("Auto-categorized");
+                    }
+                }
+
+                javafx.application.Platform.runLater(() -> {
+                    if (items.isEmpty()) {
+                        showMessage("No line items found in the receipt.", true);
+                        return;
+                    }
+                    ImportReviewDialog dialog = new ImportReviewDialog(
+                        stage, items, categories, currencySymbol, ocrText, categorizationRules);
+                    List<Expense> expenses = dialog.showAndWait();
+                    if (expenses != null && !expenses.isEmpty()) {
+                        saveLearnedRules(dialog);
+                        importExpenses(expenses, file.getName(), "Receipt");
+                    }
+                });
+            } catch (Exception e) {
+                javafx.application.Platform.runLater(() ->
+                    showMessage("OCR failed: " + e.getMessage(), true));
+            }
+        });
+        ocrThread.setDaemon(true);
+        ocrThread.start();
+    }
+
+    @FXML
+    private void handleImportStatement() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Import Bank Statement");
+        fileChooser.getExtensionFilters().addAll(
+            new FileChooser.ExtensionFilter("Bank Statements", "*.pdf", "*.csv"),
+            new FileChooser.ExtensionFilter("PDF Files", "*.pdf"),
+            new FileChooser.ExtensionFilter("CSV Files", "*.csv"),
+            new FileChooser.ExtensionFilter("All Files", "*.*")
+        );
+        File file = fileChooser.showOpenDialog(stage);
+        if (file == null) return;
+
+        try {
+            String fileName = file.getName().toLowerCase();
+            List<ImportItem> items;
+
+            if (fileName.endsWith(".pdf")) {
+                items = parsePdfStatement(file);
+            } else {
+                items = parseCsvStatement(file);
+            }
+
+            if (items == null) return; // User cancelled column mapping or error already shown
+
+            // Auto-categorize
+            for (ImportItem item : items) {
+                String cat = categorizationRules.categorize(item.getDescription());
+                if (cat != null) {
+                    item.setCategory(cat);
+                    item.setStatus("Auto-categorized");
+                }
+            }
+
+            if (items.isEmpty()) {
+                showMessage("No transactions found in the file.", true);
+                return;
+            }
+
+            ImportReviewDialog dialog = new ImportReviewDialog(
+                stage, items, categories, currencySymbol, null, categorizationRules);
+            List<Expense> expenses = dialog.showAndWait();
+            if (expenses != null && !expenses.isEmpty()) {
+                saveLearnedRules(dialog);
+                String type = fileName.endsWith(".pdf") ? "PDF" : "CSV";
+                importExpenses(expenses, file.getName(), type);
+            }
+        } catch (Exception e) {
+            showMessage("Import failed: " + e.getMessage(), true);
+        }
+    }
+
+    private List<ImportItem> parsePdfStatement(File file) throws Exception {
+        String text;
+        try (org.apache.pdfbox.pdmodel.PDDocument doc = org.apache.pdfbox.pdmodel.PDDocument.load(file)) {
+            org.apache.pdfbox.text.PDFTextStripper stripper = new org.apache.pdfbox.text.PDFTextStripper();
+            text = stripper.getText(doc);
+        }
+
+        BankStatementParser[] parsers = { new FnbPdfParser(), new GenericPdfParser() };
+        for (BankStatementParser parser : parsers) {
+            if (parser.canParse(text)) {
+                List<ImportItem> items = parser.parse(text);
+                showMessage("Detected " + parser.getBankName() + ". " + items.size() + " transactions found.", false);
+                return items;
+            }
+        }
+
+        showMessage("Could not find transactions in this PDF. Try exporting as CSV instead.", true);
+        return null;
+    }
+
+    private List<ImportItem> parseCsvStatement(File file) throws Exception {
+        String text = new String(java.nio.file.Files.readAllBytes(file.toPath()));
+        char delimiter = CsvStatementParser.detectDelimiter(text);
+        String[] lines = text.split("\\r?\\n");
+        if (lines.length < 2) {
+            showMessage("CSV file is empty or has no data rows.", true);
+            return null;
+        }
+
+        String[] headers = CsvStatementParser.parseHeaders(lines[0], delimiter);
+
+        // Show column mapping dialog
+        return showCsvMappingDialog(text, headers, delimiter, lines);
+    }
+
+    private List<ImportItem> showCsvMappingDialog(String text, String[] headers, char delimiter, String[] lines) {
+        Stage mappingStage = new Stage();
+        mappingStage.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        mappingStage.initOwner(stage);
+        mappingStage.setTitle("CSV Column Mapping");
+
+        javafx.collections.ObservableList<String> headerList = javafx.collections.FXCollections.observableArrayList(headers);
+
+        Label titleLabel = new Label("Map CSV columns to expense fields");
+        titleLabel.getStyleClass().add("section-title");
+
+        Label dateLabel = new Label("Date column:");
+        dateLabel.getStyleClass().add("form-label");
+        ComboBox<String> dateColCombo = new ComboBox<>(headerList);
+        dateColCombo.getStyleClass().add("combo-box");
+        dateColCombo.setMaxWidth(Double.MAX_VALUE);
+
+        Label amountLabel = new Label("Amount column:");
+        amountLabel.getStyleClass().add("form-label");
+        ComboBox<String> amountColCombo = new ComboBox<>(headerList);
+        amountColCombo.getStyleClass().add("combo-box");
+        amountColCombo.setMaxWidth(Double.MAX_VALUE);
+
+        Label descLabel = new Label("Description column:");
+        descLabel.getStyleClass().add("form-label");
+        ComboBox<String> descColCombo = new ComboBox<>(headerList);
+        descColCombo.getStyleClass().add("combo-box");
+        descColCombo.setMaxWidth(Double.MAX_VALUE);
+
+        Label dateFormatLabel = new Label("Date format:");
+        dateFormatLabel.getStyleClass().add("form-label");
+        ComboBox<String> dateFormatCombo = new ComboBox<>(
+            javafx.collections.FXCollections.observableArrayList(CsvStatementParser.DATE_FORMATS));
+        dateFormatCombo.getStyleClass().add("combo-box");
+        dateFormatCombo.setValue("yyyy-MM-dd");
+        dateFormatCombo.setMaxWidth(Double.MAX_VALUE);
+
+        CheckBox negativeIsExpense = new CheckBox("Negative amounts are expenses");
+        negativeIsExpense.getStyleClass().add("check-box");
+        negativeIsExpense.setSelected(true);
+
+        // Auto-select columns by common header names
+        for (int i = 0; i < headers.length; i++) {
+            String h = headers[i].toLowerCase().trim();
+            if (h.contains("date")) dateColCombo.setValue(headers[i]);
+            else if (h.contains("amount") || h.contains("debit") || h.contains("value")) amountColCombo.setValue(headers[i]);
+            else if (h.contains("desc") || h.contains("narr") || h.contains("detail") || h.contains("reference")) descColCombo.setValue(headers[i]);
+        }
+
+        // Preview
+        Label previewLabel = new Label("Preview (first 3 rows):");
+        previewLabel.getStyleClass().add("form-label");
+        TextArea previewArea = new TextArea();
+        previewArea.setEditable(false);
+        previewArea.getStyleClass().add("import-preview");
+        previewArea.setPrefHeight(80);
+        StringBuilder preview = new StringBuilder();
+        for (int i = 0; i < Math.min(4, lines.length); i++) {
+            preview.append(lines[i]).append("\n");
+        }
+        previewArea.setText(preview.toString());
+
+        final List<ImportItem>[] resultHolder = new List[]{null};
+
+        Button okBtn = new Button("Parse");
+        okBtn.getStyleClass().add("success-button");
+        okBtn.setOnAction(e -> {
+            String dateCol = dateColCombo.getValue();
+            String amountCol = amountColCombo.getValue();
+            String descCol = descColCombo.getValue();
+            if (dateCol == null || amountCol == null) {
+                return;
+            }
+            int dateIdx = java.util.Arrays.asList(headers).indexOf(dateCol);
+            int amountIdx = java.util.Arrays.asList(headers).indexOf(amountCol);
+            int descIdx = descCol != null ? java.util.Arrays.asList(headers).indexOf(descCol) : -1;
+
+            resultHolder[0] = CsvStatementParser.parse(text, delimiter, dateIdx, amountIdx,
+                descIdx, dateFormatCombo.getValue(), negativeIsExpense.isSelected());
+            mappingStage.close();
+        });
+
+        Button cancelBtn = new Button("Cancel");
+        cancelBtn.getStyleClass().add("danger-button");
+        cancelBtn.setOnAction(e -> mappingStage.close());
+
+        javafx.scene.layout.HBox btnBox = new javafx.scene.layout.HBox(10, okBtn, cancelBtn);
+        btnBox.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
+
+        VBox layout = new VBox(8, titleLabel, dateLabel, dateColCombo, amountLabel, amountColCombo,
+            descLabel, descColCombo, dateFormatLabel, dateFormatCombo, negativeIsExpense,
+            previewLabel, previewArea, btnBox);
+        layout.setPadding(new javafx.geometry.Insets(15));
+        layout.getStyleClass().add("root-pane");
+
+        Scene scene = new Scene(layout, 450, 550);
+        scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        mappingStage.setScene(scene);
+        mappingStage.showAndWait();
+
+        return resultHolder[0];
+    }
+
+    private void saveLearnedRules(ImportReviewDialog dialog) {
+        Map<String, String> learned = dialog.getLearnedRules();
+        if (learned.isEmpty()) return;
+        for (Map.Entry<String, String> entry : learned.entrySet()) {
+            if (!categorizationRules.getRules().containsKey(entry.getKey())) {
+                categorizationRules.addRule(entry.getKey(), entry.getValue());
+            }
+        }
+        try {
+            storage.saveCategorizationRules(categorizationRules.getRules());
+        } catch (IOException ex) {
+            System.err.println("Failed to save learned rules: " + ex.getMessage());
+        }
+        rulesTable.refresh();
+    }
+
+    private void importExpenses(List<Expense> expenses, String sourceFile, String sourceType) {
+        // Separate income from expenses
+        List<Expense> actualExpenses = new ArrayList<>();
+        List<Expense> incomeItems = new ArrayList<>();
+        for (Expense exp : expenses) {
+            if ("Income".equalsIgnoreCase(exp.getCategory())) {
+                incomeItems.add(exp);
+            } else {
+                actualExpenses.add(exp);
+            }
+        }
+
+        // Tag expenses with a unique import ID
+        String importId = "IMP-" + System.currentTimeMillis();
+        for (Expense exp : actualExpenses) {
+            exp.setImportId(importId);
+        }
+
+        // Add expenses
+        if (!actualExpenses.isEmpty()) {
+            BulkAddExpenseCommand cmd = new BulkAddExpenseCommand(manager, actualExpenses);
+            manager.executeCommand(cmd);
+            try {
+                storage.saveExpenses(manager.getExpensesForSave());
+                storage.saveCategories(categories);
+            } catch (IOException ex) {
+                manager.undo();
+                showMessage("Failed to save imported expenses: " + ex.getMessage(), true);
+                return;
+            }
+        }
+
+        // Add income to monthly income tracker
+        double totalIncomeAdded = 0;
+        if (!incomeItems.isEmpty()) {
+            Map<YearMonth, Double> incomeByMonth = new LinkedHashMap<>();
+            for (Expense inc : incomeItems) {
+                YearMonth ym = YearMonth.from(inc.getDate());
+                incomeByMonth.merge(ym, inc.getAmount(), Double::sum);
+            }
+            for (Map.Entry<YearMonth, Double> entry : incomeByMonth.entrySet()) {
+                double existing = incomes.getOrDefault(entry.getKey(), 0.0);
+                incomes.put(entry.getKey(), existing + entry.getValue());
+                totalIncomeAdded += entry.getValue();
+            }
+            try {
+                storage.saveIncomes(incomes);
+            } catch (IOException ex) {
+                System.err.println("Failed to save incomes: " + ex.getMessage());
+            }
+        }
+
+        // Log the import
+        int totalItems = actualExpenses.size() + incomeItems.size();
+        ImportLog log = new ImportLog(importId, java.time.LocalDateTime.now(), sourceFile, sourceType, totalItems);
+        importLogs.add(log);
+        try {
+            storage.saveImportLogs(new ArrayList<>(importLogs));
+        } catch (IOException ex) {
+            System.err.println("Failed to save import log: " + ex.getMessage());
+        }
+
+        refreshTable();
+
+        // Build summary message
+        StringBuilder msg = new StringBuilder();
+        msg.append(actualExpenses.size()).append(" expenses imported");
+        if (totalIncomeAdded > 0) {
+            msg.append(", ").append(fmt(totalIncomeAdded)).append(" income added across ")
+               .append(incomeItems.size()).append(" transaction(s)");
+        }
+        msg.append("!");
+        showMessage(msg.toString(), false);
+    }
+
+    @FXML
+    private void handleAddRule() {
+        Stage ruleStage = new Stage();
+        ruleStage.initModality(javafx.stage.Modality.WINDOW_MODAL);
+        ruleStage.initOwner(stage);
+        ruleStage.setTitle("Add Categorization Rule");
+
+        Label titleLabel = new Label("Add Auto-Categorization Rule");
+        titleLabel.getStyleClass().add("section-title");
+
+        Label keywordLabel = new Label("Keyword (matched in description):");
+        keywordLabel.getStyleClass().add("form-label");
+        TextField keywordField = new TextField();
+        keywordField.getStyleClass().add("text-field");
+        keywordField.setPromptText("e.g., SPAR, UBER, NETFLIX");
+
+        Label catLabel = new Label("Category:");
+        catLabel.getStyleClass().add("form-label");
+        ComboBox<String> catCombo = new ComboBox<>(categories);
+        catCombo.setEditable(true);
+        catCombo.getStyleClass().add("combo-box");
+        catCombo.setMaxWidth(Double.MAX_VALUE);
+
+        Button addBtn = new Button("Add Rule");
+        addBtn.getStyleClass().add("success-button");
+        addBtn.setOnAction(e -> {
+            String keyword = keywordField.getText().trim();
+            String cat = catCombo.getValue();
+            if (cat == null || cat.trim().isEmpty()) {
+                cat = catCombo.getEditor().getText().trim();
+            }
+            if (keyword.isEmpty() || cat.isEmpty()) return;
+
+            if (!categories.contains(cat)) {
+                categories.add(cat);
+                try { storage.saveCategories(categories); } catch (IOException ex) { /* ignore */ }
+            }
+            categorizationRules.addRule(keyword, cat);
+            try { storage.saveCategorizationRules(categorizationRules.getRules()); } catch (IOException ex) { /* ignore */ }
+            rulesTable.refresh();
+            ruleStage.close();
+        });
+
+        Button cancelBtn = new Button("Cancel");
+        cancelBtn.getStyleClass().add("danger-button");
+        cancelBtn.setOnAction(e -> ruleStage.close());
+
+        javafx.scene.layout.HBox btnBox = new javafx.scene.layout.HBox(10, addBtn, cancelBtn);
+
+        VBox layout = new VBox(8, titleLabel, keywordLabel, keywordField, catLabel, catCombo, btnBox);
+        layout.setPadding(new javafx.geometry.Insets(15));
+        layout.getStyleClass().add("root-pane");
+
+        Scene scene = new Scene(layout, 350, 280);
+        scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        ruleStage.setScene(scene);
+        ruleStage.showAndWait();
+    }
+
+    @FXML
+    private void handleRemoveRule() {
+        CategorizationRules.RuleEntry selected = rulesTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            showMessage("Please select a rule to remove", true);
+            return;
+        }
+        categorizationRules.removeRule(selected.getKeyword());
+        try {
+            storage.saveCategorizationRules(categorizationRules.getRules());
+        } catch (IOException ex) {
+            showMessage("Failed to save rules: " + ex.getMessage(), true);
+        }
+        rulesTable.refresh();
+        showMessage("Rule removed.", false);
+    }
+
+    @FXML
+    private void handleDeleteImport() {
+        ImportLog selected = importLogTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            showMessage("Please select an import to delete", true);
+            return;
+        }
+
+        // Count how many expenses will be removed
+        long count = manager.getExpenses().stream()
+            .filter(e -> selected.getImportId().equals(e.getImportId()))
+            .count();
+
+        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmation.setTitle("Delete Import");
+        confirmation.setHeaderText("Delete import from " + selected.getSourceFile() + "?");
+        confirmation.setContentText("This will remove " + count + " expense(s) that were imported on " +
+            selected.getTimestampDisplay() + ".");
+        confirmation.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        confirmation.getDialogPane().getStyleClass().add("dialog-pane");
+
+        if (confirmation.showAndWait().orElse(null) != javafx.scene.control.ButtonType.OK) {
+            return;
+        }
+
+        // Remove all expenses with this import ID
+        List<Expense> toRemove = manager.getExpenses().stream()
+            .filter(e -> selected.getImportId().equals(e.getImportId()))
+            .collect(java.util.stream.Collectors.toList());
+
+        if (!toRemove.isEmpty()) {
+            // Undoable command: execute removes, undo re-adds
+            manager.executeCommand(new Command() {
+                @Override public void execute() {
+                    for (Expense exp : toRemove) {
+                        manager.removeExpense(exp);
+                    }
+                }
+                @Override public void undo() {
+                    for (Expense exp : toRemove) {
+                        manager.addExpense(exp);
+                    }
+                }
+            });
+        }
+
+        // Remove the log entry
+        importLogs.remove(selected);
+        try {
+            storage.saveImportLogs(new ArrayList<>(importLogs));
+            storage.saveExpenses(manager.getExpensesForSave());
+        } catch (IOException ex) {
+            showMessage("Failed to save after delete: " + ex.getMessage(), true);
+            return;
+        }
+
+        refreshTable();
+        showMessage(count + " expenses from import deleted.", false);
+    }
+
+    private void updateFilterCategoryCombo() {
+        String current = filterCategoryCombo.getValue();
+        ObservableList<String> filterItems = FXCollections.observableArrayList("All Categories");
+        filterItems.addAll(categories);
+        filterCategoryCombo.setItems(filterItems);
+        if (current != null && filterItems.contains(current)) {
+            filterCategoryCombo.setValue(current);
+        } else {
+            filterCategoryCombo.setValue("All Categories");
+        }
+    }
+
+    @FXML
+    private void handleClearFilters() {
+        filterCategoryCombo.setValue("All Categories");
+        filterMinAmount.clear();
+        filterMaxAmount.clear();
+        searchField.clear();
+    }
+
     private String fmt(double amount) {
         return currencySymbol + String.format("%.2f", amount);
     }
@@ -1655,7 +2215,9 @@ public class MainController {
         // Route to the correct label based on the active tab
         Label target;
         int activeTab = tabPane.getSelectionModel().getSelectedIndex();
-        if (activeTab == 1) {
+        if (activeTab == 2) {
+            target = importErrorLabel;
+        } else if (activeTab == 1) {
             target = addRecurringErrorLabel;
         } else {
             target = expenseErrorLabel;
@@ -1665,7 +2227,7 @@ public class MainController {
 
     private void showMessageOn(String message, boolean isError, Label target) {
         // Clear all error labels first
-        for (Label lbl : new Label[]{errorLabel, expenseErrorLabel, addRecurringErrorLabel, editRecurringErrorLabel}) {
+        for (Label lbl : new Label[]{errorLabel, expenseErrorLabel, addRecurringErrorLabel, editRecurringErrorLabel, importErrorLabel}) {
             if (lbl != target) {
                 lbl.setText("");
                 lbl.setOpacity(0);
