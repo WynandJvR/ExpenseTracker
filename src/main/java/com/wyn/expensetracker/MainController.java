@@ -2157,7 +2157,7 @@ public class MainController {
         updateCumulativeSpendingChart(selectedYearMonth);
         updateCategoryTrendChart(chartPeriod, selectedYear, selectedYearMonth, now);
         updateYearOverYearChart(selectedYear);
-        updateRecurringVsOneTimeChart(chartExpenses);
+        updateRecurringVsOneTimeChart(chartPeriod, selectedYear, selectedYearMonth, now);
 
         // Fade-in animation for all charts
         animateChartFadeIn(categoryChart);
@@ -2772,29 +2772,88 @@ public class MainController {
         yearOverYearChart.setAnimated(true);
     }
 
-    private void updateRecurringVsOneTimeChart(List<Expense> chartExpenses) {
-        double recurringTotal = chartExpenses.stream()
-            .filter(e -> e.getRecurringId() != null)
-            .mapToDouble(Expense::getAmount)
-            .sum();
-        double oneTimeTotal = chartExpenses.stream()
-            .filter(e -> e.getRecurringId() == null)
-            .mapToDouble(Expense::getAmount)
-            .sum();
-        double grandTotal = recurringTotal + oneTimeTotal;
+    private void updateRecurringVsOneTimeChart(String chartPeriod, int selectedYear,
+                                                   YearMonth selectedYearMonth, YearMonth now) {
+        // This chart needs ALL expenses including recurring projections (not filtered out)
+        // so it can show the actual recurring vs one-time breakdown.
+        // For months with imported data, count imported expenses that were originally
+        // recurring (matched by description/category to a recurring template) as "recurring".
+        Set<String> recurringDescs = manager.getBaseRecurringExpenses().stream()
+            .map(r -> (r.getDescription() != null ? r.getDescription().toLowerCase().trim() : "") + "|" + r.getCategory().toLowerCase())
+            .collect(Collectors.toSet());
+
+        List<Expense> allPeriodExpenses = expenseList.stream()
+            .filter(e -> !e.isExcluded() && !e.isIncome())
+            .filter(e -> {
+                YearMonth ym = YearMonth.from(e.getDate());
+                switch (chartPeriod) {
+                    case "By Year": return e.getDate().getYear() == selectedYear;
+                    case "By Month": return ym.equals(selectedYearMonth);
+                    case "Last 6 Months": return !ym.isBefore(now.minusMonths(5)) && !ym.isAfter(now);
+                    case "Last 12 Months": return !ym.isBefore(now.minusMonths(11)) && !ym.isAfter(now);
+                    default: return true;
+                }
+            })
+            .collect(Collectors.toList());
+
+        // For months with imported data, prefer actual imports over projections
+        // to avoid double-counting. For months without imports, use projections.
+        Set<YearMonth> importedMonths = expenseList.stream()
+            .filter(e -> !e.isIncome() && e.getImportId() != null)
+            .map(e -> YearMonth.from(e.getDate()))
+            .collect(Collectors.toSet());
+
+        double recurringTotal = 0;
+        double oneTimeTotal = 0;
+        for (Expense e : allPeriodExpenses) {
+            YearMonth ym = YearMonth.from(e.getDate());
+            boolean monthHasImports = importedMonths.contains(ym);
+
+            if (e.getRecurringId() != null) {
+                if (monthHasImports) {
+                    // Month has imports — skip projection, but only if there's an actual
+                    // imported expense matching this recurring template (otherwise still count it)
+                    String key = (e.getDescription() != null ? e.getDescription().toLowerCase().trim() : "") + "|" + e.getCategory().toLowerCase();
+                    boolean hasImportedMatch = allPeriodExpenses.stream()
+                        .anyMatch(imp -> imp.getRecurringId() == null && imp.getImportId() != null
+                            && YearMonth.from(imp.getDate()).equals(ym)
+                            && recurringDescs.contains(
+                                (imp.getDescription() != null ? imp.getDescription().toLowerCase().trim() : "")
+                                + "|" + imp.getCategory().toLowerCase())
+                            && Math.abs(imp.getAmount() - e.getAmount()) <= e.getAmount() * 0.15);
+                    if (!hasImportedMatch) {
+                        recurringTotal += e.getAmount();
+                    }
+                } else {
+                    recurringTotal += e.getAmount();
+                }
+            } else {
+                // Real expense — check if it matches a recurring template
+                String key = (e.getDescription() != null ? e.getDescription().toLowerCase().trim() : "") + "|" + e.getCategory().toLowerCase();
+                if (recurringDescs.contains(key)) {
+                    recurringTotal += e.getAmount();
+                } else {
+                    oneTimeTotal += e.getAmount();
+                }
+            }
+        }
+        // Capture as final for use in lambdas
+        final double finalRecurringTotal = recurringTotal;
+        final double finalOneTimeTotal = oneTimeTotal;
+        double grandTotal = finalRecurringTotal + finalOneTimeTotal;
 
         ObservableList<PieChart.Data> data = FXCollections.observableArrayList();
 
         if (grandTotal > 0) {
-            double recurPct = (recurringTotal / grandTotal) * 100;
-            double onePct = (oneTimeTotal / grandTotal) * 100;
+            double recurPct = (finalRecurringTotal / grandTotal) * 100;
+            double onePct = (finalOneTimeTotal / grandTotal) * 100;
 
             PieChart.Data recurData = new PieChart.Data(
-                "Recurring (" + String.format("%.0f%%", recurPct) + ")", recurringTotal);
+                "Recurring (" + String.format("%.0f%%", recurPct) + ")", finalRecurringTotal);
             recurData.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
                     newNode.setStyle("-fx-pie-color: #FF9800;");
-                    Tooltip t = new Tooltip("Recurring: " + fmt(recurringTotal)
+                    Tooltip t = new Tooltip("Recurring: " + fmt(finalRecurringTotal)
                         + " (" + String.format("%.1f%%", recurPct) + ")");
                     t.setStyle("-fx-font-size: 13px;");
                     Tooltip.install(newNode, t);
@@ -2802,11 +2861,11 @@ public class MainController {
             });
 
             PieChart.Data oneData = new PieChart.Data(
-                "One-Time (" + String.format("%.0f%%", onePct) + ")", oneTimeTotal);
+                "One-Time (" + String.format("%.0f%%", onePct) + ")", finalOneTimeTotal);
             oneData.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
                     newNode.setStyle("-fx-pie-color: #45AAF2;");
-                    Tooltip t = new Tooltip("One-Time: " + fmt(oneTimeTotal)
+                    Tooltip t = new Tooltip("One-Time: " + fmt(finalOneTimeTotal)
                         + " (" + String.format("%.1f%%", onePct) + ")");
                     t.setStyle("-fx-font-size: 13px;");
                     Tooltip.install(newNode, t);
