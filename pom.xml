@@ -61,6 +61,13 @@
             <version>5.11.0</version>
         </dependency>
 
+        <!-- EXIF metadata reading for receipt image orientation -->
+        <dependency>
+            <groupId>com.drewnoakes</groupId>
+            <artifactId>metadata-extractor</artifactId>
+            <version>2.19.0</version>
+        </dependency>
+
         <!-- Apache PDFBox for parsing PDF bank statements -->
         <dependency>
             <groupId>org.apache.pdfbox</groupId>
