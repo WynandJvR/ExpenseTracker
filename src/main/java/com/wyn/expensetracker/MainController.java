@@ -2427,17 +2427,9 @@ public class MainController {
         File file = fileChooser.showOpenDialog(stage);
         if (file == null) return;
 
-        // Ask for receipt date (fallback if OCR can't extract one)
-        Dialog<LocalDate> dateDialog = new Dialog<>();
-        dateDialog.setTitle("Receipt Date");
-        dateDialog.setHeaderText("Enter the receipt date (used if OCR can't detect it):");
-        dateDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
-        DatePicker datePicker = new DatePicker(LocalDate.now());
-        dateDialog.getDialogPane().setContent(datePicker);
-        dateDialog.setResultConverter(btn -> btn == ButtonType.OK ? datePicker.getValue() : null);
-        Optional<LocalDate> dateResult = dateDialog.showAndWait();
-        if (dateResult.isEmpty()) return;
-        LocalDate fallbackDate = dateResult.get();
+        // Use EXIF photo date as fallback, otherwise today (user can edit dates in the review dialog)
+        LocalDate exifDate = receiptScanner.extractPhotoDate(file);
+        LocalDate fallbackDate = exifDate != null ? exifDate : LocalDate.now();
 
         // Show centered overlay progress indicator
         ProgressIndicator spinner = new ProgressIndicator();
