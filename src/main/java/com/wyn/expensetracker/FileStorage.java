@@ -5,6 +5,7 @@ import javafx.collections.ObservableList;
 
 import java.io.*;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.*;
 
@@ -77,11 +78,12 @@ public class FileStorage {
                             (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : ""));
                 } else {
                     // Save regular expenses
+                    String importId = expense.getImportId() != null ? expense.getImportId() : "";
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
                             escapeCsv(expense.getDescription()) + "," +
-                            "REGULAR");
+                            "REGULAR," + importId);
                 }
             }
         }
@@ -118,7 +120,11 @@ public class FileStorage {
                             expenses.add(new RecurringExpense(amount, category, date, description, frequency, endDate));
                         } else if ("REGULAR".equals(type)) {
                             // Regular expense
-                            expenses.add(new Expense(amount, category, date, description));
+                            Expense exp = new Expense(amount, category, date, description);
+                            if (parts.length >= 6 && !parts[5].isEmpty()) {
+                                exp.setImportId(parts[5]);
+                            }
+                            expenses.add(exp);
                         } else {
                             System.err.println("Unknown expense type at line " + lineNumber + ": " + line);
                         }
@@ -325,6 +331,72 @@ public class FileStorage {
             }
         }
         return budgets;
+    }
+
+    public void saveCategorizationRules(Map<String, String> rules) throws IOException {
+        try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "categorization_rules.txt"))) {
+            for (Map.Entry<String, String> entry : rules.entrySet()) {
+                out.println(escapeCsv(entry.getKey()) + "," + escapeCsv(entry.getValue()));
+            }
+        }
+    }
+
+    public Map<String, String> loadCategorizationRules() throws IOException {
+        Map<String, String> rules = new LinkedHashMap<>();
+        File file = new File(BASE_DIR + File.separator + "categorization_rules.txt");
+        if (!file.exists()) {
+            return rules;
+        }
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.trim().isEmpty()) {
+                    String[] parts = splitCsv(line);
+                    if (parts.length == 2) {
+                        rules.put(unescapeCsv(parts[0]), unescapeCsv(parts[1]));
+                    }
+                }
+            }
+        }
+        return rules;
+    }
+
+    public void saveImportLogs(List<ImportLog> logs) throws IOException {
+        try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "import_log.txt"))) {
+            for (ImportLog log : logs) {
+                out.println(escapeCsv(log.getImportId()) + "," +
+                    log.getTimestamp() + "," +
+                    escapeCsv(log.getSourceFile()) + "," +
+                    escapeCsv(log.getSourceType()) + "," +
+                    log.getItemCount());
+            }
+        }
+    }
+
+    public List<ImportLog> loadImportLogs() throws IOException {
+        List<ImportLog> logs = new ArrayList<>();
+        File file = new File(BASE_DIR + File.separator + "import_log.txt");
+        if (!file.exists()) return logs;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.trim().isEmpty()) continue;
+                try {
+                    String[] parts = splitCsv(line);
+                    if (parts.length >= 5) {
+                        String importId = unescapeCsv(parts[0]);
+                        LocalDateTime timestamp = LocalDateTime.parse(parts[1]);
+                        String sourceFile = unescapeCsv(parts[2]);
+                        String sourceType = unescapeCsv(parts[3]);
+                        int itemCount = Integer.parseInt(parts[4]);
+                        logs.add(new ImportLog(importId, timestamp, sourceFile, sourceType, itemCount));
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error parsing import log: " + e.getMessage());
+                }
+            }
+        }
+        return logs;
     }
 
 	public ExcelStorage getExcelStorage() {

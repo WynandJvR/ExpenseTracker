@@ -21,3 +21,6 @@ Thumbs.db
 *.war
 *.zip
 IMPLEMENTATION_PLAN.md
+
+# Tesseract OCR data (large binary)
+src/main/resources/tessdata/

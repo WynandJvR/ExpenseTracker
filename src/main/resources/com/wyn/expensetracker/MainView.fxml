@@ -158,6 +158,65 @@
                                 </VBox>
                             </Tab>
 
+                            <!-- ===== Import Tab ===== -->
+                            <Tab text="Import" closable="false">
+                                <VBox fx:id="importTabContent" spacing="5" styleClass="panel-box">
+                                    <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+
+                                    <Label text="Scan Receipt" styleClass="section-title"/>
+                                    <Label text="Scan a receipt image (JPG, PNG, BMP, TIFF) to extract line items via OCR." styleClass="form-label"/>
+                                    <Button text="Scan Receipt Image..." styleClass="success-button" onAction="#handleScanReceipt"/>
+
+                                    <Separator/>
+
+                                    <Label text="Import Bank Statement" styleClass="section-title"/>
+                                    <Label text="Import transactions from a PDF bank statement or CSV file from any bank." styleClass="form-label"/>
+                                    <Button text="Import Bank Statement..." styleClass="success-button" onAction="#handleImportStatement"/>
+
+                                    <Separator/>
+
+                                    <Label text="Import History" styleClass="section-title"/>
+                                    <Label text="Past imports. Select one and delete to remove all its expenses." styleClass="form-label"/>
+                                    <TableView fx:id="importLogTable" styleClass="table-view" prefHeight="120">
+                                        <columns>
+                                            <TableColumn text="Date" prefWidth="130">
+                                                <cellValueFactory><PropertyValueFactory property="timestampDisplay"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Source" prefWidth="150">
+                                                <cellValueFactory><PropertyValueFactory property="sourceFile"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Type" prefWidth="80">
+                                                <cellValueFactory><PropertyValueFactory property="sourceType"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Items" prefWidth="60">
+                                                <cellValueFactory><PropertyValueFactory property="itemCount"/></cellValueFactory>
+                                            </TableColumn>
+                                        </columns>
+                                    </TableView>
+                                    <Button text="Delete Selected Import" styleClass="danger-button" onAction="#handleDeleteImport"/>
+
+                                    <Separator/>
+
+                                    <Label text="Auto-Categorization Rules" styleClass="section-title"/>
+                                    <Label text="Keywords matched against transaction descriptions to auto-assign categories." styleClass="form-label"/>
+                                    <TableView fx:id="rulesTable" styleClass="table-view" prefHeight="150">
+                                        <columns>
+                                            <TableColumn text="Keyword" prefWidth="200">
+                                                <cellValueFactory><PropertyValueFactory property="keyword"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Category" prefWidth="200">
+                                                <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                                            </TableColumn>
+                                        </columns>
+                                    </TableView>
+                                    <HBox spacing="10">
+                                        <Button text="Add Rule" styleClass="primary-button" onAction="#handleAddRule"/>
+                                        <Button text="Remove Rule" styleClass="danger-button" onAction="#handleRemoveRule"/>
+                                    </HBox>
+                                    <Label fx:id="importErrorLabel" styleClass="error-label"/>
+                                </VBox>
+                            </Tab>
+
                         </tabs>
                     </TabPane>
 
@@ -242,6 +301,17 @@
                     <Separator/>
 
                     <Label text="Expense Records" styleClass="section-title"/>
+
+                    <!-- Filters -->
+                    <HBox spacing="10" alignment="CENTER_LEFT">
+                        <Label text="Category:" styleClass="form-label"/>
+                        <ComboBox fx:id="filterCategoryCombo" promptText="All Categories" styleClass="combo-box" prefWidth="160"/>
+                        <Label text="Min:" styleClass="form-label"/>
+                        <TextField fx:id="filterMinAmount" promptText="0" styleClass="text-field" prefWidth="80"/>
+                        <Label text="Max:" styleClass="form-label"/>
+                        <TextField fx:id="filterMaxAmount" promptText="Any" styleClass="text-field" prefWidth="80"/>
+                        <Button text="Clear Filters" styleClass="primary-button" onAction="#handleClearFilters"/>
+                    </HBox>
 
                     <TableView fx:id="expenseTable" styleClass="table-view" prefHeight="400">
                         <columns>
