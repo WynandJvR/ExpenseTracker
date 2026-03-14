@@ -742,6 +742,12 @@
     -fx-font-weight: bold;
 }
 
+.status-transfer {
+    -fx-text-fill: #9E9E9E;
+    -fx-font-weight: bold;
+    -fx-font-style: italic;
+}
+
 /* Import: CSV preview area */
 .import-preview {
     -fx-control-inner-background: #1E1E1E;

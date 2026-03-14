@@ -45,6 +45,16 @@ public class FnbPdfParser implements BankStatementParser {
         "account number", "account type", "branch", "vat reg"
     );
 
+    // Debit-side patterns: money moving to own savings pockets
+    private static final List<String> DEBIT_TRANSFER_PATTERNS = List.of(
+        "payment to investment"
+    );
+
+    // Credit-side patterns: money coming back from own savings pockets
+    private static final List<String> CREDIT_TRANSFER_PATTERNS = List.of(
+        "fnb app transfer from"
+    );
+
     @Override
     public boolean canParse(String text) {
         String lower = text.toLowerCase();
@@ -91,7 +101,7 @@ public class FnbPdfParser implements BankStatementParser {
                 description = CARD_NUMBER.matcher(description).replaceAll("").trim();
                 description = description.replaceAll("\\s{2,}", " ");
 
-                if (description.isEmpty()) continue;
+                if (description.isEmpty()) description = "Unknown Transaction";
 
                 double amount = Double.parseDouble(amountStr);
                 if (amount <= 0) continue;
@@ -105,10 +115,21 @@ public class FnbPdfParser implements BankStatementParser {
 
                 ImportItem item = new ImportItem(amount, description, date);
                 if (isCredit) {
-                    item.setDescription("[CREDIT] " + description);
+                    if (isCreditTransfer(description)) {
+                        item.setDescription("[TRANSFER] " + description);
+                        item.setStatus("Transfer");
+                    } else {
+                        item.setDescription("[CREDIT] " + description);
+                        item.setStatus("Uncategorized");
+                    }
                     item.setSelected(false);
+                } else if (isDebitTransfer(description)) {
+                    item.setDescription("[TRANSFER] " + description);
+                    item.setSelected(false);
+                    item.setStatus("Transfer");
+                } else {
+                    item.setStatus("Uncategorized");
                 }
-                item.setStatus("Uncategorized");
                 items.add(item);
                 continue;
             }
@@ -148,6 +169,22 @@ public class FnbPdfParser implements BankStatementParser {
             }
         }
         return currentYear;
+    }
+
+    private boolean isDebitTransfer(String description) {
+        String lower = description.toLowerCase();
+        for (String pattern : DEBIT_TRANSFER_PATTERNS) {
+            if (lower.startsWith(pattern)) return true;
+        }
+        return false;
+    }
+
+    private boolean isCreditTransfer(String description) {
+        String lower = description.toLowerCase();
+        for (String pattern : CREDIT_TRANSFER_PATTERNS) {
+            if (lower.startsWith(pattern)) return true;
+        }
+        return false;
     }
 
     private boolean isSkipLine(String line) {
