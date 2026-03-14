@@ -131,6 +131,8 @@ public class MainController {
     private String currencySymbol = "R";
     private double recurringIncome = 0.0;
     private boolean suppressIncomeListener = false;
+    private boolean suppressFilterListener = false;
+    private boolean refreshingTable = false;
     private RecurringExpense selectedRecurringExpense;
     private Stage stage;
     private CategorizationRules categorizationRules;
@@ -256,7 +258,9 @@ public class MainController {
 
         // Filter category combo — "All Categories" + actual categories
         updateFilterCategoryCombo();
-        filterCategoryCombo.valueProperty().addListener((obs, oldVal, newVal) -> refreshTable());
+        filterCategoryCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (!suppressFilterListener) refreshTable();
+        });
         filterMinAmount.textProperty().addListener((obs, oldVal, newVal) -> refreshTable());
         filterMaxAmount.textProperty().addListener((obs, oldVal, newVal) -> refreshTable());
     }
@@ -989,13 +993,14 @@ public class MainController {
         manager.executeCommand(new EditExpenseCommand(manager, oldExpense, newExpense));
         try {
             storage.saveExpenses(manager.getExpensesForSave());
-            refreshTable();
-            showMessage("Expense updated", false);
         } catch (Exception ex) {
             manager.undo();
-            refreshTable();
             showMessage("Error saving edit: " + ex.getMessage(), true);
+            refreshTable();
+            return;
         }
+        refreshTable();
+        showMessage("Expense updated", false);
     }
 
     private void setupEditableAmountColumn() {
@@ -1005,7 +1010,8 @@ public class MainController {
 
             {
                 setOnMouseClicked(event -> {
-                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(getTableRow().getItem())) {
+                    if (event.getClickCount() == 2 && !isEmpty() && getTableRow() != null
+                            && canEditExpense(getTableRow().getItem())) {
                         startInlineEdit();
                     }
                 });
@@ -1024,12 +1030,16 @@ public class MainController {
             }
 
             private void commitInlineEdit() {
+                if (!editing) return;
                 try {
                     double val = Double.parseDouble(textField.getText());
                     if (val <= 0) { showMessage("Amount must be positive", true); cancelInlineEdit(); return; }
+                    if (getTableRow() == null || getTableRow().getItem() == null) { cancelInlineEdit(); return; }
                     Expense old = getTableRow().getItem();
                     editing = false;
-                    handleInlineEdit(old, new Expense(val, old.getCategory(), old.getDate(), old.getDescription()));
+                    Expense updated = new Expense(val, old.getCategory(), old.getDate(), old.getDescription());
+                    updated.setImportId(old.getImportId());
+                    handleInlineEdit(old, updated);
                 } catch (NumberFormatException ex) {
                     showMessage("Invalid amount", true);
                     cancelInlineEdit();
@@ -1045,7 +1055,7 @@ public class MainController {
             @Override
             protected void updateItem(Double item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) { setText(null); setGraphic(null); }
+                if (empty || item == null) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && textField != null) { setGraphic(textField); setText(null); }
                 else { setText(item.toString()); setGraphic(null); setAlignment(Pos.CENTER_RIGHT); }
             }
@@ -1056,10 +1066,12 @@ public class MainController {
         expenseCategoryColumn.setCellFactory(col -> new TableCell<Expense, String>() {
             private ComboBox<String> comboBox;
             private boolean editing = false;
+            private boolean committing = false;
 
             {
                 setOnMouseClicked(event -> {
-                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(getTableRow().getItem())) {
+                    if (event.getClickCount() == 2 && !isEmpty() && getTableRow() != null
+                            && canEditExpense(getTableRow().getItem())) {
                         startInlineEdit();
                     }
                 });
@@ -1067,7 +1079,8 @@ public class MainController {
 
             private void startInlineEdit() {
                 editing = true;
-                comboBox = new ComboBox<>(categories);
+                committing = false;
+                comboBox = new ComboBox<>(FXCollections.observableArrayList(categories));
                 comboBox.setValue(getItem());
                 comboBox.setEditable(true);
                 comboBox.getStyleClass().add("combo-box");
@@ -1079,26 +1092,40 @@ public class MainController {
             }
 
             private void commitInlineEdit() {
-                String newCategory = comboBox.getValue();
-                if (newCategory == null || newCategory.trim().isEmpty()) {
-                    newCategory = comboBox.getEditor().getText().trim();
-                }
-                if (newCategory == null || newCategory.isEmpty()) {
-                    showMessage("Category cannot be empty", true);
+                if (committing || !editing) return;
+                committing = true;
+                try {
+                    String newCategory = comboBox.getValue();
+                    if (newCategory == null || newCategory.trim().isEmpty()) {
+                        newCategory = comboBox.getEditor().getText().trim();
+                    }
+                    if (newCategory == null || newCategory.isEmpty()) {
+                        showMessage("Category cannot be empty", true);
+                        cancelInlineEdit();
+                        return;
+                    }
+                    if (getTableRow() == null || getTableRow().getItem() == null) {
+                        cancelInlineEdit();
+                        return;
+                    }
+                    if (!categories.contains(newCategory)) {
+                        categories.add(newCategory);
+                        try { storage.saveCategories(categories); } catch (Exception ex) { categories.remove(newCategory); }
+                    }
+                    Expense old = getTableRow().getItem();
+                    editing = false;
+                    Expense updated = new Expense(old.getAmount(), newCategory, old.getDate(), old.getDescription());
+                    updated.setImportId(old.getImportId());
+                    handleInlineEdit(old, updated);
+                } catch (Exception ex) {
+                    System.err.println("Error in category commitInlineEdit: " + ex.getMessage());
                     cancelInlineEdit();
-                    return;
                 }
-                if (!categories.contains(newCategory)) {
-                    categories.add(newCategory);
-                    try { storage.saveCategories(categories); } catch (Exception ex) { categories.remove(newCategory); }
-                }
-                Expense old = getTableRow().getItem();
-                editing = false;
-                handleInlineEdit(old, new Expense(old.getAmount(), newCategory, old.getDate(), old.getDescription()));
             }
 
             private void cancelInlineEdit() {
                 editing = false;
+                committing = false;
                 setText(getItem());
                 setGraphic(null);
             }
@@ -1106,7 +1133,7 @@ public class MainController {
             @Override
             protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) { setText(null); setGraphic(null); }
+                if (empty || item == null) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && comboBox != null) { setGraphic(comboBox); setText(null); }
                 else { setText(item); setGraphic(null); setAlignment(Pos.CENTER_LEFT); }
             }
@@ -1120,7 +1147,8 @@ public class MainController {
 
             {
                 setOnMouseClicked(event -> {
-                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(getTableRow().getItem())) {
+                    if (event.getClickCount() == 2 && !isEmpty() && getTableRow() != null
+                            && canEditExpense(getTableRow().getItem())) {
                         startInlineEdit();
                     }
                 });
@@ -1138,11 +1166,15 @@ public class MainController {
             }
 
             private void commitInlineEdit() {
+                if (!editing) return;
                 LocalDate newDate = picker.getValue();
                 if (newDate == null) { cancelInlineEdit(); return; }
+                if (getTableRow() == null || getTableRow().getItem() == null) { cancelInlineEdit(); return; }
                 Expense old = getTableRow().getItem();
                 editing = false;
-                handleInlineEdit(old, new Expense(old.getAmount(), old.getCategory(), newDate, old.getDescription()));
+                Expense updated = new Expense(old.getAmount(), old.getCategory(), newDate, old.getDescription());
+                updated.setImportId(old.getImportId());
+                handleInlineEdit(old, updated);
             }
 
             private void cancelInlineEdit() {
@@ -1154,7 +1186,7 @@ public class MainController {
             @Override
             protected void updateItem(LocalDate item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) { setText(null); setGraphic(null); }
+                if (empty || item == null) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && picker != null) { setGraphic(picker); setText(null); }
                 else { setText(item.toString()); setGraphic(null); setAlignment(Pos.CENTER); }
             }
@@ -1168,7 +1200,8 @@ public class MainController {
 
             {
                 setOnMouseClicked(event -> {
-                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(getTableRow().getItem())) {
+                    if (event.getClickCount() == 2 && !isEmpty() && getTableRow() != null
+                            && canEditExpense(getTableRow().getItem())) {
                         startInlineEdit();
                     }
                 });
@@ -1187,9 +1220,13 @@ public class MainController {
             }
 
             private void commitInlineEdit() {
+                if (!editing) return;
+                if (getTableRow() == null || getTableRow().getItem() == null) { cancelInlineEdit(); return; }
                 Expense old = getTableRow().getItem();
                 editing = false;
-                handleInlineEdit(old, new Expense(old.getAmount(), old.getCategory(), old.getDate(), textField.getText().trim()));
+                Expense updated = new Expense(old.getAmount(), old.getCategory(), old.getDate(), textField.getText().trim());
+                updated.setImportId(old.getImportId());
+                handleInlineEdit(old, updated);
             }
 
             private void cancelInlineEdit() {
@@ -1201,7 +1238,7 @@ public class MainController {
             @Override
             protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty) { setText(null); setGraphic(null); }
+                if (empty) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && textField != null) { setGraphic(textField); setText(null); }
                 else { setText(item != null ? item : ""); setGraphic(null); setAlignment(Pos.CENTER_LEFT); }
             }
@@ -1293,6 +1330,8 @@ public class MainController {
     }
 
     private void refreshTable() {
+        if (refreshingTable) return;
+        refreshingTable = true;
         try {
             expenseList.setAll(manager.getExpenses());
             recurringList.setAll(manager.getBaseRecurringExpenses());
@@ -1305,6 +1344,8 @@ public class MainController {
             updateStatusBar();
         } catch (Exception e) {
             showMessage("Error refreshing table: " + e.getMessage(), true);
+        } finally {
+            refreshingTable = false;
         }
     }
 
@@ -2181,14 +2222,19 @@ public class MainController {
     }
 
     private void updateFilterCategoryCombo() {
-        String current = filterCategoryCombo.getValue();
-        ObservableList<String> filterItems = FXCollections.observableArrayList("All Categories");
-        filterItems.addAll(categories);
-        filterCategoryCombo.setItems(filterItems);
-        if (current != null && filterItems.contains(current)) {
-            filterCategoryCombo.setValue(current);
-        } else {
-            filterCategoryCombo.setValue("All Categories");
+        suppressFilterListener = true;
+        try {
+            String current = filterCategoryCombo.getValue();
+            ObservableList<String> filterItems = FXCollections.observableArrayList("All Categories");
+            filterItems.addAll(categories);
+            filterCategoryCombo.setItems(filterItems);
+            if (current != null && filterItems.contains(current)) {
+                filterCategoryCombo.setValue(current);
+            } else {
+                filterCategoryCombo.setValue("All Categories");
+            }
+        } finally {
+            suppressFilterListener = false;
         }
     }
 

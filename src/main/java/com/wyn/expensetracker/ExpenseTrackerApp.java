@@ -19,6 +19,11 @@ public class ExpenseTrackerApp extends Application {
 
     @Override
     public void start(Stage stage) throws Exception {
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            System.err.println("Uncaught exception in thread " + t.getName() + ":");
+            e.printStackTrace();
+        });
+
         ExpenseManager manager = new ExpenseManager();
         FileStorage storage = new FileStorage();
 
