@@ -23,6 +23,7 @@ public class ImportReviewDialog {
     private final ObservableList<ImportItem> items;
     private final ObservableList<ImportItem> expenseItems;
     private final ObservableList<ImportItem> incomeItems;
+    private final ObservableList<ImportItem> recurringItems;
     private final ObservableList<String> categories;
     private final String currencySymbol;
     private final CategorizationRules categorizationRules;
@@ -33,13 +34,24 @@ public class ImportReviewDialog {
     private TabPane tabPane;
     private Tab expenseTab;
     private Tab incomeTab;
+    private Tab recurringTab;
     private TableView<ImportItem> expenseTable;
     private TableView<ImportItem> incomeTable;
+    private TableView<ImportItem> recurringTable;
 
     public ImportReviewDialog(Stage owner, List<ImportItem> importItems,
                               ObservableList<String> categories, String currencySymbol,
                               String rawText, CategorizationRules categorizationRules,
                               List<Expense> existingExpenses) {
+        this(owner, importItems, categories, currencySymbol, rawText,
+             categorizationRules, existingExpenses, new ArrayList<>());
+    }
+
+    public ImportReviewDialog(Stage owner, List<ImportItem> importItems,
+                              ObservableList<String> categories, String currencySymbol,
+                              String rawText, CategorizationRules categorizationRules,
+                              List<Expense> existingExpenses,
+                              List<RecurringExpense> baseRecurringExpenses) {
         this.categorizationRules = categorizationRules;
         this.items = FXCollections.observableArrayList(importItems);
         this.categories = categories;
@@ -64,14 +76,20 @@ public class ImportReviewDialog {
             }
         }
 
-        // Split items into expenses and income
-        // All credits go to income tab (refunds are still money received)
+        // Detect items matching existing recurring expenses
+        flagRecurringMatches(baseRecurringExpenses);
+
+        // Split items into expenses, income, and recurring
         expenseItems = FXCollections.observableArrayList();
         incomeItems = FXCollections.observableArrayList();
+        recurringItems = FXCollections.observableArrayList();
         for (ImportItem item : items) {
             if (item.isIncome()) {
                 item.setSelected(true); // Select income items by default
                 incomeItems.add(item);
+            } else if ("Recurring".equals(item.getStatus())) {
+                item.setSelected(true); // Select so actual values get recorded
+                recurringItems.add(item);
             } else {
                 expenseItems.add(item);
             }
@@ -91,6 +109,7 @@ public class ImportReviewDialog {
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         expenseTab = new Tab();
         incomeTab = new Tab();
+        recurringTab = new Tab();
 
         updateSummary();
 
@@ -99,8 +118,9 @@ public class ImportReviewDialog {
         autoDeselectDuplicates.setSelected(true);
 
         // Create tables for each tab
-        expenseTable = createTable(expenseItems, false);
-        incomeTable = createTable(incomeItems, true);
+        expenseTable = createTable(expenseItems, "expense");
+        incomeTable = createTable(incomeItems, "income");
+        recurringTable = createTable(recurringItems, "recurring");
 
         // Wire checkbox listener
         autoDeselectDuplicates.selectedProperty().addListener((obs, wasSelected, isSelected) -> {
@@ -132,10 +152,18 @@ public class ImportReviewDialog {
         VBox.setVgrow(incomeTable, Priority.ALWAYS);
         incomeTab.setContent(incomeContent);
 
+        VBox recurringContent = new VBox(recurringTable);
+        VBox.setVgrow(recurringTable, Priority.ALWAYS);
+        recurringTab.setContent(recurringContent);
+
         tabPane.getTabs().addAll(expenseTab, incomeTab);
+        if (!recurringItems.isEmpty()) {
+            tabPane.getTabs().add(recurringTab);
+        }
 
         // Style income tab header
         incomeTab.setStyle("-fx-text-base-color: #4CAF50;");
+        recurringTab.setStyle("-fx-text-base-color: #FF9800;");
 
         // Buttons
         HBox buttonBar = createButtonBar();
@@ -180,11 +208,15 @@ public class ImportReviewDialog {
     private void updateTabTitles() {
         long expSelected = expenseItems.stream().filter(ImportItem::isSelected).count();
         long incSelected = incomeItems.stream().filter(ImportItem::isSelected).count();
+        long recSelected = recurringItems.stream().filter(ImportItem::isSelected).count();
         expenseTab.setText("Expenses (" + expenseItems.size() + ")  -  " + expSelected + " selected");
         incomeTab.setText("Income (" + incomeItems.size() + ")  -  " + incSelected + " selected");
+        recurringTab.setText("Recurring (" + recurringItems.size() + ")  -  " + recSelected + " selected");
     }
 
-    private TableView<ImportItem> createTable(ObservableList<ImportItem> tableItems, boolean isIncomeTab) {
+    private TableView<ImportItem> createTable(ObservableList<ImportItem> tableItems, String tabType) {
+        boolean isIncomeTab = "income".equals(tabType);
+        boolean isRecurringTab = "recurring".equals(tabType);
         TableView<ImportItem> table = new TableView<>(tableItems);
         table.setEditable(true);
         table.getStyleClass().add("table-view");
@@ -425,10 +457,10 @@ public class ImportReviewDialog {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
                     setText(null);
-                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual", "status-duplicate", "status-refund");
+                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual", "status-duplicate", "status-refund", "status-recurring");
                 } else {
                     setText(item);
-                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual", "status-duplicate", "status-refund");
+                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual", "status-duplicate", "status-refund", "status-recurring");
                     if ("Auto-categorized".equals(item)) {
                         getStyleClass().add("status-auto");
                     } else if ("Uncategorized".equals(item)) {
@@ -441,6 +473,8 @@ public class ImportReviewDialog {
                         getStyleClass().add("status-duplicate");
                     } else if ("Refund".equals(item)) {
                         getStyleClass().add("status-refund");
+                    } else if ("Recurring".equals(item)) {
+                        getStyleClass().add("status-recurring");
                     }
                 }
             }
@@ -477,7 +511,21 @@ public class ImportReviewDialog {
                             ImportItem rowItem = getItem();
                             if (rowItem != null) {
                                 rowItem.setIncome(false);
+                                rowItem.setStatus("Uncategorized");
                                 incomeItems.remove(rowItem);
+                                expenseItems.add(rowItem);
+                                updateTabTitles();
+                                updateSummary();
+                            }
+                        });
+                        menu.getItems().add(moveToExpenses);
+                    } else if (isRecurringTab) {
+                        MenuItem moveToExpenses = new MenuItem("Move to Expenses");
+                        moveToExpenses.setOnAction(e -> {
+                            ImportItem rowItem = getItem();
+                            if (rowItem != null) {
+                                rowItem.setStatus("Uncategorized");
+                                recurringItems.remove(rowItem);
                                 expenseItems.add(rowItem);
                                 updateTabTitles();
                                 updateSummary();
@@ -508,16 +556,16 @@ public class ImportReviewDialog {
     }
 
     private ObservableList<ImportItem> getActiveTabItems() {
-        if (tabPane.getSelectionModel().getSelectedItem() == incomeTab) {
-            return incomeItems;
-        }
+        Tab selected = tabPane.getSelectionModel().getSelectedItem();
+        if (selected == incomeTab) return incomeItems;
+        if (selected == recurringTab) return recurringItems;
         return expenseItems;
     }
 
     private TableView<ImportItem> getActiveTable() {
-        if (tabPane.getSelectionModel().getSelectedItem() == incomeTab) {
-            return incomeTable;
-        }
+        Tab selected = tabPane.getSelectionModel().getSelectedItem();
+        if (selected == incomeTab) return incomeTable;
+        if (selected == recurringTab) return recurringTable;
         return expenseTable;
     }
 
@@ -633,6 +681,20 @@ public class ImportReviewDialog {
                     result.add(exp);
                 }
             }
+            // Add selected recurring items (user chose to import them anyway)
+            for (ImportItem item : recurringItems) {
+                if (item.isSelected() && item.getAmount() > 0) {
+                    String cat = item.getCategory();
+                    if (cat == null || cat.trim().isEmpty()) {
+                        cat = "Uncategorized";
+                        if (!categories.contains(cat)) {
+                            categories.add(cat);
+                        }
+                    }
+                    result.add(new Expense(item.getAmount(), cat, item.getDate(),
+                        item.getDescription()));
+                }
+            }
             dialogStage.close();
         });
 
@@ -665,10 +727,17 @@ public class ImportReviewDialog {
         double incTotal = incomeItems.stream().filter(ImportItem::isSelected)
             .mapToDouble(ImportItem::getAmount).sum();
 
+        long recCount = recurringItems.stream().filter(ImportItem::isSelected).count();
+        double recTotal = recurringItems.stream().filter(ImportItem::isSelected)
+            .mapToDouble(ImportItem::getAmount).sum();
+
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("%d expenses (%s %.2f)", expCount, currencySymbol, expTotal));
         if (!incomeItems.isEmpty()) {
             sb.append(String.format("  |  %d income (%s %.2f)", incCount, currencySymbol, incTotal));
+        }
+        if (!recurringItems.isEmpty()) {
+            sb.append(String.format("  |  %d recurring (%s %.2f)", recCount, currencySymbol, recTotal));
         }
         summaryLabel.setText(sb.toString());
         updateTabTitles();
@@ -768,6 +837,63 @@ public class ImportReviewDialog {
             || lower.contains("chargeback")
             || lower.contains("cashback")
             || lower.contains("dispute");
+    }
+
+    /**
+     * Flag import items that match existing recurring expense templates.
+     * Matches by description similarity + amount tolerance.
+     */
+    private void flagRecurringMatches(List<RecurringExpense> baseRecurringExpenses) {
+        if (baseRecurringExpenses == null || baseRecurringExpenses.isEmpty()) return;
+
+        for (ImportItem item : items) {
+            if (item.isDuplicate() || item.isIncome()) continue;
+
+            String itemDesc = item.getDescription();
+            if (itemDesc == null || itemDesc.isEmpty()) continue;
+            String normalizedItem = normalize(itemDesc.toLowerCase());
+
+            for (RecurringExpense recurring : baseRecurringExpenses) {
+                String recurringDesc = recurring.getDescription();
+                if (recurringDesc == null || recurringDesc.isEmpty()) continue;
+                String normalizedRecurring = normalize(recurringDesc.toLowerCase());
+
+                // Check description similarity
+                boolean descMatch = false;
+                if (normalizedItem.contains(normalizedRecurring) || normalizedRecurring.contains(normalizedItem)) {
+                    descMatch = true;
+                }
+                // Also try compact match
+                if (!descMatch) {
+                    String compactItem = normalizedItem.replace(" ", "");
+                    String compactRecurring = normalizedRecurring.replace(" ", "");
+                    if (compactRecurring.length() >= 3 &&
+                        (compactItem.contains(compactRecurring) || compactRecurring.contains(compactItem))) {
+                        descMatch = true;
+                    }
+                }
+                // Also try keyword extraction match
+                if (!descMatch) {
+                    String keyword = extractKeyword(itemDesc);
+                    if (keyword != null) {
+                        String normalizedKeyword = normalize(keyword.toLowerCase());
+                        if (normalizedRecurring.contains(normalizedKeyword) || normalizedKeyword.contains(normalizedRecurring)) {
+                            descMatch = true;
+                        }
+                    }
+                }
+
+                if (!descMatch) continue;
+
+                // Check amount tolerance (15%)
+                double tolerance = recurring.getAmount() * 0.15;
+                if (Math.abs(item.getAmount() - recurring.getAmount()) <= tolerance) {
+                    item.setStatus("Recurring");
+                    item.setCategory(recurring.getCategory());
+                    break;
+                }
+            }
+        }
     }
 
     public List<Expense> showAndWait() {

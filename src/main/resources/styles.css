@@ -1002,6 +1002,11 @@
     -fx-font-style: italic;
 }
 
+.status-recurring {
+    -fx-text-fill: #FF9800;
+    -fx-font-weight: bold;
+}
+
 .duplicate-row {
     -fx-background-color: rgba(244, 67, 54, 0.15);
 }
