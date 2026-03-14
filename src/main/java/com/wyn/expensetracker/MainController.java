@@ -22,6 +22,7 @@ import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.chart.*;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
@@ -2426,12 +2427,43 @@ public class MainController {
         File file = fileChooser.showOpenDialog(stage);
         if (file == null) return;
 
-        showMessage("Processing receipt...", false);
+        // Ask for receipt date (fallback if OCR can't extract one)
+        Dialog<LocalDate> dateDialog = new Dialog<>();
+        dateDialog.setTitle("Receipt Date");
+        dateDialog.setHeaderText("Enter the receipt date (used if OCR can't detect it):");
+        dateDialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        DatePicker datePicker = new DatePicker(LocalDate.now());
+        dateDialog.getDialogPane().setContent(datePicker);
+        dateDialog.setResultConverter(btn -> btn == ButtonType.OK ? datePicker.getValue() : null);
+        Optional<LocalDate> dateResult = dateDialog.showAndWait();
+        if (dateResult.isEmpty()) return;
+        LocalDate fallbackDate = dateResult.get();
+
+        // Show centered overlay progress indicator
+        ProgressIndicator spinner = new ProgressIndicator();
+        spinner.setPrefSize(48, 48);
+        spinner.setMaxSize(48, 48);
+        Label ocrStatusLabel = new Label("Scanning receipt...");
+        ocrStatusLabel.setStyle("-fx-text-fill: white; -fx-font-size: 14px;");
+        VBox spinnerBox = new VBox(12, spinner, ocrStatusLabel);
+        spinnerBox.setAlignment(Pos.CENTER);
+        spinnerBox.setStyle("-fx-background-color: rgba(0,0,0,0.7); -fx-background-radius: 12; -fx-padding: 30;");
+        StackPane overlay = new StackPane(spinnerBox);
+        overlay.setStyle("-fx-background-color: rgba(0,0,0,0.3);");
+
+        // Wrap scene root in StackPane to allow overlay layering
+        Scene scene = stage.getScene();
+        javafx.scene.Parent originalRoot = scene.getRoot();
+        StackPane wrapper = new StackPane(originalRoot, overlay);
+        scene.setRoot(wrapper);
 
         Thread ocrThread = new Thread(() -> {
             try {
                 String ocrText = receiptScanner.performOcr(file);
-                List<ImportItem> items = receiptScanner.parseReceipt(ocrText, LocalDate.now());
+
+                Platform.runLater(() -> ocrStatusLabel.setText("Parsing items..."));
+
+                List<ImportItem> items = receiptScanner.parseReceipt(ocrText, fallbackDate);
 
                 // Auto-categorize
                 for (ImportItem item : items) {
@@ -2442,11 +2474,26 @@ public class MainController {
                     }
                 }
 
-                javafx.application.Platform.runLater(() -> {
+                Platform.runLater(() -> {
+                    wrapper.getChildren().clear();
+                    scene.setRoot(originalRoot);
+
                     if (items.isEmpty()) {
-                        showMessage("No line items found in the receipt.", true);
+                        // Show OCR text so user can see what was scanned
+                        Alert alert = new Alert(Alert.AlertType.WARNING);
+                        alert.initOwner(stage);
+                        alert.setTitle("No Items Found");
+                        alert.setHeaderText("Could not extract any line items from this receipt.");
+                        TextArea ocrArea = new TextArea(ocrText);
+                        ocrArea.setEditable(false);
+                        ocrArea.setWrapText(true);
+                        ocrArea.setPrefHeight(300);
+                        alert.getDialogPane().setExpandableContent(
+                            new VBox(5, new Label("OCR text (for debugging):"), ocrArea));
+                        alert.showAndWait();
                         return;
                     }
+                    showMessage("Found " + items.size() + " items.", false);
                     ImportReviewDialog dialog = new ImportReviewDialog(
                         stage, items, categories, currencySymbol, ocrText, categorizationRules);
                     List<Expense> expenses = dialog.showAndWait();
@@ -2456,8 +2503,11 @@ public class MainController {
                     }
                 });
             } catch (Exception e) {
-                javafx.application.Platform.runLater(() ->
-                    showMessage("OCR failed: " + e.getMessage(), true));
+                Platform.runLater(() -> {
+                    wrapper.getChildren().clear();
+                    scene.setRoot(originalRoot);
+                    showMessage("OCR failed: " + e.getMessage(), true);
+                });
             }
         });
         ocrThread.setDaemon(true);
