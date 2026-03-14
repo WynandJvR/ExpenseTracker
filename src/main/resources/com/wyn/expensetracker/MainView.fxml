@@ -13,6 +13,9 @@
     <top>
         <HBox styleClass="toolbar" alignment="CENTER_LEFT" spacing="10">
             <padding><Insets top="6" right="15" bottom="6" left="15"/></padding>
+            <Button fx:id="toggleSidebarButton" text="&#x2630;" styleClass="sidebar-toggle-button" onAction="#handleToggleSidebar">
+                <tooltip><Tooltip text="Toggle Side Panel (Ctrl+B)"/></tooltip>
+            </Button>
             <Button fx:id="undoButton" text="Undo" styleClass="primary-button" disable="true" onAction="#handleUndo">
                 <tooltip><Tooltip text="Undo (Ctrl+Z)"/></tooltip>
             </Button>
@@ -28,7 +31,7 @@
         <SplitPane fx:id="splitPane" orientation="HORIZONTAL" dividerPositions="0.3">
 
             <!-- ==================== LEFT PANEL ==================== -->
-            <ScrollPane fitToWidth="true" hbarPolicy="AS_NEEDED" styleClass="scroll-pane">
+            <ScrollPane fx:id="leftScrollPane" fitToWidth="true" hbarPolicy="AS_NEEDED" styleClass="scroll-pane" minWidth="0">
                 <VBox spacing="5" styleClass="left-panel">
                     <padding><Insets top="20" right="20" bottom="20" left="20"/></padding>
 
@@ -345,10 +348,13 @@
                                         <VBox spacing="5">
                                             <padding><Insets top="10" right="5" bottom="5" left="5"/></padding>
                                             <PieChart fx:id="categoryChart" title="Expenses by Category" legendVisible="false" prefHeight="250" styleClass="chart"/>
-                                            <BarChart fx:id="monthlyTrendChart" title="Monthly Trend" legendVisible="false" prefHeight="250" styleClass="chart">
+                                            <StackedBarChart fx:id="monthlyTrendChart" title="Monthly Trend" legendVisible="false" prefHeight="350" styleClass="chart">
                                                 <xAxis><CategoryAxis/></xAxis>
                                                 <yAxis><NumberAxis/></yAxis>
-                                            </BarChart>
+                                            </StackedBarChart>
+                                            <FlowPane fx:id="trendChartLegend" hgap="12" vgap="6" alignment="CENTER" styleClass="custom-chart-legend">
+                                                <padding><Insets top="4" right="8" bottom="4" left="8"/></padding>
+                                            </FlowPane>
                                             <Label text="Expenses by Category" styleClass="table-title"/>
                                             <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="200">
                                                 <columns>

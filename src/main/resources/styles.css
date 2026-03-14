@@ -388,9 +388,9 @@
 .chart-legend {
     -fx-background-color: #333333;
     -fx-text-fill: #F5F5F5;
-    -fx-font-size: 12px;
+    -fx-font-size: 11px;
     -fx-font-weight: bold;
-    -fx-padding: 5;
+    -fx-padding: 4 6;
     -fx-border-color: #4A4A4A;
     -fx-border-width: 1;
     -fx-border-radius: 3;
@@ -398,8 +398,22 @@
 
 .chart-legend-item {
     -fx-text-fill: #F5F5F5;
-    -fx-font-size: 12px;
+    -fx-font-size: 11px;
     -fx-font-weight: bold;
+    -fx-text-overrun: ellipsis;
+}
+
+.chart-legend-item-symbol {
+    -fx-pref-width: 10;
+    -fx-pref-height: 10;
+}
+
+.custom-chart-legend {
+    -fx-background-color: #333333;
+    -fx-border-color: #4A4A4A;
+    -fx-border-width: 1;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
 }
 
 .chart-pie-label {
@@ -727,6 +741,27 @@
     -fx-background-color: #252525;
     -fx-border-color: transparent transparent #3A3A3A transparent;
     -fx-border-width: 0 0 1 0;
+}
+
+/* Sidebar toggle button */
+.sidebar-toggle-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #A0A0A0;
+    -fx-font-size: 18px;
+    -fx-padding: 4 8;
+    -fx-background-radius: 5;
+    -fx-border-radius: 5;
+    -fx-cursor: hand;
+}
+
+.sidebar-toggle-button:hover {
+    -fx-background-color: #3A3A3A;
+    -fx-text-fill: #FFFFFF;
+}
+
+.sidebar-toggle-button:pressed {
+    -fx-background-color: #5C6BC0;
+    -fx-text-fill: #FFFFFF;
 }
 
 /* Secondary button */
