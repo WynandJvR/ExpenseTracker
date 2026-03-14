@@ -1760,10 +1760,26 @@ public class MainController {
             expenseTable.setPlaceholder(placeholder);
         }
 
-        double total = filteredData.stream()
-            .filter(e -> !e.isExcluded() && !e.isIncome())
-            .mapToDouble(Expense::getAmount)
-            .sum();
+        // Check if this month has real imported data (not just recurring projections)
+        boolean hasImportedData = expenseList.stream()
+            .anyMatch(e -> !e.isIncome() && e.getImportId() != null
+                && YearMonth.from(e.getDate()).equals(selectedYearMonth));
+
+        double total;
+        if (hasImportedData) {
+            // Actual month: only count real expenses (exclude recurring projections)
+            total = filteredData.stream()
+                .filter(e -> !e.isExcluded() && !e.isIncome() && e.getRecurringId() == null)
+                .mapToDouble(Expense::getAmount)
+                .sum();
+        } else {
+            // Projected month: use recurring expenses as forecast
+            total = filteredData.stream()
+                .filter(e -> !e.isExcluded() && !e.isIncome())
+                .mapToDouble(Expense::getAmount)
+                .sum();
+        }
+
         double actualIncome = filteredData.stream()
             .filter(e -> !e.isExcluded() && e.isIncome())
             .mapToDouble(Expense::getAmount)
@@ -1774,22 +1790,26 @@ public class MainController {
         boolean hasActualIncome = actualIncome > 0;
         double income = hasActualIncome ? actualIncome : projectedIncome;
 
-        totalLabel.setText(String.format("Total Expenses for %s %d: %s",
+        boolean isProjected = !hasImportedData && !hasActualIncome;
+        String prefix = isProjected ? "Projected " : "";
+
+        totalLabel.setText(String.format("%sExpenses for %s %d: %s", prefix,
                 selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, fmt(total)));
 
         double moneySaved = income - total;
         if (moneySaved >= 0) {
-            String label = hasActualIncome ? "Money Saved: " : "Projected Savings: ";
+            String label = isProjected ? "Projected Savings: " : "Money Saved: ";
             moneySavedLabel.setText(label + fmt(moneySaved));
             moneySavedLabel.getStyleClass().setAll("saved-label");
         } else {
-            String label = hasActualIncome ? "Overspent: " : "Projected Overspend: ";
+            String label = isProjected ? "Projected Overspend: " : "Overspent: ";
             moneySavedLabel.setText(label + fmt(Math.abs(moneySaved)));
             moneySavedLabel.getStyleClass().setAll("saved-label", "overspent-label");
         }
 
         Map<String, Double> categoryMap = filteredData.stream()
-            .filter(e -> !e.isExcluded() && !e.isIncome())
+            .filter(e -> !e.isExcluded() && !e.isIncome()
+                && (!hasImportedData || e.getRecurringId() == null))
             .collect(Collectors.groupingBy(
                 Expense::getCategory,
                 Collectors.summingDouble(Expense::getAmount))
@@ -1803,9 +1823,11 @@ public class MainController {
 
         // Compute previous month total with same filters for consistent month-over-month comparison
         YearMonth prevYearMonth = selectedYearMonth.minusMonths(1);
+        boolean prevMonthHasImports = monthHasImportedData(prevYearMonth);
         double prevTotal = expenseList.stream()
             .filter(expense -> {
                 if (expense.isExcluded() || expense.isIncome()) return false;
+                if (prevMonthHasImports && expense.getRecurringId() != null) return false;
                 if (!YearMonth.from(expense.getDate()).equals(prevYearMonth)) return false;
                 if (filterByCategory && !expense.getCategory().equals(selectedCategory)) return false;
                 if (expense.getAmount() < fMin || expense.getAmount() > fMax) return false;
@@ -1877,12 +1899,31 @@ public class MainController {
         }
     }
 
+    /**
+     * Check if a given month has real imported expense data (not just recurring projections).
+     */
+    private boolean monthHasImportedData(YearMonth ym) {
+        return expenseList.stream()
+            .anyMatch(e -> !e.isIncome() && e.getImportId() != null
+                && YearMonth.from(e.getDate()).equals(ym));
+    }
+
     private List<Expense> filterExpensesByPeriod(String chartPeriod, int selectedYear,
                                                     YearMonth selectedYearMonth, YearMonth now) {
+        // Precompute which months have imported data
+        Set<YearMonth> importedMonths = expenseList.stream()
+            .filter(e -> !e.isIncome() && e.getImportId() != null)
+            .map(e -> YearMonth.from(e.getDate()))
+            .collect(Collectors.toSet());
+
         return expenseList.stream()
             .filter(expense -> !expense.isExcluded() && !expense.isIncome())
             .filter(expense -> {
+                // Skip recurring projections for months with real imported data
                 YearMonth ym = YearMonth.from(expense.getDate());
+                if (expense.getRecurringId() != null && importedMonths.contains(ym)) {
+                    return false;
+                }
                 switch (chartPeriod) {
                     case "By Year":
                         return expense.getDate().getYear() == selectedYear;
@@ -2052,8 +2093,13 @@ public class MainController {
             monthlyTrendChart.setTitle("Weekly Spending \u2014 "
                 + selectedMonth.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + selectedYear);
         } else {
+            Set<YearMonth> importedMonths = expenseList.stream()
+                .filter(e -> !e.isIncome() && e.getImportId() != null)
+                .map(e -> YearMonth.from(e.getDate()))
+                .collect(Collectors.toSet());
             Map<YearMonth, Double> monthlyTotals = expenseList.stream()
-                .filter(expense -> !expense.isExcluded() && !expense.isIncome())
+                .filter(expense -> !expense.isExcluded() && !expense.isIncome()
+                    && !(expense.getRecurringId() != null && importedMonths.contains(YearMonth.from(expense.getDate()))))
                 .collect(Collectors.groupingBy(
                     expense -> YearMonth.from(expense.getDate()),
                     Collectors.summingDouble(Expense::getAmount)));
@@ -2068,6 +2114,7 @@ public class MainController {
             YearMonth cursor = rangeStart;
             while (!cursor.isAfter(rangeEnd)) {
                 final YearMonth ym = cursor;
+                boolean ymHasImports = importedMonths.contains(ym);
                 String label = ym.getMonth()
                     .getDisplayName(TextStyle.SHORT, Locale.getDefault())
                     + (sameYear ? "" : " '" + String.format("%02d", ym.getYear() % 100));
@@ -2075,7 +2122,8 @@ public class MainController {
 
                 Map<String, Double> catTotals = new LinkedHashMap<>();
                 for (Expense e : expenseList) {
-                    if (!e.isExcluded() && !e.isIncome() && YearMonth.from(e.getDate()).equals(ym)) {
+                    if (!e.isExcluded() && !e.isIncome() && YearMonth.from(e.getDate()).equals(ym)
+                        && !(ymHasImports && e.getRecurringId() != null)) {
                         catTotals.merge(e.getCategory(), e.getAmount(), Double::sum);
                         allCategories.add(e.getCategory());
                     }
@@ -2144,8 +2192,14 @@ public class MainController {
         xAxis.getCategories().clear();
         xAxis.setAutoRanging(false);
 
+        Set<YearMonth> impMonths = expenseList.stream()
+            .filter(e -> !e.isIncome() && e.getImportId() != null)
+            .map(e -> YearMonth.from(e.getDate()))
+            .collect(Collectors.toSet());
+
         Map<YearMonth, Double> monthlyExpenses = expenseList.stream()
-            .filter(expense -> !expense.isExcluded() && !expense.isIncome())
+            .filter(expense -> !expense.isExcluded() && !expense.isIncome()
+                && !(expense.getRecurringId() != null && impMonths.contains(YearMonth.from(expense.getDate()))))
             .collect(Collectors.groupingBy(
                 expense -> YearMonth.from(expense.getDate()),
                 Collectors.summingDouble(Expense::getAmount)));
@@ -2230,9 +2284,11 @@ public class MainController {
             + " " + selectedYearMonth.getYear());
 
         // Only include categories that have a budget
+        boolean budgetMonthHasImports = monthHasImportedData(selectedYearMonth);
         Map<String, Double> actualByCategory = expenseList.stream()
             .filter(e -> !e.isExcluded() && !e.isIncome())
             .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
+            .filter(e -> !(budgetMonthHasImports && e.getRecurringId() != null))
             .collect(Collectors.groupingBy(Expense::getCategory, Collectors.summingDouble(Expense::getAmount)));
 
         List<String> budgetedCategories = budgets.entrySet().stream()
@@ -2307,9 +2363,11 @@ public class MainController {
         yAxis.setAutoRanging(true);
         yAxis.setLabel("Amount");
 
+        boolean cumMonthHasImports = monthHasImportedData(selectedYearMonth);
         Map<Integer, Double> dailyTotals = expenseList.stream()
             .filter(e -> !e.isExcluded() && !e.isIncome())
             .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
+            .filter(e -> !(cumMonthHasImports && e.getRecurringId() != null))
             .collect(Collectors.groupingBy(
                 e -> e.getDate().getDayOfMonth(),
                 Collectors.summingDouble(Expense::getAmount)));
@@ -2384,8 +2442,13 @@ public class MainController {
         xAxis.getCategories().clear();
         xAxis.setAutoRanging(false);
 
+        Set<YearMonth> catTrendImportedMonths = expenseList.stream()
+            .filter(e -> !e.isIncome() && e.getImportId() != null)
+            .map(e -> YearMonth.from(e.getDate()))
+            .collect(Collectors.toSet());
         Map<YearMonth, Double> monthlyTotals = expenseList.stream()
-            .filter(e -> !e.isExcluded() && !e.isIncome())
+            .filter(e -> !e.isExcluded() && !e.isIncome()
+                && !(e.getRecurringId() != null && catTrendImportedMonths.contains(YearMonth.from(e.getDate()))))
             .collect(Collectors.groupingBy(
                 e -> YearMonth.from(e.getDate()),
                 Collectors.summingDouble(Expense::getAmount)));
@@ -2485,8 +2548,13 @@ public class MainController {
             monthLabels.add(m.getDisplayName(TextStyle.SHORT, Locale.getDefault()));
         }
 
+        Set<YearMonth> yoyImportedMonths = expenseList.stream()
+            .filter(e -> !e.isIncome() && e.getImportId() != null)
+            .map(e -> YearMonth.from(e.getDate()))
+            .collect(Collectors.toSet());
         Map<YearMonth, Double> monthlyTotals = expenseList.stream()
-            .filter(e -> !e.isExcluded() && !e.isIncome())
+            .filter(e -> !e.isExcluded() && !e.isIncome()
+                && !(e.getRecurringId() != null && yoyImportedMonths.contains(YearMonth.from(e.getDate()))))
             .filter(e -> e.getDate().getYear() == selectedYear || e.getDate().getYear() == prevYear)
             .collect(Collectors.groupingBy(
                 e -> YearMonth.from(e.getDate()),
