@@ -2092,6 +2092,25 @@ public class MainController {
                 && YearMonth.from(e.getDate()).equals(ym));
     }
 
+    /**
+     * Check if a recurring expense should be excluded because a matching imported
+     * transaction already exists for that month. If no matching import exists,
+     * the recurring expense should still be counted.
+     */
+    private boolean shouldExcludeRecurring(Expense recurring, YearMonth ym) {
+        RecurringExpense source = recurring.getSourceRecurringExpense();
+        if (source == null) return false; // no template info, keep the projection
+        String srcDesc = source.getDescription() != null ? source.getDescription().toLowerCase().trim() : "";
+        if (srcDesc.isEmpty()) return false; // can't match without a description
+        return expenseList.stream()
+            .anyMatch(imp -> imp.getRecurringId() == null && imp.getImportId() != null
+                && !imp.isIncome()
+                && YearMonth.from(imp.getDate()).equals(ym)
+                && imp.getDescription() != null
+                && imp.getDescription().toLowerCase().contains(srcDesc)
+                && Math.abs(imp.getAmount() - recurring.getAmount()) <= recurring.getAmount() * 0.20);
+    }
+
     private List<Expense> filterExpensesByPeriod(String chartPeriod, int selectedYear,
                                                     YearMonth selectedYearMonth, YearMonth now) {
         // Precompute which months have imported data
@@ -2103,9 +2122,11 @@ public class MainController {
         return expenseList.stream()
             .filter(expense -> !expense.isExcluded() && !expense.isIncome())
             .filter(expense -> {
-                // Skip recurring projections for months with real imported data
+                // Skip recurring projections for months with real imported data,
+                // but only if a matching imported expense actually exists
                 YearMonth ym = YearMonth.from(expense.getDate());
-                if (expense.getRecurringId() != null && importedMonths.contains(ym)) {
+                if (expense.getRecurringId() != null && importedMonths.contains(ym)
+                    && shouldExcludeRecurring(expense, ym)) {
                     return false;
                 }
                 switch (chartPeriod) {
@@ -2289,7 +2310,8 @@ public class MainController {
                 .collect(Collectors.toSet());
             Map<YearMonth, Double> monthlyTotals = expenseList.stream()
                 .filter(expense -> !expense.isExcluded() && !expense.isIncome()
-                    && !(expense.getRecurringId() != null && importedMonths.contains(YearMonth.from(expense.getDate()))))
+                    && !(expense.getRecurringId() != null && importedMonths.contains(YearMonth.from(expense.getDate()))
+                        && shouldExcludeRecurring(expense, YearMonth.from(expense.getDate()))))
                 .collect(Collectors.groupingBy(
                     expense -> YearMonth.from(expense.getDate()),
                     Collectors.summingDouble(Expense::getAmount)));
@@ -2389,7 +2411,8 @@ public class MainController {
 
         Map<YearMonth, Double> monthlyExpenses = expenseList.stream()
             .filter(expense -> !expense.isExcluded() && !expense.isIncome()
-                && !(expense.getRecurringId() != null && impMonths.contains(YearMonth.from(expense.getDate()))))
+                && !(expense.getRecurringId() != null && impMonths.contains(YearMonth.from(expense.getDate()))
+                    && shouldExcludeRecurring(expense, YearMonth.from(expense.getDate()))))
             .collect(Collectors.groupingBy(
                 expense -> YearMonth.from(expense.getDate()),
                 Collectors.summingDouble(Expense::getAmount)));
