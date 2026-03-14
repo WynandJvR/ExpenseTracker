@@ -1508,11 +1508,27 @@ public class MainController {
             .sorted(Comparator.comparing(CategoryTotal::getCategory))
             .collect(Collectors.toList()));
 
-        updateDashboard(total, categoryMap, selectedYear, selectedMonth);
+        // Compute previous month total with same filters for consistent month-over-month comparison
+        YearMonth prevYearMonth = selectedYearMonth.minusMonths(1);
+        double prevTotal = expenseList.stream()
+            .filter(expense -> {
+                if (!YearMonth.from(expense.getDate()).equals(prevYearMonth)) return false;
+                if (filterByCategory && !expense.getCategory().equals(selectedCategory)) return false;
+                if (expense.getAmount() < fMin || expense.getAmount() > fMax) return false;
+                if (lowerCaseFilter == null) return true;
+                return String.valueOf(expense.getAmount()).contains(lowerCaseFilter) ||
+                       expense.getCategory().toLowerCase().contains(lowerCaseFilter) ||
+                       expense.getDate().toString().contains(lowerCaseFilter) ||
+                       (expense.getDescription() != null && expense.getDescription().toLowerCase().contains(lowerCaseFilter));
+            })
+            .mapToDouble(Expense::getAmount)
+            .sum();
+
+        updateDashboard(total, categoryMap, selectedYear, selectedMonth, prevTotal);
     }
 
     private void updateDashboard(double total, Map<String, Double> categoryMap,
-                                  int selectedYear, Month selectedMonth) {
+                                  int selectedYear, Month selectedMonth, double prevTotal) {
         // Total spent
         dashTotalSpent.setText(fmt(total));
 
@@ -1554,11 +1570,6 @@ public class MainController {
         }
 
         // Month-over-month change
-        YearMonth prevMonth = YearMonth.of(selectedYear, selectedMonth).minusMonths(1);
-        double prevTotal = expenseList.stream()
-            .filter(e -> YearMonth.from(e.getDate()).equals(prevMonth))
-            .mapToDouble(Expense::getAmount)
-            .sum();
         if (prevTotal > 0) {
             double change = total - prevTotal;
             double pct = (change / prevTotal) * 100;
@@ -1577,7 +1588,7 @@ public class MainController {
         Month selectedMonth = monthCombo.getValue();
         String chartPeriod = chartPeriodCombo.getValue();
 
-        if (selectedYear == null || selectedMonth == null) {
+        if (selectedYear == null || selectedMonth == null || chartPeriod == null) {
             categoryChart.setData(FXCollections.observableArrayList());
             monthlyTrendChart.getData().clear();
             return;
@@ -1640,40 +1651,57 @@ public class MainController {
         categoryChart.setAnimated(true);
 
         // --- BarChart ---
+        CategoryAxis xAxis = (CategoryAxis) monthlyTrendChart.getXAxis();
+        xAxis.setAnimated(false);
         monthlyTrendChart.setAnimated(false);
         monthlyTrendChart.getData().clear();
-        monthlyTrendChart.setAnimated(true);
+        xAxis.getCategories().clear();
+        xAxis.setAutoRanging(false);
+        xAxis.setTickLabelRotation(0);
+        xAxis.setTickLabelGap(3);
 
         boolean isDailyMode = "By Month".equals(chartPeriod);
 
+        List<String> barLabels = new ArrayList<>();
         XYChart.Series<String, Number> series = new XYChart.Series<>();
 
         if (isDailyMode) {
-            // Daily breakdown for the selected month
+            // Weekly breakdown for the selected month
             Map<Integer, Double> dailyTotals = chartExpenses.stream()
                 .collect(Collectors.groupingBy(
                     expense -> expense.getDate().getDayOfMonth(),
                     Collectors.summingDouble(Expense::getAmount)));
 
             int daysInMonth = selectedYearMonth.lengthOfMonth();
-            for (int day = 1; day <= daysInMonth; day++) {
-                double total = dailyTotals.getOrDefault(day, 0.0);
-                final int d = day;
-                XYChart.Data<String, Number> data = new XYChart.Data<>(String.valueOf(day), total);
+            for (int weekStart = 1; weekStart <= daysInMonth; weekStart += 7) {
+                int weekEnd = Math.min(weekStart + 6, daysInMonth);
+                double weekTotal = 0;
+                for (int day = weekStart; day <= weekEnd; day++) {
+                    weekTotal += dailyTotals.getOrDefault(day, 0.0);
+                }
+                final double wTotal = weekTotal;
+                final int ws = weekStart;
+                final int we = weekEnd;
+                String label = ws + "–" + we;
+                barLabels.add(label);
+                XYChart.Data<String, Number> data = new XYChart.Data<>(label, weekTotal);
                 data.nodeProperty().addListener((obs, oldNode, newNode) -> {
                     if (newNode != null) {
-                        boolean isToday = selectedYearMonth.equals(YearMonth.now())
-                            && d == LocalDate.now().getDayOfMonth();
-                        String barColor = isToday ? "#FF6F61" : "#4CAF50";
+                        boolean containsToday = selectedYearMonth.equals(YearMonth.now())
+                            && LocalDate.now().getDayOfMonth() >= ws
+                            && LocalDate.now().getDayOfMonth() <= we;
+                        String barColor = containsToday ? "#FF6F61" : "#4CAF50";
                         newNode.setStyle("-fx-bar-fill: " + barColor + ";");
-                        Tooltip tooltip = new Tooltip("Day " + d + ": " + fmt(total));
+                        Tooltip tooltip = new Tooltip(
+                            selectedMonth.getDisplayName(TextStyle.SHORT, Locale.getDefault())
+                            + " " + ws + "–" + we + ": " + fmt(wTotal));
                         tooltip.setStyle("-fx-font-size: 13px;");
                         Tooltip.install(newNode, tooltip);
                     }
                 });
                 series.getData().add(data);
             }
-            monthlyTrendChart.setTitle("Daily Spending — "
+            monthlyTrendChart.setTitle("Weekly Spending \u2014 "
                 + selectedMonth.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + selectedYear);
         } else {
             // Monthly trend
@@ -1682,46 +1710,64 @@ public class MainController {
                     expense -> YearMonth.from(expense.getDate()),
                     Collectors.summingDouble(Expense::getAmount)));
 
-            monthlyTotals.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .filter(entry -> {
-                    YearMonth ym = entry.getKey();
-                    switch (chartPeriod) {
-                        case "By Year":
-                            return ym.getYear() == selectedYear;
-                        case "Last 6 Months":
-                            return !ym.isBefore(now.minusMonths(5)) && !ym.isAfter(now);
-                        case "Last 12 Months":
-                            return !ym.isBefore(now.minusMonths(11)) && !ym.isAfter(now);
-                        default: // All Time
-                            return true;
+            // Determine month range so months with zero expenses still appear
+            YearMonth rangeStart, rangeEnd;
+            switch (chartPeriod) {
+                case "By Year":
+                    rangeStart = YearMonth.of(selectedYear, 1);
+                    rangeEnd = YearMonth.of(selectedYear, 12);
+                    break;
+                case "Last 6 Months":
+                    rangeStart = now.minusMonths(5);
+                    rangeEnd = now;
+                    break;
+                case "Last 12 Months":
+                    rangeStart = now.minusMonths(11);
+                    rangeEnd = now;
+                    break;
+                default: // All Time
+                    if (monthlyTotals.isEmpty()) {
+                        rangeStart = now;
+                        rangeEnd = now;
+                    } else {
+                        rangeStart = monthlyTotals.keySet().stream().min(Comparator.naturalOrder()).get();
+                        rangeEnd = monthlyTotals.keySet().stream().max(Comparator.naturalOrder()).get();
                     }
-                })
-                .forEach(entry -> {
-                    String label = entry.getKey().getMonth()
-                        .getDisplayName(TextStyle.SHORT, Locale.getDefault())
-                        + " '" + String.format("%02d", entry.getKey().getYear() % 100);
-                    final double amount = entry.getValue();
-                    final YearMonth ym = entry.getKey();
-                    XYChart.Data<String, Number> data = new XYChart.Data<>(label, amount);
-                    data.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                        if (newNode != null) {
-                            boolean isCurrent = ym.equals(selectedYearMonth);
-                            String barColor = isCurrent ? "#FF6F61" : "#4CAF50";
-                            newNode.setStyle("-fx-bar-fill: " + barColor + ";");
-                            Tooltip tooltip = new Tooltip(
-                                ym.getMonth().getDisplayName(TextStyle.FULL, Locale.getDefault())
-                                + " " + ym.getYear() + ": " + fmt(amount));
-                            tooltip.setStyle("-fx-font-size: 13px;");
-                            Tooltip.install(newNode, tooltip);
-                        }
-                    });
-                    series.getData().add(data);
+                    break;
+            }
+
+            boolean sameYear = rangeStart.getYear() == rangeEnd.getYear();
+
+            YearMonth cursor = rangeStart;
+            while (!cursor.isAfter(rangeEnd)) {
+                final YearMonth ym = cursor;
+                final double amount = monthlyTotals.getOrDefault(ym, 0.0);
+                String label = ym.getMonth()
+                    .getDisplayName(TextStyle.SHORT, Locale.getDefault())
+                    + (sameYear ? "" : " '" + String.format("%02d", ym.getYear() % 100));
+                barLabels.add(label);
+                XYChart.Data<String, Number> data = new XYChart.Data<>(label, amount);
+                data.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                    if (newNode != null) {
+                        boolean isCurrent = ym.equals(selectedYearMonth);
+                        String barColor = isCurrent ? "#FF6F61" : "#4CAF50";
+                        newNode.setStyle("-fx-bar-fill: " + barColor + ";");
+                        Tooltip tooltip = new Tooltip(
+                            ym.getMonth().getDisplayName(TextStyle.FULL, Locale.getDefault())
+                            + " " + ym.getYear() + ": " + fmt(amount));
+                        tooltip.setStyle("-fx-font-size: 13px;");
+                        Tooltip.install(newNode, tooltip);
+                    }
                 });
+                series.getData().add(data);
+                cursor = cursor.plusMonths(1);
+            }
             monthlyTrendChart.setTitle("Monthly Trend");
         }
 
+        xAxis.setCategories(FXCollections.observableArrayList(barLabels));
         monthlyTrendChart.getData().add(series);
+        monthlyTrendChart.setAnimated(true);
 
         // Fade-in animation for both charts
         animateChartFadeIn(categoryChart);
