@@ -897,7 +897,7 @@ public class MainController {
                 filePath = defaultFile.getAbsolutePath();
             }
 
-            storage.saveExpenses(manager.getExpensesForSave(), filePath);
+            ExcelExporter.exportExpenses(manager.getExpensesForSave(), filePath);
             showMessage("Expenses exported to Excel successfully at: " + filePath, false);
         } catch (IOException ex) {
             showMessage("Failed to export to Excel: " + ex.getMessage(), true);
@@ -931,9 +931,8 @@ public class MainController {
             }
 
             List<Expense> toExport = new ArrayList<>(filteredData);
-            storage.getExcelStorage().saveExpenses(toExport, selectedFile.getAbsolutePath());
+            ExcelExporter.exportExpenses(toExport, selectedFile.getAbsolutePath());
             showMessage(String.format("Exported %d expenses to %s", toExport.size(), selectedFile.getName()), false);
-            markSaved();
         } catch (IOException ex) {
             showMessage("Failed to export: " + ex.getMessage(), true);
         }
