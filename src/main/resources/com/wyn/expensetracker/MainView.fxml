@@ -10,6 +10,20 @@
             xmlns:fx="http://javafx.com/fxml"
             fx:controller="com.wyn.expensetracker.MainController"
             styleClass="root-pane">
+    <top>
+        <HBox styleClass="toolbar" alignment="CENTER_LEFT" spacing="10">
+            <padding><Insets top="6" right="15" bottom="6" left="15"/></padding>
+            <Button fx:id="undoButton" text="Undo" styleClass="primary-button" disable="true" onAction="#handleUndo">
+                <tooltip><Tooltip text="Undo (Ctrl+Z)"/></tooltip>
+            </Button>
+            <Button fx:id="redoButton" text="Redo" styleClass="primary-button" disable="true" onAction="#handleRedo">
+                <tooltip><Tooltip text="Redo (Ctrl+Y)"/></tooltip>
+            </Button>
+            <Region HBox.hgrow="ALWAYS"/>
+            <Label text="Currency:" styleClass="form-label"/>
+            <ComboBox fx:id="currencyCombo" styleClass="combo-box"/>
+        </HBox>
+    </top>
     <center>
         <SplitPane fx:id="splitPane" orientation="HORIZONTAL" dividerPositions="0.3">
 
@@ -37,25 +51,19 @@
 
                                     <HBox spacing="10">
                                         <padding><Insets top="5" bottom="5"/></padding>
-                                        <Button text="Add Category" styleClass="primary-button" onAction="#handleAddCategory"/>
-                                        <Button text="Remove Category" styleClass="danger-button" onAction="#handleRemoveCategory"/>
+                                        <Button text="+ Category" styleClass="secondary-button" onAction="#handleAddCategory"/>
+                                        <Button text="- Category" styleClass="secondary-button" onAction="#handleRemoveCategory"/>
                                     </HBox>
 
                                     <Label text="Date:" styleClass="form-label"/>
                                     <DatePicker fx:id="datePicker" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
 
                                     <Label text="Description (optional):" styleClass="form-label"/>
-                                    <TextField fx:id="descriptionField" promptText="Enter description" styleClass="text-field"/>
+                                    <TextField fx:id="descriptionField" promptText="Enter description" styleClass="text-field" onAction="#handleAddExpense"/>
 
                                     <HBox spacing="10">
                                         <Button fx:id="addButton" text="Add Expense" styleClass="success-button" defaultButton="true" onAction="#handleAddExpense"/>
                                         <Button fx:id="deleteButton" text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteExpense"/>
-                                        <Button fx:id="undoButton" text="Undo" styleClass="primary-button" disable="true" onAction="#handleUndo">
-                                            <tooltip><Tooltip text="Undo (Ctrl+Z)"/></tooltip>
-                                        </Button>
-                                        <Button fx:id="redoButton" text="Redo" styleClass="primary-button" disable="true" onAction="#handleRedo">
-                                            <tooltip><Tooltip text="Redo (Ctrl+Y)"/></tooltip>
-                                        </Button>
                                     </HBox>
                                     <Label fx:id="expenseErrorLabel" styleClass="error-label"/>
                                 </VBox>
@@ -222,34 +230,21 @@
 
                     <Separator/>
 
-                    <!-- Income &amp; Savings -->
+                    <!-- Income &amp; Savings (collapsed by default) -->
                     <VBox spacing="5" styleClass="panel-box">
-                        <Label text="Income &amp; Savings" styleClass="section-title"/>
-                        <Label text="Recurring Monthly Income:" styleClass="form-label"/>
-                        <TextField fx:id="recurringIncomeField" promptText="e.g., 15000.00" styleClass="text-field"/>
-                        <Label text="This Month (override):" styleClass="form-label"/>
-                        <TextField fx:id="incomeField" promptText="Leave empty to use recurring" styleClass="text-field"/>
-                        <Separator/>
-                        <VBox spacing="5">
-                            <Label fx:id="totalLabel" text="Total Expenses: 0.00" styleClass="total-label"/>
+                        <HBox spacing="10" alignment="CENTER_LEFT">
+                            <Label text="Budget:" styleClass="form-label"/>
                             <Label fx:id="moneySavedLabel" text="Money Saved: 0.00" styleClass="saved-label"/>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Button fx:id="toggleIncomeButton" text="Edit" styleClass="secondary-button" onAction="#handleToggleIncome"/>
+                        </HBox>
+                        <Label fx:id="totalLabel" text="Total Expenses: 0.00" styleClass="total-label"/>
+                        <VBox fx:id="incomeFieldsBox" spacing="5" visible="false" managed="false">
+                            <Label text="Recurring Monthly Income:" styleClass="form-label"/>
+                            <TextField fx:id="recurringIncomeField" promptText="e.g., 15000.00" styleClass="text-field"/>
+                            <Label text="This Month (override):" styleClass="form-label"/>
+                            <TextField fx:id="incomeField" promptText="Leave empty to use recurring" styleClass="text-field"/>
                         </VBox>
-                    </VBox>
-
-                    <Separator/>
-
-                    <!-- Search -->
-                    <VBox spacing="5" styleClass="panel-box">
-                        <Label text="Search Expenses" styleClass="section-title"/>
-                        <TextField fx:id="searchField" promptText="Search by amount, category, date, or description" styleClass="text-field"/>
-                    </VBox>
-
-                    <Separator/>
-
-                    <!-- Settings -->
-                    <VBox spacing="5" styleClass="panel-box">
-                        <Label text="Currency" styleClass="section-title"/>
-                        <ComboBox fx:id="currencyCombo" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
                     </VBox>
 
                     <Label fx:id="errorLabel" styleClass="error-label"/>
@@ -258,7 +253,7 @@
 
             <!-- ==================== RIGHT PANEL ==================== -->
             <ScrollPane fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane">
-                <VBox spacing="5" styleClass="right-panel">
+                <VBox spacing="15" styleClass="right-panel">
                     <padding><Insets top="20" right="20" bottom="20" left="20"/></padding>
 
                     <!-- Period Selector -->
@@ -298,20 +293,26 @@
                         </VBox>
                     </HBox>
 
-                    <Separator/>
-
                     <Label text="Expense Records" styleClass="section-title"/>
 
-                    <!-- Filters -->
-                    <HBox spacing="10" alignment="CENTER_LEFT">
-                        <Label text="Category:" styleClass="form-label"/>
-                        <ComboBox fx:id="filterCategoryCombo" promptText="All Categories" styleClass="combo-box" prefWidth="160"/>
-                        <Label text="Min:" styleClass="form-label"/>
-                        <TextField fx:id="filterMinAmount" promptText="0" styleClass="text-field" prefWidth="80"/>
-                        <Label text="Max:" styleClass="form-label"/>
-                        <TextField fx:id="filterMaxAmount" promptText="Any" styleClass="text-field" prefWidth="80"/>
-                        <Button text="Clear Filters" styleClass="primary-button" onAction="#handleClearFilters"/>
-                    </HBox>
+                    <!-- Filters + Search + Export -->
+                    <VBox spacing="8">
+                        <HBox spacing="10" alignment="CENTER_LEFT">
+                            <TextField fx:id="searchField" promptText="Search..." styleClass="text-field" prefWidth="180"/>
+                            <Label text="Category:" styleClass="form-label" minWidth="-1"/>
+                            <ComboBox fx:id="filterCategoryCombo" promptText="All Categories" styleClass="combo-box" prefWidth="160"/>
+                            <Label text="Min:" styleClass="form-label" minWidth="-1"/>
+                            <TextField fx:id="filterMinAmount" promptText="0" styleClass="text-field" prefWidth="80"/>
+                            <Label text="Max:" styleClass="form-label" minWidth="-1"/>
+                            <TextField fx:id="filterMaxAmount" promptText="Any" styleClass="text-field" prefWidth="80"/>
+                            <Button text="Clear Filters" styleClass="primary-button" onAction="#handleClearFilters" minWidth="-1"/>
+                        </HBox>
+                        <HBox spacing="10" alignment="CENTER_RIGHT">
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Button text="Export All" styleClass="success-button" onAction="#handleExport"/>
+                            <Button text="Export View" styleClass="primary-button" onAction="#handleExportFiltered"/>
+                        </HBox>
+                    </VBox>
 
                     <TableView fx:id="expenseTable" styleClass="table-view" prefHeight="400">
                         <columns>
@@ -330,48 +331,38 @@
                         </columns>
                     </TableView>
 
-                    <Separator/>
+                    <!-- Analytics (collapsed by default) -->
+                    <TitledPane text="Analytics" expanded="false" styleClass="analytics-titled-pane">
+                        <VBox spacing="5" styleClass="panel-box">
+                            <HBox spacing="10">
+                                <Label text="View by:" styleClass="form-label"/>
+                                <ComboBox fx:id="chartPeriodCombo" styleClass="combo-box"/>
+                            </HBox>
+                            <PieChart fx:id="categoryChart" title="Expenses by Category" legendVisible="false" prefHeight="250" styleClass="chart"/>
+                            <BarChart fx:id="monthlyTrendChart" title="Monthly Trend" legendVisible="false" prefHeight="250" styleClass="chart">
+                                <xAxis><CategoryAxis/></xAxis>
+                                <yAxis><NumberAxis/></yAxis>
+                            </BarChart>
 
-                    <HBox spacing="10">
-                        <Button text="Export All" styleClass="success-button" onAction="#handleExport"/>
-                        <Button text="Export Current View" styleClass="primary-button" onAction="#handleExportFiltered"/>
-                    </HBox>
-
-                    <Separator/>
-
-                    <!-- Analytics -->
-                    <VBox spacing="5" styleClass="panel-box">
-                        <Label text="Expense Analytics" styleClass="section-title"/>
-                        <HBox spacing="10">
-                            <Label text="View by:" styleClass="form-label"/>
-                            <ComboBox fx:id="chartPeriodCombo" styleClass="combo-box"/>
-                        </HBox>
-                        <PieChart fx:id="categoryChart" title="Expenses by Category" legendVisible="false" prefHeight="250" styleClass="chart"/>
-                        <BarChart fx:id="monthlyTrendChart" title="Monthly Trend" legendVisible="false" prefHeight="250" styleClass="chart">
-                            <xAxis><CategoryAxis/></xAxis>
-                            <yAxis><NumberAxis/></yAxis>
-                        </BarChart>
-                    </VBox>
-
-                    <Separator/>
-
-                    <Label text="Expenses by Category" styleClass="table-title"/>
-                    <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="200">
-                        <columns>
-                            <TableColumn fx:id="categoryNameColumn" text="Category" prefWidth="100">
-                                <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
-                            </TableColumn>
-                            <TableColumn fx:id="categoryTotalColumn" text="Spent" prefWidth="80">
-                                <cellValueFactory><PropertyValueFactory property="total"/></cellValueFactory>
-                            </TableColumn>
-                            <TableColumn fx:id="budgetColumn" text="Budget" prefWidth="80">
-                                <cellValueFactory><PropertyValueFactory property="budget"/></cellValueFactory>
-                            </TableColumn>
-                            <TableColumn fx:id="progressColumn" text="Progress" prefWidth="120">
-                                <cellValueFactory><PropertyValueFactory property="progress"/></cellValueFactory>
-                            </TableColumn>
-                        </columns>
-                    </TableView>
+                            <Label text="Expenses by Category" styleClass="table-title"/>
+                            <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="200">
+                                <columns>
+                                    <TableColumn fx:id="categoryNameColumn" text="Category" prefWidth="100">
+                                        <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                                    </TableColumn>
+                                    <TableColumn fx:id="categoryTotalColumn" text="Spent" prefWidth="80">
+                                        <cellValueFactory><PropertyValueFactory property="total"/></cellValueFactory>
+                                    </TableColumn>
+                                    <TableColumn fx:id="budgetColumn" text="Budget" prefWidth="80">
+                                        <cellValueFactory><PropertyValueFactory property="budget"/></cellValueFactory>
+                                    </TableColumn>
+                                    <TableColumn fx:id="progressColumn" text="Progress" prefWidth="120">
+                                        <cellValueFactory><PropertyValueFactory property="progress"/></cellValueFactory>
+                                    </TableColumn>
+                                </columns>
+                            </TableView>
+                        </VBox>
+                    </TitledPane>
                 </VBox>
             </ScrollPane>
 
