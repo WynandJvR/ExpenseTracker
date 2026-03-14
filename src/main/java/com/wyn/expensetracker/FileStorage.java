@@ -1,74 +1,60 @@
 package com.wyn.expensetracker;
 
-import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.*;
 
 public class FileStorage {
-    private static final String BASE_DIR = System.getProperty("user.home") + File.separator + ".expenseTracker";
-    private static final String EXPENSES_FILE = BASE_DIR + File.separator + "expenses.txt";
-    private static final String CATEGORIES_FILE = BASE_DIR + File.separator + "categories.txt";
-    private static final String INCOME_FILE = BASE_DIR + File.separator + "incomes.txt";
-    private final ExcelStorage excelStorage = new ExcelStorage();
+    private final String baseDir;
+    private final String expensesFile;
+    private final String categoriesFile;
+    private final String incomeFile;
+
+    @FunctionalInterface
+    interface IOConsumer<T> {
+        void accept(T t) throws IOException;
+    }
 
     public FileStorage() {
-        File dir = new File(BASE_DIR);
+        this(System.getProperty("user.home") + File.separator + ".expenseTracker");
+    }
+
+    FileStorage(String baseDir) {
+        this.baseDir = baseDir;
+        this.expensesFile = baseDir + File.separator + "expenses.txt";
+        this.categoriesFile = baseDir + File.separator + "categories.txt";
+        this.incomeFile = baseDir + File.separator + "incomes.txt";
+        File dir = new File(baseDir);
         if (!dir.exists()) {
             dir.mkdirs();
         }
     }
 
-    public void saveExpenses(List<Expense> expenses, String filePath) throws IOException {
-        rotateBackups(filePath, 5);
-        rotateBackups(EXPENSES_FILE, 5);
-        excelStorage.saveExpenses(expenses, filePath);
-        saveToTextFile(expenses);
-    }
-
-    private void rotateBackups(String filePath, int maxBackups) {
-        File file = new File(filePath);
-        if (!file.exists()) return;
-        // Delete oldest backup
-        File oldest = new File(filePath + "." + maxBackups);
-        if (oldest.exists()) oldest.delete();
-        // Rotate existing backups
-        for (int i = maxBackups - 1; i >= 1; i--) {
-            File from = new File(filePath + "." + i);
-            File to = new File(filePath + "." + (i + 1));
-            if (from.exists()) from.renameTo(to);
-        }
-        // Copy current to .1
+    private void atomicWrite(Path target, IOConsumer<PrintWriter> writer) throws IOException {
+        Path tmp = Files.createTempFile(target.getParent(), target.getFileName().toString(), ".tmp");
         try {
-            java.nio.file.Files.copy(file.toPath(), new File(filePath + ".1").toPath(),
-                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            try (PrintWriter out = new PrintWriter(Files.newBufferedWriter(tmp))) {
+                writer.accept(out);
+            }
+            Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
-            System.err.println("Backup rotation failed: " + e.getMessage());
+            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+            throw e;
         }
     }
 
     public void saveExpenses(List<Expense> expenses) throws IOException {
-        saveExpenses(expenses, excelStorage.getLastSavedFilePath());
-    }
-
-    public List<Expense> loadExpenses() throws IOException {
-        try {
-            return excelStorage.loadExpenses();
-        } catch (Exception e) {
-            System.err.println("Failed to load from Excel, falling back to text file: " + e.getMessage());
-            return loadFromTextFile();
-        }
-    }
-
-    private void saveToTextFile(List<Expense> expenses) throws IOException {
-        try (PrintWriter out = new PrintWriter(new FileWriter(EXPENSES_FILE))) {
+        rotateBackups(expensesFile, 5);
+        atomicWrite(Path.of(expensesFile), out -> {
             for (Expense expense : expenses) {
                 if (expense instanceof RecurringExpense recurringExpense) {
-                    // Save recurring expenses with all fields properly escaped
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
@@ -77,7 +63,6 @@ public class FileStorage {
                             recurringExpense.getFrequency() + "," +
                             (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : ""));
                 } else {
-                    // Save regular expenses
                     String importId = expense.getImportId() != null ? expense.getImportId() : "";
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
@@ -86,12 +71,16 @@ public class FileStorage {
                             "REGULAR," + importId);
                 }
             }
-        }
+        });
     }
 
-    private List<Expense> loadFromTextFile() throws IOException {
+    public boolean expensesFileExists() {
+        return new File(expensesFile).exists();
+    }
+
+    public List<Expense> loadExpenses() throws IOException {
         List<Expense> expenses = new ArrayList<>();
-        File file = new File(EXPENSES_FILE);
+        File file = new File(expensesFile);
         if (!file.exists()) {
             return expenses;
         }
@@ -108,18 +97,16 @@ public class FileStorage {
                             System.err.println("Invalid amount at line " + lineNumber + ": " + line);
                             continue;
                         }
-                        String category = unescapeCsv(parts[1]);
+                        String category = parts[1];
                         LocalDate date = LocalDate.parse(parts[2]);
-                        String description = unescapeCsv(parts[3]);
+                        String description = parts[3];
                         String type = parts[4];
-                        
+
                         if ("RECURRING".equals(type) && parts.length >= 7) {
-                            // Recurring expense
                             RecurrenceType frequency = RecurrenceType.valueOf(parts[5]);
                             LocalDate endDate = parts[6].isEmpty() ? null : LocalDate.parse(parts[6]);
                             expenses.add(new RecurringExpense(amount, category, date, description, frequency, endDate));
                         } else if ("REGULAR".equals(type)) {
-                            // Regular expense
                             Expense exp = new Expense(amount, category, date, description);
                             if (parts.length >= 6 && !parts[5].isEmpty()) {
                                 exp.setImportId(parts[5]);
@@ -139,17 +126,87 @@ public class FileStorage {
         return expenses;
     }
 
+    /**
+     * One-time migration: if expenses.txt is missing but expenses.xlsx exists,
+     * load from Excel and save to text. Returns true if migration occurred.
+     */
+    public boolean migrateFromExcelIfNeeded() {
+        File txtFile = new File(expensesFile);
+        File xlsxFile = new File(baseDir + File.separator + "expenses.xlsx");
+        if (!txtFile.exists() && xlsxFile.exists()) {
+            try {
+                List<Expense> expenses = loadExpensesFromExcel(xlsxFile);
+                saveExpenses(expenses);
+                System.out.println("Migrated " + expenses.size() + " expenses from Excel to text format");
+                return true;
+            } catch (Exception e) {
+                System.err.println("Excel migration failed: " + e.getMessage());
+            }
+        }
+        return false;
+    }
+
+    private List<Expense> loadExpensesFromExcel(File file) throws IOException {
+        List<Expense> expenses = new ArrayList<>();
+        try (org.apache.poi.ss.usermodel.Workbook workbook = org.apache.poi.ss.usermodel.WorkbookFactory.create(file)) {
+            org.apache.poi.ss.usermodel.Sheet sheet = workbook.getSheetAt(0);
+            for (org.apache.poi.ss.usermodel.Row row : sheet) {
+                if (row.getRowNum() == 0) continue;
+                try {
+                    double amount = row.getCell(0).getNumericCellValue();
+                    String category = row.getCell(1).getStringCellValue();
+                    LocalDate date = LocalDate.parse(row.getCell(2).getStringCellValue());
+                    String description = row.getCell(3) != null ? row.getCell(3).getStringCellValue() : "";
+                    boolean isRecurring = row.getCell(4) != null && row.getCell(4).getBooleanCellValue();
+                    if (isRecurring) {
+                        RecurrenceType frequency = RecurrenceType.valueOf(row.getCell(5).getStringCellValue());
+                        String endDateStr = row.getCell(6) != null ? row.getCell(6).getStringCellValue() : "";
+                        LocalDate endDate = endDateStr.isEmpty() ? null : LocalDate.parse(endDateStr);
+                        expenses.add(new RecurringExpense(amount, category, date, description, frequency, endDate));
+                    } else {
+                        Expense exp = new Expense(amount, category, date, description);
+                        org.apache.poi.ss.usermodel.Cell importIdCell = row.getCell(7);
+                        if (importIdCell != null && !importIdCell.getStringCellValue().isEmpty()) {
+                            exp.setImportId(importIdCell.getStringCellValue());
+                        }
+                        expenses.add(exp);
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error parsing row " + row.getRowNum() + ": " + e.getMessage());
+                }
+            }
+        }
+        return expenses;
+    }
+
+    private void rotateBackups(String filePath, int maxBackups) throws IOException {
+        File file = new File(filePath);
+        if (!file.exists()) return;
+        // Delete oldest backup
+        File oldest = new File(filePath + "." + maxBackups);
+        if (oldest.exists()) oldest.delete();
+        // Rotate existing backups
+        for (int i = maxBackups - 1; i >= 1; i--) {
+            File from = new File(filePath + "." + i);
+            File to = new File(filePath + "." + (i + 1));
+            if (from.exists()) from.renameTo(to);
+        }
+        // Copy current to .1 — let IOException propagate
+        Files.copy(file.toPath(), new File(filePath + ".1").toPath(),
+            StandardCopyOption.REPLACE_EXISTING);
+    }
+
     public void saveCategories(ObservableList<String> categories) throws IOException {
-        try (PrintWriter out = new PrintWriter(new FileWriter(CATEGORIES_FILE))) {
+        atomicWrite(Path.of(categoriesFile), out -> {
             for (String category : categories) {
                 out.println(escapeCsv(category));
             }
-        }
+        });
     }
 
     public List<String> loadCategories() throws IOException {
         List<String> categories = new ArrayList<>();
-        File file = new File(CATEGORIES_FILE);
+        File file = new File(categoriesFile);
         if (!file.exists()) {
             return categories;
         }
@@ -165,16 +222,16 @@ public class FileStorage {
     }
 
     public void saveIncomes(Map<YearMonth, Double> incomes) throws IOException {
-        try (PrintWriter out = new PrintWriter(new FileWriter(INCOME_FILE))) {
+        atomicWrite(Path.of(incomeFile), out -> {
             for (Map.Entry<YearMonth, Double> entry : incomes.entrySet()) {
                 out.println(entry.getKey() + "," + entry.getValue());
             }
-        }
+        });
     }
 
     public Map<YearMonth, Double> loadIncomes() throws IOException {
         Map<YearMonth, Double> incomes = new HashMap<>();
-        File file = new File(INCOME_FILE);
+        File file = new File(incomeFile);
         if (!file.exists()) {
             return incomes;
         }
@@ -224,16 +281,14 @@ public class FileStorage {
         List<String> parts = new ArrayList<>();
         boolean inQuotes = false;
         StringBuilder field = new StringBuilder();
-        
+
         for (int i = 0; i < line.length(); i++) {
             char c = line.charAt(i);
             if (c == '"') {
                 if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
-                    // Double quote - add a single quote to the field
                     field.append('"');
-                    i++; // Skip the next quote
+                    i++;
                 } else {
-                    // Start or end of quoted field
                     inQuotes = !inQuotes;
                 }
             } else if (c == ',' && !inQuotes) {
@@ -246,10 +301,10 @@ public class FileStorage {
         parts.add(field.toString());
         return parts.toArray(new String[0]);
     }
-	
+
     private Map<String, String> loadSettings() {
         Map<String, String> settings = new HashMap<>();
-        File file = new File(BASE_DIR + File.separator + "settings.txt");
+        File file = new File(baseDir + File.separator + "settings.txt");
         if (!file.exists()) return settings;
         try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
             String line;
@@ -268,11 +323,11 @@ public class FileStorage {
     private void saveSetting(String key, String value) throws IOException {
         Map<String, String> settings = loadSettings();
         settings.put(key, value);
-        try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "settings.txt"))) {
+        atomicWrite(Path.of(baseDir + File.separator + "settings.txt"), out -> {
             for (Map.Entry<String, String> entry : settings.entrySet()) {
                 out.println(entry.getKey() + "=" + entry.getValue());
             }
-        }
+        });
     }
 
     public void saveCurrencySymbol(String symbol) throws IOException {
@@ -296,16 +351,16 @@ public class FileStorage {
     }
 
     public void saveBudgets(Map<String, Double> budgets) throws IOException {
-        try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "budgets.txt"))) {
+        atomicWrite(Path.of(baseDir + File.separator + "budgets.txt"), out -> {
             for (Map.Entry<String, Double> entry : budgets.entrySet()) {
                 out.println(escapeCsv(entry.getKey()) + "," + entry.getValue());
             }
-        }
+        });
     }
 
     public Map<String, Double> loadBudgets() throws IOException {
         Map<String, Double> budgets = new HashMap<>();
-        File file = new File(BASE_DIR + File.separator + "budgets.txt");
+        File file = new File(baseDir + File.separator + "budgets.txt");
         if (!file.exists()) {
             return budgets;
         }
@@ -317,7 +372,7 @@ public class FileStorage {
                 try {
                     String[] parts = splitCsv(line);
                     if (parts.length == 2) {
-                        String category = unescapeCsv(parts[0]);
+                        String category = parts[0];
                         double budget = Double.parseDouble(parts[1]);
                         if (budget >= 0) {
                             budgets.put(category, budget);
@@ -334,16 +389,16 @@ public class FileStorage {
     }
 
     public void saveCategorizationRules(Map<String, String> rules) throws IOException {
-        try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "categorization_rules.txt"))) {
+        atomicWrite(Path.of(baseDir + File.separator + "categorization_rules.txt"), out -> {
             for (Map.Entry<String, String> entry : rules.entrySet()) {
                 out.println(escapeCsv(entry.getKey()) + "," + escapeCsv(entry.getValue()));
             }
-        }
+        });
     }
 
     public Map<String, String> loadCategorizationRules() throws IOException {
         Map<String, String> rules = new LinkedHashMap<>();
-        File file = new File(BASE_DIR + File.separator + "categorization_rules.txt");
+        File file = new File(baseDir + File.separator + "categorization_rules.txt");
         if (!file.exists()) {
             return rules;
         }
@@ -353,7 +408,7 @@ public class FileStorage {
                 if (!line.trim().isEmpty()) {
                     String[] parts = splitCsv(line);
                     if (parts.length == 2) {
-                        rules.put(unescapeCsv(parts[0]), unescapeCsv(parts[1]));
+                        rules.put(parts[0], parts[1]);
                     }
                 }
             }
@@ -362,7 +417,7 @@ public class FileStorage {
     }
 
     public void saveImportLogs(List<ImportLog> logs) throws IOException {
-        try (PrintWriter out = new PrintWriter(new FileWriter(BASE_DIR + File.separator + "import_log.txt"))) {
+        atomicWrite(Path.of(baseDir + File.separator + "import_log.txt"), out -> {
             for (ImportLog log : logs) {
                 out.println(escapeCsv(log.getImportId()) + "," +
                     log.getTimestamp() + "," +
@@ -370,12 +425,12 @@ public class FileStorage {
                     escapeCsv(log.getSourceType()) + "," +
                     log.getItemCount());
             }
-        }
+        });
     }
 
     public List<ImportLog> loadImportLogs() throws IOException {
         List<ImportLog> logs = new ArrayList<>();
-        File file = new File(BASE_DIR + File.separator + "import_log.txt");
+        File file = new File(baseDir + File.separator + "import_log.txt");
         if (!file.exists()) return logs;
         try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
             String line;
@@ -384,10 +439,10 @@ public class FileStorage {
                 try {
                     String[] parts = splitCsv(line);
                     if (parts.length >= 5) {
-                        String importId = unescapeCsv(parts[0]);
+                        String importId = parts[0];
                         LocalDateTime timestamp = LocalDateTime.parse(parts[1]);
-                        String sourceFile = unescapeCsv(parts[2]);
-                        String sourceType = unescapeCsv(parts[3]);
+                        String sourceFile = parts[2];
+                        String sourceType = parts[3];
                         int itemCount = Integer.parseInt(parts[4]);
                         logs.add(new ImportLog(importId, timestamp, sourceFile, sourceType, itemCount));
                     }
@@ -398,8 +453,4 @@ public class FileStorage {
         }
         return logs;
     }
-
-	public ExcelStorage getExcelStorage() {
-    return excelStorage;
-}
 }

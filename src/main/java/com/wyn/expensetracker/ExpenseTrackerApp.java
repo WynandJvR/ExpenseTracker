@@ -43,16 +43,17 @@ public class ExpenseTrackerApp extends Application {
             System.err.println("Failed to load categories: " + e.getMessage());
         }
 
+        // Migrate from Excel if needed (one-time)
+        storage.migrateFromExcelIfNeeded();
+
         // Load expenses
         try {
             manager.loadExpenses(storage.loadExpenses());
             System.out.println("Loaded " + manager.getExpenses().size() + " expenses");
-            if (manager.getExpenses().isEmpty()) {
-                if (!new File(storage.getExcelStorage().getLastSavedFilePath()).exists()) {
-                    manager.executeCommand(new AddExpenseCommand(manager, new Expense(50.0, "Food", LocalDate.now(), "Groceries")));
-                    manager.executeCommand(new AddExpenseCommand(manager, new Expense(30.0, "Transport", LocalDate.now(), "Bus fare")));
-                    storage.saveExpenses(manager.getExpensesForSave());
-                }
+            if (manager.getExpenses().isEmpty() && !storage.expensesFileExists()) {
+                manager.executeCommand(new AddExpenseCommand(manager, new Expense(50.0, "Food", LocalDate.now(), "Groceries")));
+                manager.executeCommand(new AddExpenseCommand(manager, new Expense(30.0, "Transport", LocalDate.now(), "Bus fare")));
+                storage.saveExpenses(manager.getExpensesForSave());
             }
         } catch (Exception e) {
             System.err.println("Error loading expenses: " + e.getMessage());
