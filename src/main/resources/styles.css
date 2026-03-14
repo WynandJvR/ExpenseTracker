@@ -1078,3 +1078,39 @@
     -fx-font-family: "Consolas", "Courier New", monospace;
     -fx-font-size: 12px;
 }
+
+/* Projection area chart fills */
+.projection-area-chart .chart-series-area-fill {
+    -fx-opacity: 0.2;
+}
+
+.projection-area-chart .chart-series-area-line {
+    -fx-stroke-width: 2;
+}
+
+/* Projection header */
+.projection-header {
+    -fx-background-color: rgba(92, 107, 192, 0.08);
+    -fx-background-radius: 6;
+    -fx-padding: 8 12 8 12;
+    -fx-border-color: rgba(92, 107, 192, 0.2);
+    -fx-border-radius: 6;
+}
+
+.projection-period-label {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #E0E0E0;
+}
+
+.projection-method-label {
+    -fx-font-size: 11px;
+    -fx-text-fill: #9E9E9E;
+}
+
+/* Projection trend label */
+.projection-trend-label {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-padding: 4 0 4 0;
+}

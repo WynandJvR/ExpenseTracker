@@ -137,6 +137,24 @@ public class MainController {
     @FXML private LineChart<String, Number> yearOverYearChart;
     @FXML private PieChart recurringVsOneTimeChart;
 
+    // --- Projections tab ---
+    @FXML private Tab projectionsTab;
+    @FXML private VBox projectionsContent;
+    @FXML private Label projExpenses;
+    @FXML private Label projExpensesSubtitle;
+    @FXML private Label projIncome;
+    @FXML private Label projIncomeSubtitle;
+    @FXML private Label projNetSavings;
+    @FXML private Label projNetSavingsSubtitle;
+    @FXML private Label projCumulativeSavings;
+    @FXML private Label projPeriodLabel;
+    @FXML private Label projMethodLabel;
+    @FXML private Label projTrendIndicator;
+    @FXML private Label projNoDataLabel;
+    @FXML private LineChart<String, Number> projOutlookChart;
+    @FXML private AreaChart<String, Number> projBalanceChart;
+    @FXML private StackedBarChart<String, Number> projCategoryChart;
+
     // --- Constants ---
     private static final String[] CATEGORY_COLORS = {
         "#FF6F61", "#6B5B95", "#88B04B", "#F7B731", "#4ECDC4",
@@ -168,6 +186,8 @@ public class MainController {
     private ObservableList<ImportLog> importLogs;
     private boolean sidebarCollapsed = false;
     private boolean sidebarAnimating = false;
+    private boolean projectionsNeedUpdate = true;
+    private ProjectionEngine projectionEngine = new ProjectionEngine();
     private double savedDividerPosition = 0.3;
     private Node leftPane;
 
@@ -634,6 +654,13 @@ public class MainController {
 
         // Chart period
         chartPeriodCombo.valueProperty().addListener((obs, oldVal, newVal) -> updateCharts());
+
+        // Projections tab — lazy compute
+        analyticsTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            if (newTab == projectionsTab && projectionsNeedUpdate) {
+                updateProjections();
+            }
+        });
 
         // Enter key on amount field
         amountField.setOnKeyPressed(e -> {
@@ -2159,6 +2186,12 @@ public class MainController {
         updateYearOverYearChart(selectedYear);
         updateRecurringVsOneTimeChart(chartPeriod, selectedYear, selectedYearMonth, now);
 
+        // Mark projections as needing update; compute immediately if tab is active
+        projectionsNeedUpdate = true;
+        if (analyticsTabPane.getSelectionModel().getSelectedItem() == projectionsTab) {
+            updateProjections();
+        }
+
         // Fade-in animation for all charts
         animateChartFadeIn(categoryChart);
         animateChartFadeIn(monthlyTrendChart);
@@ -2890,6 +2923,328 @@ public class MainController {
                     legendItem.setStyle("-fx-background-color: " + colors[i] + ";");
                 }
                 i++;
+            }
+        });
+    }
+
+    // ======================== PROJECTIONS ========================
+
+    private void updateProjections() {
+        projectionsNeedUpdate = false;
+
+        // Build input snapshot
+        ProjectionEngine.ProjectionInput input = new ProjectionEngine.ProjectionInput(
+                new ArrayList<>(manager.getExpenses()),
+                new ArrayList<>(manager.getBaseRecurringExpenses()),
+                new HashMap<>(incomes),
+                recurringIncome,
+                new HashMap<>(budgets)
+        );
+
+        ProjectionEngine.ProjectionResult result = projectionEngine.project(input);
+
+        // Edge case: no data at all
+        if (result.dataMonthsAvailable == 0 && input.recurringExpenses.isEmpty()) {
+            projExpenses.setText("-");
+            projExpensesSubtitle.setText("");
+            projIncome.setText("-");
+            projIncomeSubtitle.setText("");
+            projNetSavings.setText("-");
+            projNetSavings.setStyle("");
+            projNetSavingsSubtitle.setText("");
+            projCumulativeSavings.setText("-");
+            projCumulativeSavings.setStyle("");
+            projTrendIndicator.setText("");
+            projPeriodLabel.setText("");
+            projMethodLabel.setText("");
+            projNoDataLabel.setText("Not enough data for projections");
+            projNoDataLabel.setVisible(true);
+            projNoDataLabel.setManaged(true);
+            projOutlookChart.getData().clear();
+            projBalanceChart.getData().clear();
+            projCategoryChart.getData().clear();
+            return;
+        }
+
+        projNoDataLabel.setVisible(false);
+        projNoDataLabel.setManaged(false);
+
+        // Period label
+        ProjectionEngine.MonthProjection firstMonth = result.monthProjections.get(0);
+        ProjectionEngine.MonthProjection lastMonth = result.monthProjections.get(result.monthProjections.size() - 1);
+        String fromStr = firstMonth.month.getMonth().getDisplayName(java.time.format.TextStyle.FULL, Locale.getDefault()) + " " + firstMonth.month.getYear();
+        String toStr = lastMonth.month.getMonth().getDisplayName(java.time.format.TextStyle.FULL, Locale.getDefault()) + " " + lastMonth.month.getYear();
+        projPeriodLabel.setText("Projecting: " + fromStr + " \u2013 " + toStr);
+
+        // Methodology label — describe what's active based on available data
+        List<String> methods = new ArrayList<>();
+        methods.add("Recurring expenses (fixed schedules)");
+        if (result.dataMonthsAvailable >= 1) {
+            methods.add("Weighted moving average on last " + Math.min(result.dataMonthsAvailable, 6) + " months of variable spending");
+        }
+        if (result.dataMonthsAvailable >= 3) {
+            methods.add("Linear trend detection (last " + Math.min(result.dataMonthsAvailable, 12) + " months)");
+        }
+        if (result.hasSeasonalData) {
+            methods.add("Seasonal adjustment (12+ months of history)");
+        }
+        if (result.dataMonthsAvailable >= 2) {
+            methods.add("Confidence bands (\u00B11\u03C3 std deviation)");
+        }
+        projMethodLabel.setText("Based on: " + String.join(" \u2022 ", methods));
+
+        // Summary cards — use first month projection
+        ProjectionEngine.MonthProjection first = result.monthProjections.get(0);
+        String monthName = first.month.getMonth().getDisplayName(java.time.format.TextStyle.SHORT, Locale.getDefault());
+
+        projExpenses.setText(fmt(first.projectedExpenses));
+        projExpensesSubtitle.setText(monthName + " " + first.month.getYear());
+
+        projIncome.setText(fmt(first.projectedIncome));
+        projIncomeSubtitle.setText(monthName + " " + first.month.getYear());
+
+        projNetSavings.setText(fmt(Math.abs(first.netSavings)));
+        projNetSavings.setStyle("-fx-text-fill: " + (first.netSavings >= 0 ? "#4CAF50" : "#FF6F61") + ";");
+        projNetSavingsSubtitle.setText(first.netSavings >= 0 ? "Surplus" : "Deficit");
+
+        double cumulativeSavings = result.monthProjections.stream()
+                .mapToDouble(mp -> mp.netSavings).sum();
+        projCumulativeSavings.setText(fmt(Math.abs(cumulativeSavings)));
+        projCumulativeSavings.setStyle("-fx-text-fill: " + (cumulativeSavings >= 0 ? "#4CAF50" : "#FF6F61") + ";");
+
+        // Trend indicator
+        if (result.trendSlope > 10) {
+            projTrendIndicator.setText("\u25B2 Spending trending up " + fmt(Math.abs(result.trendSlope)) + "/month");
+            projTrendIndicator.setStyle("-fx-text-fill: #FF6F61; -fx-font-weight: bold; -fx-font-size: 13px;");
+        } else if (result.trendSlope < -10) {
+            projTrendIndicator.setText("\u25BC Spending trending down " + fmt(Math.abs(result.trendSlope)) + "/month");
+            projTrendIndicator.setStyle("-fx-text-fill: #4CAF50; -fx-font-weight: bold; -fx-font-size: 13px;");
+        } else {
+            projTrendIndicator.setText("\u2192 Spending is stable");
+            projTrendIndicator.setStyle("-fx-text-fill: #F7B731; -fx-font-weight: bold; -fx-font-size: 13px;");
+        }
+
+        // Charts
+        updateProjectionOutlookChart(result);
+        updateProjectionBalanceChart(result);
+        updateProjectionCategoryChart(result);
+
+        animateChartFadeIn(projOutlookChart);
+        animateChartFadeIn(projBalanceChart);
+        animateChartFadeIn(projCategoryChart);
+    }
+
+    private void updateProjectionOutlookChart(ProjectionEngine.ProjectionResult result) {
+        CategoryAxis xAxis = (CategoryAxis) projOutlookChart.getXAxis();
+        xAxis.setAnimated(false);
+        projOutlookChart.setAnimated(false);
+        projOutlookChart.getData().clear();
+
+        XYChart.Series<String, Number> incomeSeries = new XYChart.Series<>();
+        incomeSeries.setName("Income");
+        XYChart.Series<String, Number> expenseSeries = new XYChart.Series<>();
+        expenseSeries.setName("Expenses");
+        XYChart.Series<String, Number> savingsSeries = new XYChart.Series<>();
+        savingsSeries.setName("Net Savings");
+        XYChart.Series<String, Number> optimisticSeries = new XYChart.Series<>();
+        optimisticSeries.setName("Optimistic");
+        XYChart.Series<String, Number> pessimisticSeries = new XYChart.Series<>();
+        pessimisticSeries.setName("Pessimistic");
+
+        boolean showBands = result.dataMonthsAvailable >= 2;
+
+        for (ProjectionEngine.MonthProjection mp : result.monthProjections) {
+            String label = mp.month.getMonth().getDisplayName(java.time.format.TextStyle.SHORT, Locale.getDefault());
+            incomeSeries.getData().add(new XYChart.Data<>(label, mp.projectedIncome));
+            expenseSeries.getData().add(new XYChart.Data<>(label, mp.projectedExpenses));
+            savingsSeries.getData().add(new XYChart.Data<>(label, mp.netSavings));
+            if (showBands) {
+                optimisticSeries.getData().add(new XYChart.Data<>(label, mp.optimisticExpenses));
+                pessimisticSeries.getData().add(new XYChart.Data<>(label, mp.pessimisticExpenses));
+            }
+        }
+
+        projOutlookChart.getData().addAll(Arrays.asList(incomeSeries, expenseSeries, savingsSeries));
+        if (showBands) {
+            projOutlookChart.getData().addAll(Arrays.asList(optimisticSeries, pessimisticSeries));
+        }
+
+        // Style the series after adding to chart
+        Platform.runLater(() -> {
+            styleOutlookSeries(incomeSeries, "#4CAF50", false);
+            styleOutlookSeries(expenseSeries, "#FF6F61", false);
+            styleOutlookSeries(savingsSeries, "#5C6BC0", false);
+            if (showBands) {
+                styleOutlookSeries(optimisticSeries, "#66BB6A", true);   // green — lower expenses = good
+                styleOutlookSeries(pessimisticSeries, "#EF5350", true);  // red — higher expenses = bad
+            }
+
+            // Match legend colors to series — dashed symbols for confidence bands
+            Platform.runLater(() -> {
+                int idx = 0;
+                for (Node legendItem : projOutlookChart.lookupAll(".chart-legend-item-symbol")) {
+                    switch (idx) {
+                        case 0 -> legendItem.setStyle("-fx-background-color: #4CAF50;"); // Income
+                        case 1 -> legendItem.setStyle("-fx-background-color: #FF6F61;"); // Expenses
+                        case 2 -> legendItem.setStyle("-fx-background-color: #5C6BC0;"); // Net Savings
+                        case 3 -> legendItem.setStyle( // Optimistic (dashed green)
+                            "-fx-background-color: transparent; -fx-border-color: #66BB6A; -fx-border-style: dashed; -fx-border-width: 2; -fx-opacity: 0.7;");
+                        case 4 -> legendItem.setStyle( // Pessimistic (dashed red)
+                            "-fx-background-color: transparent; -fx-border-color: #EF5350; -fx-border-style: dashed; -fx-border-width: 2; -fx-opacity: 0.7;");
+                    }
+                    idx++;
+                }
+            });
+
+            // Add tooltips to all data points
+            for (XYChart.Series<String, Number> series : projOutlookChart.getData()) {
+                for (XYChart.Data<String, Number> data : series.getData()) {
+                    if (data.getNode() != null) {
+                        Tooltip t = new Tooltip(series.getName() + " - " + data.getXValue() + ": " + fmt(data.getYValue().doubleValue()));
+                        t.setStyle("-fx-font-size: 13px;");
+                        Tooltip.install(data.getNode(), t);
+                    }
+                }
+            }
+        });
+    }
+
+    private void styleOutlookSeries(XYChart.Series<String, Number> series, String color, boolean dashed) {
+        Node line = series.getNode();
+        if (line != null) {
+            if (dashed) {
+                line.setStyle("-fx-stroke: " + color + "; -fx-stroke-dash-array: 8 4; -fx-opacity: 0.6;");
+            } else {
+                line.setStyle("-fx-stroke: " + color + "; -fx-stroke-width: 2.5;");
+            }
+        }
+        for (XYChart.Data<String, Number> data : series.getData()) {
+            if (data.getNode() != null) {
+                if (dashed) {
+                    data.getNode().setStyle("-fx-background-color: " + color + "; -fx-opacity: 0.5; -fx-background-radius: 3;");
+                } else {
+                    data.getNode().setStyle("-fx-background-color: " + color + "; -fx-background-radius: 4;");
+                }
+            }
+        }
+    }
+
+    private void updateProjectionBalanceChart(ProjectionEngine.ProjectionResult result) {
+        CategoryAxis xAxis = (CategoryAxis) projBalanceChart.getXAxis();
+        xAxis.setAnimated(false);
+        projBalanceChart.setAnimated(false);
+        projBalanceChart.getData().clear();
+
+        XYChart.Series<String, Number> pessimisticSeries = new XYChart.Series<>();
+        pessimisticSeries.setName("Pessimistic");
+        XYChart.Series<String, Number> expectedSeries = new XYChart.Series<>();
+        expectedSeries.setName("Expected");
+        XYChart.Series<String, Number> optimisticSeries = new XYChart.Series<>();
+        optimisticSeries.setName("Optimistic");
+
+        double runningExpected = result.currentBalance;
+        double runningOptimistic = result.currentBalance;
+        double runningPessimistic = result.currentBalance;
+
+        // Add starting point
+        String startLabel = "Now";
+        pessimisticSeries.getData().add(new XYChart.Data<>(startLabel, result.currentBalance));
+        expectedSeries.getData().add(new XYChart.Data<>(startLabel, result.currentBalance));
+        optimisticSeries.getData().add(new XYChart.Data<>(startLabel, result.currentBalance));
+
+        for (ProjectionEngine.MonthProjection mp : result.monthProjections) {
+            String label = mp.month.getMonth().getDisplayName(java.time.format.TextStyle.SHORT, Locale.getDefault());
+            runningExpected += mp.projectedIncome - mp.projectedExpenses;
+            runningOptimistic += mp.projectedIncome - mp.optimisticExpenses;
+            runningPessimistic += mp.projectedIncome - mp.pessimisticExpenses;
+
+            expectedSeries.getData().add(new XYChart.Data<>(label, runningExpected));
+            optimisticSeries.getData().add(new XYChart.Data<>(label, runningOptimistic));
+            pessimisticSeries.getData().add(new XYChart.Data<>(label, runningPessimistic));
+        }
+
+        // Order matters for layering: pessimistic (back) -> expected -> optimistic (front)
+        projBalanceChart.getData().addAll(Arrays.asList(pessimisticSeries, expectedSeries, optimisticSeries));
+
+        Platform.runLater(() -> {
+            styleAreaSeries(pessimisticSeries, "#FF6F61", 0.15);
+            styleAreaSeries(expectedSeries, "#5C6BC0", 0.25);
+            styleAreaSeries(optimisticSeries, "#4CAF50", 0.15);
+
+            // Match legend colors to series colors (order: pessimistic, expected, optimistic)
+            styleChartLegend(projBalanceChart, "#FF6F61", "#5C6BC0", "#4CAF50");
+        });
+    }
+
+    private void styleAreaSeries(XYChart.Series<String, Number> series, String color, double fillOpacity) {
+        Node line = series.getNode();
+        if (line != null) {
+            // The series node in AreaChart is a Group containing the fill path and the line path
+            line.setStyle("-fx-stroke: " + color + "; -fx-stroke-width: 2;");
+            // Apply fill via lookup
+            line.lookupAll(".chart-series-area-fill").forEach(fill ->
+                fill.setStyle("-fx-fill: " + color + "; -fx-opacity: " + fillOpacity + ";")
+            );
+            line.lookupAll(".chart-series-area-line").forEach(ln ->
+                ln.setStyle("-fx-stroke: " + color + "; -fx-stroke-width: 2;")
+            );
+        }
+    }
+
+    private void updateProjectionCategoryChart(ProjectionEngine.ProjectionResult result) {
+        CategoryAxis xAxis = (CategoryAxis) projCategoryChart.getXAxis();
+        NumberAxis yAxis = (NumberAxis) projCategoryChart.getYAxis();
+        xAxis.setAnimated(false);
+        projCategoryChart.setAnimated(false);
+        projCategoryChart.getData().clear();
+
+        // Use first month projection for category breakdown
+        ProjectionEngine.MonthProjection first = result.monthProjections.get(0);
+
+        // Collect all categories sorted by total descending
+        List<Map.Entry<String, Double>> sortedCategories = first.categoryBreakdown.entrySet().stream()
+                .filter(e -> e.getValue() > 0)
+                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+                .collect(Collectors.toList());
+
+        if (sortedCategories.isEmpty()) return;
+
+        // Two series: Recurring and Variable
+        XYChart.Series<String, Number> recurringSeries = new XYChart.Series<>();
+        recurringSeries.setName("Recurring");
+        XYChart.Series<String, Number> variableSeries = new XYChart.Series<>();
+        variableSeries.setName("Variable");
+
+        for (Map.Entry<String, Double> entry : sortedCategories) {
+            String cat = entry.getKey();
+            double recurring = first.categoryRecurring.getOrDefault(cat, 0.0);
+            double variable = first.categoryVariable.getOrDefault(cat, 0.0);
+
+            recurringSeries.getData().add(new XYChart.Data<>(cat, recurring));
+            variableSeries.getData().add(new XYChart.Data<>(cat, variable));
+        }
+
+        projCategoryChart.getData().addAll(Arrays.asList(recurringSeries, variableSeries));
+
+        // Style bars with category colors and add tooltips
+        Platform.runLater(() -> {
+            for (XYChart.Data<String, Number> data : recurringSeries.getData()) {
+                if (data.getNode() != null) {
+                    String color = getCategoryColor(data.getXValue());
+                    data.getNode().setStyle("-fx-bar-fill: " + color + ";");
+                    Tooltip t = new Tooltip(data.getXValue() + " (Recurring): " + fmt(data.getYValue().doubleValue()) + "/month");
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(data.getNode(), t);
+                }
+            }
+            for (XYChart.Data<String, Number> data : variableSeries.getData()) {
+                if (data.getNode() != null) {
+                    String color = getCategoryColor(data.getXValue());
+                    data.getNode().setStyle("-fx-bar-fill: " + color + "; -fx-opacity: 0.5;");
+                    Tooltip t = new Tooltip(data.getXValue() + " (Variable): " + fmt(data.getYValue().doubleValue()) + "/month");
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(data.getNode(), t);
+                }
             }
         });
     }
