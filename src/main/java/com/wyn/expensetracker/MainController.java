@@ -324,6 +324,50 @@ public class MainController {
         sortedData.comparatorProperty().bind(expenseTable.comparatorProperty());
         expenseTable.setItems(sortedData);
 
+        // Row factory: dim excluded rows + right-click context menu
+        expenseTable.setRowFactory(tv -> {
+            TableRow<Expense> row = new TableRow<>() {
+                @Override
+                protected void updateItem(Expense item, boolean empty) {
+                    super.updateItem(item, empty);
+                    getStyleClass().removeAll("excluded-row");
+                    if (empty || item == null) {
+                        setOpacity(1.0);
+                    } else if (item.isExcluded()) {
+                        getStyleClass().add("excluded-row");
+                        setOpacity(0.45);
+                    } else {
+                        setOpacity(1.0);
+                    }
+                }
+            };
+            ContextMenu menu = new ContextMenu();
+            MenuItem toggleExclude = new MenuItem("Exclude from Analytics");
+            toggleExclude.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null) {
+                    item.setExcluded(!item.isExcluded());
+                    try {
+                        storage.saveExpenses(manager.getExpensesForSave());
+                    } catch (IOException ex) {
+                        showMessage("Failed to save: " + ex.getMessage(), true);
+                    }
+                    refreshTable();
+                }
+            });
+            menu.setOnShowing(e -> {
+                Expense item = row.getItem();
+                if (item != null && item.isExcluded()) {
+                    toggleExclude.setText("Include in Analytics");
+                } else {
+                    toggleExclude.setText("Exclude from Analytics");
+                }
+            });
+            menu.getItems().add(toggleExclude);
+            row.setContextMenu(menu);
+            return row;
+        });
+
         // Recurring table
         recurringTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         recurringList = FXCollections.observableArrayList(manager.getBaseRecurringExpenses());
@@ -1558,6 +1602,7 @@ public class MainController {
         }
 
         double total = filteredData.stream()
+            .filter(e -> !e.isExcluded())
             .mapToDouble(Expense::getAmount)
             .sum();
         totalLabel.setText(String.format("Total Expenses for %s %d: %s",
@@ -1574,6 +1619,7 @@ public class MainController {
         }
 
         Map<String, Double> categoryMap = filteredData.stream()
+            .filter(e -> !e.isExcluded())
             .collect(Collectors.groupingBy(
                 Expense::getCategory,
                 Collectors.summingDouble(Expense::getAmount))
@@ -1589,6 +1635,7 @@ public class MainController {
         YearMonth prevYearMonth = selectedYearMonth.minusMonths(1);
         double prevTotal = expenseList.stream()
             .filter(expense -> {
+                if (expense.isExcluded()) return false;
                 if (!YearMonth.from(expense.getDate()).equals(prevYearMonth)) return false;
                 if (filterByCategory && !expense.getCategory().equals(selectedCategory)) return false;
                 if (expense.getAmount() < fMin || expense.getAmount() > fMax) return false;
@@ -1663,6 +1710,7 @@ public class MainController {
     private List<Expense> filterExpensesByPeriod(String chartPeriod, int selectedYear,
                                                     YearMonth selectedYearMonth, YearMonth now) {
         return expenseList.stream()
+            .filter(expense -> !expense.isExcluded())
             .filter(expense -> {
                 YearMonth ym = YearMonth.from(expense.getDate());
                 switch (chartPeriod) {
@@ -1835,6 +1883,7 @@ public class MainController {
                 + selectedMonth.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + selectedYear);
         } else {
             Map<YearMonth, Double> monthlyTotals = expenseList.stream()
+                .filter(expense -> !expense.isExcluded())
                 .collect(Collectors.groupingBy(
                     expense -> YearMonth.from(expense.getDate()),
                     Collectors.summingDouble(Expense::getAmount)));
@@ -1926,6 +1975,7 @@ public class MainController {
         xAxis.setAutoRanging(false);
 
         Map<YearMonth, Double> monthlyExpenses = expenseList.stream()
+            .filter(expense -> !expense.isExcluded())
             .collect(Collectors.groupingBy(
                 expense -> YearMonth.from(expense.getDate()),
                 Collectors.summingDouble(Expense::getAmount)));
@@ -2003,6 +2053,7 @@ public class MainController {
 
         // Only include categories that have a budget
         Map<String, Double> actualByCategory = expenseList.stream()
+            .filter(e -> !e.isExcluded())
             .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
             .collect(Collectors.groupingBy(Expense::getCategory, Collectors.summingDouble(Expense::getAmount)));
 
@@ -2079,6 +2130,7 @@ public class MainController {
         yAxis.setLabel("Amount");
 
         Map<Integer, Double> dailyTotals = expenseList.stream()
+            .filter(e -> !e.isExcluded())
             .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
             .collect(Collectors.groupingBy(
                 e -> e.getDate().getDayOfMonth(),
@@ -2155,6 +2207,7 @@ public class MainController {
         xAxis.setAutoRanging(false);
 
         Map<YearMonth, Double> monthlyTotals = expenseList.stream()
+            .filter(e -> !e.isExcluded())
             .collect(Collectors.groupingBy(
                 e -> YearMonth.from(e.getDate()),
                 Collectors.summingDouble(Expense::getAmount)));
@@ -2255,6 +2308,7 @@ public class MainController {
         }
 
         Map<YearMonth, Double> monthlyTotals = expenseList.stream()
+            .filter(e -> !e.isExcluded())
             .filter(e -> e.getDate().getYear() == selectedYear || e.getDate().getYear() == prevYear)
             .collect(Collectors.groupingBy(
                 e -> YearMonth.from(e.getDate()),
@@ -2892,6 +2946,33 @@ public class MainController {
         }
         rulesTable.refresh();
         showMessage("Rule removed.", false);
+    }
+
+    @FXML
+    private void handleRecategorize() {
+        List<Expense> allExpenses = manager.getExpenses();
+        int recategorized = 0;
+        for (Expense expense : allExpenses) {
+            if ("Uncategorized".equals(expense.getCategory())) {
+                String cat = categorizationRules.categorize(expense.getDescription());
+                if (cat != null) {
+                    expense.setCategory(cat);
+                    recategorized++;
+                }
+            }
+        }
+        if (recategorized > 0) {
+            try {
+                storage.saveExpenses(manager.getExpensesForSave());
+            } catch (IOException e) {
+                showMessage("Failed to save: " + e.getMessage(), true);
+                return;
+            }
+            refreshTable();
+            showMessage("Re-categorized " + recategorized + " expense(s).", false);
+        } else {
+            showMessage("No uncategorized expenses could be matched to existing rules.", false);
+        }
     }
 
     @FXML

@@ -10,6 +10,7 @@ public class Expense {
     private String recurringId;
     private RecurringExpense sourceRecurringExpense;
     private String importId;
+    private boolean excluded;
 
     public Expense(double amount, String category, LocalDate date, String description) {
         this.amount = amount;
@@ -30,6 +31,10 @@ public class Expense {
 
     public String getCategory() {
         return category;
+    }
+
+    public void setCategory(String category) {
+        this.category = category;
     }
 
     public LocalDate getDate() {
@@ -54,6 +59,14 @@ public class Expense {
 
     public void setImportId(String importId) {
         this.importId = importId;
+    }
+
+    public boolean isExcluded() {
+        return excluded;
+    }
+
+    public void setExcluded(boolean excluded) {
+        this.excluded = excluded;
     }
 
     @Override

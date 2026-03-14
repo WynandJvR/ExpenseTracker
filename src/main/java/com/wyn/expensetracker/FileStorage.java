@@ -64,11 +64,12 @@ public class FileStorage {
                             (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : ""));
                 } else {
                     String importId = expense.getImportId() != null ? expense.getImportId() : "";
+                    String excludedFlag = expense.isExcluded() ? ",EXCLUDED" : "";
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
                             escapeCsv(expense.getDescription()) + "," +
-                            "REGULAR," + importId);
+                            "REGULAR," + importId + excludedFlag);
                 }
             }
         });
@@ -110,6 +111,9 @@ public class FileStorage {
                             Expense exp = new Expense(amount, category, date, description);
                             if (parts.length >= 6 && !parts[5].isEmpty()) {
                                 exp.setImportId(parts[5]);
+                            }
+                            if (parts.length >= 7 && "EXCLUDED".equals(parts[6])) {
+                                exp.setExcluded(true);
                             }
                             expenses.add(exp);
                         } else {
