@@ -3,12 +3,19 @@ package com.wyn.expensetracker;
 import java.awt.image.BufferedImage;
 import java.io.*;
 import java.nio.file.*;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import com.drew.imaging.ImageMetadataReader;
+import com.drew.metadata.Metadata;
+import com.drew.metadata.exif.ExifIFD0Directory;
+import com.drew.metadata.exif.ExifSubIFDDirectory;
 
 public class ReceiptScanner {
 
@@ -73,6 +80,33 @@ public class ReceiptScanner {
         }
     }
 
+    /**
+     * Extracts the photo date from EXIF metadata (when the photo was taken).
+     * Useful as a default date for the receipt date picker.
+     */
+    public LocalDate extractPhotoDate(File imageFile) {
+        try {
+            Metadata metadata = ImageMetadataReader.readMetadata(imageFile);
+            ExifSubIFDDirectory subIfd = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
+            if (subIfd != null) {
+                Date date = subIfd.getDateOriginal();
+                if (date != null) {
+                    return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+                }
+            }
+            ExifIFD0Directory exifDir = metadata.getFirstDirectoryOfType(ExifIFD0Directory.class);
+            if (exifDir != null) {
+                Date date = exifDir.getDate(ExifIFD0Directory.TAG_DATETIME);
+                if (date != null) {
+                    return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+                }
+            }
+        } catch (Exception e) {
+            // Fall back silently
+        }
+        return null;
+    }
+
     public String performOcr(File imageFile) throws Exception {
         if (!tessDataAvailable) {
             throw new IllegalStateException("OCR is not available. Please place eng.traineddata in " + TESSDATA_DIR);
@@ -92,7 +126,7 @@ public class ReceiptScanner {
 
     public List<ImportItem> parseReceipt(String ocrText, LocalDate fallbackDate) {
         List<ImportItem> items = new ArrayList<>();
-        LocalDate receiptDate = extractDate(ocrText);
+        LocalDate receiptDate = extractDate(ocrText, fallbackDate);
         if (receiptDate == null) {
             receiptDate = fallbackDate != null ? fallbackDate : LocalDate.now();
         }
@@ -105,6 +139,10 @@ public class ReceiptScanner {
 
             Matcher amountMatch = AMOUNT_PATTERN.matcher(line);
             if (amountMatch.find()) {
+                // Skip negative amounts (discounts/refunds like "-R49.99" or "DISCOUNT -84.98")
+                String beforeMatch = line.substring(0, amountMatch.start());
+                if (beforeMatch.matches("(?:^|.*\\s)-\\s*")) continue;
+
                 // Group 1 = R-prefixed amount, Group 2 = end-of-line amount
                 String amountStr = amountMatch.group(1) != null ? amountMatch.group(1) : amountMatch.group(2);
                 double amount;
@@ -163,7 +201,7 @@ public class ReceiptScanner {
             }
         } else if (hasComma) {
             // Only comma — if ends with ",\d{2}", comma is decimal separator
-            if (amountStr.matches(".*,\\d{2}$")) {
+            if (amountStr.matches(".*,\\d{1,2}$")) {
                 amountStr = amountStr.replace(",", ".");
             } else {
                 // Comma is thousands separator
@@ -192,7 +230,11 @@ public class ReceiptScanner {
      * and amounts are on separate lines).
      */
     private String findNearbyDescription(String[] lines, int currentIndex) {
-        // Check next line first (description often follows the amount line in tabular receipts)
+        // Score all nearby candidates and pick the most descriptive one
+        // (avoids grabbing SKU/code lines over actual item names in tabular receipts)
+        String best = null;
+        int bestLetters = 0;
+
         for (int offset : new int[]{1, -1, 2, -2}) {
             int idx = currentIndex + offset;
             if (idx < 0 || idx >= lines.length) continue;
@@ -200,16 +242,19 @@ public class ReceiptScanner {
             if (candidate.isEmpty()) continue;
             if (TOTAL_PATTERN.matcher(candidate).find()) continue;
             if (AMOUNT_PATTERN.matcher(candidate).find()) continue;
-            // Must have at least some letters (not just numbers/codes)
             String cleaned = cleanDescription(candidate);
-            if (cleaned.length() >= 3 && cleaned.matches(".*[a-zA-Z]{2,}.*")) {
-                return cleaned;
+            if (cleaned.length() < 3 || !cleaned.matches(".*[a-zA-Z]{2,}.*")) continue;
+
+            int letters = (int) cleaned.chars().filter(Character::isLetter).count();
+            if (letters > bestLetters) {
+                bestLetters = letters;
+                best = cleaned;
             }
         }
-        return null;
+        return best;
     }
 
-    private LocalDate extractDate(String text) {
+    private LocalDate extractDate(String text, LocalDate referenceDate) {
         Matcher m = DATE_PATTERN.matcher(text);
         while (m.find()) {
             // Group 1 = text-month date, Group 2 = numeric date
@@ -221,7 +266,73 @@ public class ReceiptScanner {
                     // try next format
                 }
             }
+
+            // If exact parsing failed, try to recover OCR-corrupted date components
+            LocalDate corrected = tryOcrDateCorrection(dateStr, referenceDate);
+            if (corrected != null) return corrected;
         }
         return null;
+    }
+
+    /**
+     * Attempts to recover a date from an OCR-corrupted date string.
+     * Handles cases where OCR drops a digit (e.g. "09" → "0", making day/month invalid).
+     * Uses reference date (e.g. EXIF) for accurate correction when available,
+     * otherwise defaults corrupted day to 1 to preserve the correct month/year.
+     */
+    private LocalDate tryOcrDateCorrection(String dateStr, LocalDate reference) {
+        String[] parts = dateStr.split("[/\\-.]");
+        if (parts.length != 3) return null;
+
+        try {
+            int p0 = Integer.parseInt(parts[0]);
+            int p1 = Integer.parseInt(parts[1]);
+            int p2 = Integer.parseInt(parts[2]);
+
+            // Normalize 2-digit year
+            if (p2 >= 0 && p2 <= 99) p2 += 2000;
+
+            // Try dd/MM/yyyy (SA standard)
+            if (p2 >= 2000 && p2 <= 2100) {
+                LocalDate corrected = correctDate(p0, p1, p2, reference);
+                if (corrected != null) return corrected;
+            }
+
+            // Try yyyy/MM/dd
+            int y0 = p0;
+            if (y0 >= 0 && y0 <= 99) y0 += 2000;
+            if (y0 >= 2000 && y0 <= 2100) {
+                LocalDate corrected = correctDate(p2, p1, y0, reference);
+                if (corrected != null) return corrected;
+            }
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        return null;
+    }
+
+    private LocalDate correctDate(int day, int month, int year, LocalDate reference) {
+        boolean dayInvalid = day < 1 || day > 31;
+        boolean monthInvalid = month < 1 || month > 12;
+
+        // Only correct if exactly one component is corrupted
+        if (dayInvalid == monthInvalid) return null;
+
+        // If reference date matches the valid components, use it for exact correction
+        if (reference != null && reference.getYear() == year) {
+            if (!monthInvalid && month == reference.getMonthValue() && dayInvalid) {
+                return reference;
+            }
+        }
+
+        // No reference — default corrupted day to 1 (preserves correct month/year)
+        if (dayInvalid) day = 1;
+        if (monthInvalid) return null; // can't safely guess month
+
+        try {
+            return LocalDate.of(year, month, day);
+        } catch (DateTimeException e) {
+            return null;
+        }
     }
 }

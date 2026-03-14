@@ -109,7 +109,13 @@ public class ImportReviewDialog {
             private final TextField textField = new TextField();
             {
                 textField.getStyleClass().add("text-field");
-                textField.setOnAction(e -> commitEdit(Double.parseDouble(textField.getText())));
+                textField.setOnAction(e -> {
+                    try {
+                        commitEdit(Double.parseDouble(textField.getText()));
+                    } catch (NumberFormatException ex) {
+                        cancelEdit();
+                    }
+                });
             }
             @Override
             protected void updateItem(Number item, boolean empty) {
@@ -322,16 +328,18 @@ public class ImportReviewDialog {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
                     setText(null);
-                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer");
+                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual");
                 } else {
                     setText(item);
-                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer");
+                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual");
                     if ("Auto-categorized".equals(item)) {
                         getStyleClass().add("status-auto");
                     } else if ("Uncategorized".equals(item)) {
                         getStyleClass().add("status-uncategorized");
                     } else if ("Transfer".equals(item)) {
                         getStyleClass().add("status-transfer");
+                    } else if ("Manual".equals(item)) {
+                        getStyleClass().add("status-manual");
                     }
                 }
             }
