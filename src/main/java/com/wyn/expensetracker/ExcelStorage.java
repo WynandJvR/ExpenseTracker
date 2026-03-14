@@ -26,7 +26,7 @@ public class ExcelStorage {
 
             // Create header row
             Row headerRow = sheet.createRow(0);
-            String[] headers = {"Amount", "Category", "Date", "Description", "IsRecurring", "Frequency", "EndDate"};
+            String[] headers = {"Amount", "Category", "Date", "Description", "IsRecurring", "Frequency", "EndDate", "ImportId"};
             for (int i = 0; i < headers.length; i++) {
                 Cell cell = headerRow.createCell(i);
                 cell.setCellValue(headers[i]);
@@ -48,6 +48,7 @@ public class ExcelStorage {
                     row.createCell(4).setCellValue(false);
                     row.createCell(5).setCellValue("");
                     row.createCell(6).setCellValue("");
+                    row.createCell(7).setCellValue(expense.getImportId() != null ? expense.getImportId() : "");
                 }
             }
 
@@ -96,7 +97,12 @@ public class ExcelStorage {
                         LocalDate endDate = endDateStr.isEmpty() ? null : LocalDate.parse(endDateStr);
                         expenses.add(new RecurringExpense(amount, category, date, description, frequency, endDate));
                     } else {
-                        expenses.add(new Expense(amount, category, date, description));
+                        Expense exp = new Expense(amount, category, date, description);
+                        Cell importIdCell = row.getCell(7);
+                        if (importIdCell != null && !importIdCell.getStringCellValue().isEmpty()) {
+                            exp.setImportId(importIdCell.getStringCellValue());
+                        }
+                        expenses.add(exp);
                     }
                 } catch (Exception e) {
                     System.err.println("Error parsing row " + row.getRowNum() + ": " + e.getMessage());
