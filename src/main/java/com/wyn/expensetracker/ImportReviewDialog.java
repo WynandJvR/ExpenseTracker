@@ -322,14 +322,16 @@ public class ImportReviewDialog {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
                     setText(null);
-                    getStyleClass().removeAll("status-auto", "status-uncategorized");
+                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer");
                 } else {
                     setText(item);
-                    getStyleClass().removeAll("status-auto", "status-uncategorized");
+                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer");
                     if ("Auto-categorized".equals(item)) {
                         getStyleClass().add("status-auto");
                     } else if ("Uncategorized".equals(item)) {
                         getStyleClass().add("status-uncategorized");
+                    } else if ("Transfer".equals(item)) {
+                        getStyleClass().add("status-transfer");
                     }
                 }
             }
