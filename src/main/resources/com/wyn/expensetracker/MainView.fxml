@@ -230,10 +230,10 @@
                         </HBox>
                         <Label fx:id="totalLabel" text="Total Expenses: 0.00" styleClass="total-label"/>
                         <VBox fx:id="incomeFieldsBox" spacing="5" visible="false" managed="false">
-                            <Label text="Recurring Monthly Income:" styleClass="form-label"/>
+                            <Label text="Projected Monthly Income:" styleClass="form-label"/>
                             <TextField fx:id="recurringIncomeField" promptText="e.g., 15000.00" styleClass="text-field"/>
-                            <Label text="This Month (override):" styleClass="form-label"/>
-                            <TextField fx:id="incomeField" promptText="Leave empty to use recurring" styleClass="text-field"/>
+                            <Label text="This Month (projected):" styleClass="form-label"/>
+                            <TextField fx:id="incomeField" promptText="Leave empty to use default" styleClass="text-field"/>
                         </VBox>
                     </VBox>
 

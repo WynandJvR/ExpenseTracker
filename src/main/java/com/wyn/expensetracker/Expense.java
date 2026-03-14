@@ -11,6 +11,8 @@ public class Expense {
     private RecurringExpense sourceRecurringExpense;
     private String importId;
     private boolean excluded;
+    private boolean income;
+    private boolean refund;
 
     public Expense(double amount, String category, LocalDate date, String description) {
         this.amount = amount;
@@ -67,6 +69,22 @@ public class Expense {
 
     public void setExcluded(boolean excluded) {
         this.excluded = excluded;
+    }
+
+    public boolean isIncome() {
+        return income;
+    }
+
+    public void setIncome(boolean income) {
+        this.income = income;
+    }
+
+    public boolean isRefund() {
+        return refund;
+    }
+
+    public void setRefund(boolean refund) {
+        this.refund = refund;
     }
 
     @Override

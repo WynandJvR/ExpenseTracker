@@ -13,7 +13,7 @@ public class ExcelExporter {
 
             // Create header row
             Row headerRow = sheet.createRow(0);
-            String[] headers = {"Amount", "Category", "Date", "Description", "IsRecurring", "Frequency", "EndDate", "ImportId"};
+            String[] headers = {"Amount", "Category", "Date", "Description", "IsRecurring", "Frequency", "EndDate", "ImportId", "IsIncome"};
             for (int i = 0; i < headers.length; i++) {
                 Cell cell = headerRow.createCell(i);
                 cell.setCellValue(headers[i]);
@@ -36,6 +36,7 @@ public class ExcelExporter {
                     row.createCell(5).setCellValue("");
                     row.createCell(6).setCellValue("");
                     row.createCell(7).setCellValue(expense.getImportId() != null ? expense.getImportId() : "");
+                    row.createCell(8).setCellValue(expense.isIncome());
                 }
             }
 

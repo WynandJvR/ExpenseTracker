@@ -1,6 +1,5 @@
 package com.wyn.expensetracker;
 
-import javafx.beans.binding.Bindings;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
@@ -22,6 +21,8 @@ public class ImportReviewDialog {
 
     private final Stage dialogStage;
     private final ObservableList<ImportItem> items;
+    private final ObservableList<ImportItem> expenseItems;
+    private final ObservableList<ImportItem> incomeItems;
     private final ObservableList<String> categories;
     private final String currencySymbol;
     private final CategorizationRules categorizationRules;
@@ -29,6 +30,11 @@ public class ImportReviewDialog {
     private final Label summaryLabel;
     private final Map<String, String> learnedRules = new LinkedHashMap<>();
     private int duplicateCount;
+    private TabPane tabPane;
+    private Tab expenseTab;
+    private Tab incomeTab;
+    private TableView<ImportItem> expenseTable;
+    private TableView<ImportItem> incomeTable;
 
     public ImportReviewDialog(Stage owner, List<ImportItem> importItems,
                               ObservableList<String> categories, String currencySymbol,
@@ -51,6 +57,26 @@ public class ImportReviewDialog {
             }
         }
 
+        // Detect refunds among credit items
+        for (ImportItem item : items) {
+            if (item.isIncome() && !item.isDuplicate() && isRefundDescription(item.getDescription())) {
+                item.setStatus("Refund");
+            }
+        }
+
+        // Split items into expenses and income
+        // All credits go to income tab (refunds are still money received)
+        expenseItems = FXCollections.observableArrayList();
+        incomeItems = FXCollections.observableArrayList();
+        for (ImportItem item : items) {
+            if (item.isIncome()) {
+                item.setSelected(true); // Select income items by default
+                incomeItems.add(item);
+            } else {
+                expenseItems.add(item);
+            }
+        }
+
         dialogStage = new Stage();
         dialogStage.initModality(Modality.WINDOW_MODAL);
         dialogStage.initOwner(owner);
@@ -59,23 +85,33 @@ public class ImportReviewDialog {
         // Summary label
         summaryLabel = new Label();
         summaryLabel.getStyleClass().add("section-title");
+
+        // Create tabs early so updateSummary can set their titles
+        tabPane = new TabPane();
+        tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        expenseTab = new Tab();
+        incomeTab = new Tab();
+
         updateSummary();
 
         // Auto-deselect duplicates checkbox
         CheckBox autoDeselectDuplicates = new CheckBox("Auto-deselect duplicates");
         autoDeselectDuplicates.setSelected(true);
 
-        // Table
-        TableView<ImportItem> table = createTable();
+        // Create tables for each tab
+        expenseTable = createTable(expenseItems, false);
+        incomeTable = createTable(incomeItems, true);
 
-        // Wire checkbox listener after table exists
+        // Wire checkbox listener
         autoDeselectDuplicates.selectedProperty().addListener((obs, wasSelected, isSelected) -> {
-            for (ImportItem item : items) {
-                if (item.isDuplicate()) {
-                    item.setSelected(!isSelected);
-                }
+            for (ImportItem item : expenseItems) {
+                if (item.isDuplicate()) item.setSelected(!isSelected);
             }
-            table.refresh();
+            for (ImportItem item : incomeItems) {
+                if (item.isDuplicate()) item.setSelected(!isSelected);
+            }
+            expenseTable.refresh();
+            incomeTable.refresh();
             updateSummary();
         });
 
@@ -88,8 +124,21 @@ public class ImportReviewDialog {
             topBar.getChildren().addAll(dupLabel, autoDeselectDuplicates);
         }
 
+        VBox expenseContent = new VBox(expenseTable);
+        VBox.setVgrow(expenseTable, Priority.ALWAYS);
+        expenseTab.setContent(expenseContent);
+
+        VBox incomeContent = new VBox(incomeTable);
+        VBox.setVgrow(incomeTable, Priority.ALWAYS);
+        incomeTab.setContent(incomeContent);
+
+        tabPane.getTabs().addAll(expenseTab, incomeTab);
+
+        // Style income tab header
+        incomeTab.setStyle("-fx-text-base-color: #4CAF50;");
+
         // Buttons
-        HBox buttonBar = createButtonBar(table);
+        HBox buttonBar = createButtonBar();
 
         // Layout
         VBox mainBox = new VBox(10);
@@ -104,8 +153,8 @@ public class ImportReviewDialog {
             ocrArea.setWrapText(true);
 
             SplitPane splitPane = new SplitPane();
-            VBox leftPane = new VBox(5, topBar, table);
-            VBox.setVgrow(table, Priority.ALWAYS);
+            VBox leftPane = new VBox(5, topBar, tabPane);
+            VBox.setVgrow(tabPane, Priority.ALWAYS);
             leftPane.setPadding(new Insets(5));
 
             Label ocrTitle = new Label("OCR Text");
@@ -119,8 +168,8 @@ public class ImportReviewDialog {
             VBox.setVgrow(splitPane, Priority.ALWAYS);
             mainBox.getChildren().addAll(splitPane, buttonBar);
         } else {
-            VBox.setVgrow(table, Priority.ALWAYS);
-            mainBox.getChildren().addAll(topBar, table, buttonBar);
+            VBox.setVgrow(tabPane, Priority.ALWAYS);
+            mainBox.getChildren().addAll(topBar, tabPane, buttonBar);
         }
 
         Scene scene = new Scene(mainBox, 950, 650);
@@ -128,8 +177,15 @@ public class ImportReviewDialog {
         dialogStage.setScene(scene);
     }
 
-    private TableView<ImportItem> createTable() {
-        TableView<ImportItem> table = new TableView<>(items);
+    private void updateTabTitles() {
+        long expSelected = expenseItems.stream().filter(ImportItem::isSelected).count();
+        long incSelected = incomeItems.stream().filter(ImportItem::isSelected).count();
+        expenseTab.setText("Expenses (" + expenseItems.size() + ")  -  " + expSelected + " selected");
+        incomeTab.setText("Income (" + incomeItems.size() + ")  -  " + incSelected + " selected");
+    }
+
+    private TableView<ImportItem> createTable(ObservableList<ImportItem> tableItems, boolean isIncomeTab) {
+        TableView<ImportItem> table = new TableView<>(tableItems);
         table.setEditable(true);
         table.getStyleClass().add("table-view");
 
@@ -369,10 +425,10 @@ public class ImportReviewDialog {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
                     setText(null);
-                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual", "status-duplicate");
+                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual", "status-duplicate", "status-refund");
                 } else {
                     setText(item);
-                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual", "status-duplicate");
+                    getStyleClass().removeAll("status-auto", "status-uncategorized", "status-transfer", "status-manual", "status-duplicate", "status-refund");
                     if ("Auto-categorized".equals(item)) {
                         getStyleClass().add("status-auto");
                     } else if ("Uncategorized".equals(item)) {
@@ -383,13 +439,15 @@ public class ImportReviewDialog {
                         getStyleClass().add("status-manual");
                     } else if ("Duplicate".equals(item)) {
                         getStyleClass().add("status-duplicate");
+                    } else if ("Refund".equals(item)) {
+                        getStyleClass().add("status-refund");
                     }
                 }
             }
         });
         statusCol.setPrefWidth(120);
 
-        // Highlight duplicate rows
+        // Row factory: duplicate highlighting + right-click to move between tabs
         table.setRowFactory(tv -> new TableRow<>() {
             @Override
             protected void updateItem(ImportItem item, boolean empty) {
@@ -397,17 +455,50 @@ public class ImportReviewDialog {
                 getStyleClass().removeAll("duplicate-row");
                 if (empty || item == null) {
                     setTooltip(null);
-                } else if (item.isDuplicate()) {
-                    getStyleClass().add("duplicate-row");
-                    Expense match = item.getDuplicateMatch();
-                    if (match != null) {
-                        setTooltip(new Tooltip(String.format(
-                            "Potential duplicate of: %s on %s (%s %.2f)",
-                            match.getDescription(), match.getDate(),
-                            currencySymbol, match.getAmount())));
-                    }
+                    setContextMenu(null);
                 } else {
-                    setTooltip(null);
+                    if (item.isDuplicate()) {
+                        getStyleClass().add("duplicate-row");
+                        Expense match = item.getDuplicateMatch();
+                        if (match != null) {
+                            setTooltip(new Tooltip(String.format(
+                                "Potential duplicate of: %s on %s (%s %.2f)",
+                                match.getDescription(), match.getDate(),
+                                currencySymbol, match.getAmount())));
+                        }
+                    } else {
+                        setTooltip(null);
+                    }
+
+                    ContextMenu menu = new ContextMenu();
+                    if (isIncomeTab) {
+                        MenuItem moveToExpenses = new MenuItem("Move to Expenses");
+                        moveToExpenses.setOnAction(e -> {
+                            ImportItem rowItem = getItem();
+                            if (rowItem != null) {
+                                rowItem.setIncome(false);
+                                incomeItems.remove(rowItem);
+                                expenseItems.add(rowItem);
+                                updateTabTitles();
+                                updateSummary();
+                            }
+                        });
+                        menu.getItems().add(moveToExpenses);
+                    } else {
+                        MenuItem moveToIncome = new MenuItem("Move to Income");
+                        moveToIncome.setOnAction(e -> {
+                            ImportItem rowItem = getItem();
+                            if (rowItem != null) {
+                                rowItem.setIncome(true);
+                                expenseItems.remove(rowItem);
+                                incomeItems.add(rowItem);
+                                updateTabTitles();
+                                updateSummary();
+                            }
+                        });
+                        menu.getItems().add(moveToIncome);
+                    }
+                    setContextMenu(menu);
                 }
             }
         });
@@ -416,29 +507,44 @@ public class ImportReviewDialog {
         return table;
     }
 
-    private HBox createButtonBar(TableView<ImportItem> table) {
+    private ObservableList<ImportItem> getActiveTabItems() {
+        if (tabPane.getSelectionModel().getSelectedItem() == incomeTab) {
+            return incomeItems;
+        }
+        return expenseItems;
+    }
+
+    private TableView<ImportItem> getActiveTable() {
+        if (tabPane.getSelectionModel().getSelectedItem() == incomeTab) {
+            return incomeTable;
+        }
+        return expenseTable;
+    }
+
+    private HBox createButtonBar() {
         Button selectAll = new Button("Select All");
         selectAll.getStyleClass().add("primary-button");
         selectAll.setOnAction(e -> {
-            items.forEach(i -> i.setSelected(true));
-            table.refresh();
+            getActiveTabItems().forEach(i -> i.setSelected(true));
+            getActiveTable().refresh();
             updateSummary();
         });
 
         Button deselectAll = new Button("Deselect All");
         deselectAll.getStyleClass().add("primary-button");
         deselectAll.setOnAction(e -> {
-            items.forEach(i -> i.setSelected(false));
-            table.refresh();
+            getActiveTabItems().forEach(i -> i.setSelected(false));
+            getActiveTable().refresh();
             updateSummary();
         });
 
-        // Bulk categorize: assign a category to all currently selected uncategorized items
+        // Bulk categorize: assign a category to all currently selected uncategorized items in active tab
         Button bulkCategorize = new Button("Categorize Selected");
         bulkCategorize.getStyleClass().add("primary-button");
         bulkCategorize.setOnAction(e -> {
+            ObservableList<ImportItem> activeItems = getActiveTabItems();
             List<ImportItem> uncategorizedSelected = new ArrayList<>();
-            for (ImportItem item : items) {
+            for (ImportItem item : activeItems) {
                 if (item.isSelected() && "Uncategorized".equals(item.getStatus())) {
                     uncategorizedSelected.add(item);
                 }
@@ -483,7 +589,7 @@ public class ImportReviewDialog {
                         for (Map.Entry<String, String> rule : learnedRules.entrySet()) {
                             propagateRule(rule.getKey(), rule.getValue(), null);
                         }
-                        table.refresh();
+                        getActiveTable().refresh();
                         updateSummary();
                     }
                 }
@@ -494,7 +600,8 @@ public class ImportReviewDialog {
         importBtn.getStyleClass().add("success-button");
         importBtn.setOnAction(e -> {
             result = new ArrayList<>();
-            for (ImportItem item : items) {
+            // Add selected expenses
+            for (ImportItem item : expenseItems) {
                 if (item.isSelected() && item.getAmount() > 0) {
                     String cat = item.getCategory();
                     if (cat == null || cat.trim().isEmpty()) {
@@ -505,6 +612,25 @@ public class ImportReviewDialog {
                     }
                     result.add(new Expense(item.getAmount(), cat, item.getDate(),
                         item.getDescription()));
+                }
+            }
+            // Add selected income items with income flag
+            for (ImportItem item : incomeItems) {
+                if (item.isSelected() && item.getAmount() > 0) {
+                    String cat = item.getCategory();
+                    if (cat == null || cat.trim().isEmpty()) {
+                        cat = "Income";
+                        if (!categories.contains(cat)) {
+                            categories.add(cat);
+                        }
+                    }
+                    Expense exp = new Expense(item.getAmount(), cat, item.getDate(),
+                        item.getDescription());
+                    exp.setIncome(true);
+                    if ("Refund".equals(item.getStatus())) {
+                        exp.setRefund(true);
+                    }
+                    result.add(exp);
                 }
             }
             dialogStage.close();
@@ -532,11 +658,20 @@ public class ImportReviewDialog {
     }
 
     private void updateSummary() {
-        long selectedCount = items.stream().filter(ImportItem::isSelected).count();
-        double total = items.stream().filter(ImportItem::isSelected)
+        long expCount = expenseItems.stream().filter(ImportItem::isSelected).count();
+        double expTotal = expenseItems.stream().filter(ImportItem::isSelected)
             .mapToDouble(ImportItem::getAmount).sum();
-        summaryLabel.setText(String.format("%d items selected | Total: %s %.2f",
-            selectedCount, currencySymbol, total));
+        long incCount = incomeItems.stream().filter(ImportItem::isSelected).count();
+        double incTotal = incomeItems.stream().filter(ImportItem::isSelected)
+            .mapToDouble(ImportItem::getAmount).sum();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("%d expenses (%s %.2f)", expCount, currencySymbol, expTotal));
+        if (!incomeItems.isEmpty()) {
+            sb.append(String.format("  |  %d income (%s %.2f)", incCount, currencySymbol, incTotal));
+        }
+        summaryLabel.setText(sb.toString());
+        updateTabTitles();
     }
 
     public Map<String, String> getLearnedRules() {
@@ -575,8 +710,10 @@ public class ImportReviewDialog {
                 }
             }
         }
-        if (propagated > 0 && table != null) {
-            table.refresh();
+        if (propagated > 0) {
+            if (table != null) table.refresh();
+            if (expenseTable != null) expenseTable.refresh();
+            if (incomeTable != null) incomeTable.refresh();
         }
     }
 
@@ -620,6 +757,17 @@ public class ImportReviewDialog {
         }
         String result = keyword.toString().trim();
         return result.length() >= 3 ? result : null;
+    }
+
+    private static boolean isRefundDescription(String description) {
+        if (description == null || description.isEmpty()) return false;
+        String lower = description.toLowerCase();
+        return lower.contains("credit voucher")
+            || lower.contains("refund")
+            || lower.contains("reversal")
+            || lower.contains("chargeback")
+            || lower.contains("cashback")
+            || lower.contains("dispute");
     }
 
     public List<Expense> showAndWait() {

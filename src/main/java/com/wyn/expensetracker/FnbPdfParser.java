@@ -120,6 +120,7 @@ public class FnbPdfParser implements BankStatementParser {
                     } else {
                         item.setDescription("[CREDIT] " + description);
                         item.setStatus("Uncategorized");
+                        item.setIncome(true);
                     }
                     item.setSelected(false);
                 } else if (isDebitTransfer(description)) {
