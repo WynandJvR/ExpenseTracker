@@ -253,10 +253,13 @@ public class ImportReviewDialog {
                     String keyword = extractKeyword(desc);
                     if (keyword != null && !keyword.isEmpty()) {
                         learnedRules.put(keyword, newValue);
+                        // Live propagation: apply this keyword to other uncategorized items
+                        propagateRule(keyword, newValue, getTableView());
                     }
                 }
                 setText(newValue);
                 setGraphic(null);
+                updateSummary();
             }
         });
         categoryCol.setEditable(true);
@@ -430,6 +433,64 @@ public class ImportReviewDialog {
             updateSummary();
         });
 
+        // Bulk categorize: assign a category to all currently selected uncategorized items
+        Button bulkCategorize = new Button("Categorize Selected");
+        bulkCategorize.getStyleClass().add("primary-button");
+        bulkCategorize.setOnAction(e -> {
+            List<ImportItem> uncategorizedSelected = new ArrayList<>();
+            for (ImportItem item : items) {
+                if (item.isSelected() && "Uncategorized".equals(item.getStatus())) {
+                    uncategorizedSelected.add(item);
+                }
+            }
+            if (uncategorizedSelected.isEmpty()) {
+                return;
+            }
+            ComboBox<String> catPicker = new ComboBox<>(categories);
+            catPicker.setEditable(true);
+            catPicker.setPromptText("Select category...");
+            catPicker.setMaxWidth(Double.MAX_VALUE);
+
+            Alert dialog = new Alert(Alert.AlertType.NONE);
+            dialog.initOwner(dialogStage);
+            dialog.setTitle("Bulk Categorize");
+            dialog.setHeaderText("Assign category to " + uncategorizedSelected.size() + " uncategorized selected item(s)");
+            dialog.getDialogPane().setContent(catPicker);
+            dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+            dialog.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+            dialog.getDialogPane().getStyleClass().add("root-pane");
+
+            dialog.showAndWait().ifPresent(bt -> {
+                if (bt == ButtonType.OK) {
+                    String cat = catPicker.getValue();
+                    if (cat == null || cat.trim().isEmpty()) {
+                        cat = catPicker.getEditor().getText();
+                    }
+                    if (cat != null && !cat.trim().isEmpty()) {
+                        cat = cat.trim();
+                        if (!categories.contains(cat)) {
+                            categories.add(cat);
+                        }
+                        for (ImportItem item : uncategorizedSelected) {
+                            item.setCategory(cat);
+                            item.setStatus("Manual");
+                            // Learn keyword from each item
+                            String keyword = extractKeyword(item.getDescription());
+                            if (keyword != null && !keyword.isEmpty()) {
+                                learnedRules.put(keyword, cat);
+                            }
+                        }
+                        // Now propagate all learned rules to remaining uncategorized
+                        for (Map.Entry<String, String> rule : learnedRules.entrySet()) {
+                            propagateRule(rule.getKey(), rule.getValue(), null);
+                        }
+                        table.refresh();
+                        updateSummary();
+                    }
+                }
+            });
+        });
+
         Button importBtn = new Button("Import Selected");
         importBtn.getStyleClass().add("success-button");
         importBtn.setOnAction(e -> {
@@ -465,7 +526,7 @@ public class ImportReviewDialog {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        HBox bar = new HBox(10, selectAll, deselectAll, spacer, importBtn, cancelBtn);
+        HBox bar = new HBox(10, selectAll, deselectAll, bulkCategorize, spacer, importBtn, cancelBtn);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(10, 0, 0, 0));
         return bar;
@@ -481,6 +542,59 @@ public class ImportReviewDialog {
 
     public Map<String, String> getLearnedRules() {
         return learnedRules;
+    }
+
+    /**
+     * Apply a newly learned keyword rule to all other uncategorized items in the batch.
+     */
+    private void propagateRule(String keyword, String category, TableView<ImportItem> table) {
+        String keywordLower = keyword.toLowerCase();
+        int propagated = 0;
+        for (ImportItem item : items) {
+            if (!"Uncategorized".equals(item.getStatus())) continue;
+            String desc = item.getDescription();
+            if (desc == null || desc.isEmpty()) continue;
+            if (desc.toLowerCase().contains(keywordLower)) {
+                item.setCategory(category);
+                item.setStatus("Auto-categorized");
+                propagated++;
+            }
+        }
+        // Also try matching via the categorization rules normalize approach
+        if (categorizationRules != null) {
+            for (ImportItem item : items) {
+                if (!"Uncategorized".equals(item.getStatus())) continue;
+                String cat = categorizationRules.categorize(item.getDescription());
+                if (cat == null) {
+                    // Try matching with the new keyword using normalized comparison
+                    String desc = item.getDescription();
+                    if (desc != null && normalizedContains(desc, keywordLower)) {
+                        item.setCategory(category);
+                        item.setStatus("Auto-categorized");
+                        propagated++;
+                    }
+                }
+            }
+        }
+        if (propagated > 0 && table != null) {
+            table.refresh();
+        }
+    }
+
+    private static boolean normalizedContains(String text, String keyword) {
+        String normText = normalize(text.toLowerCase());
+        String normKeyword = normalize(keyword.toLowerCase());
+        if (normText.contains(normKeyword)) return true;
+        // Also try compact match (strip spaces) for "Mr.D" vs "Mr D" type cases
+        String compactText = normText.replace(" ", "");
+        String compactKeyword = normKeyword.replace(" ", "");
+        return compactKeyword.length() >= 3 && compactText.contains(compactKeyword);
+    }
+
+    private static String normalize(String s) {
+        String result = s.replaceAll("[.*\\-_/\\\\,;:!?'\"()\\[\\]{}#@&+=<>|~^`]", "");
+        result = result.replaceAll("\\s+", " ").trim();
+        return result;
     }
 
     private static String extractKeyword(String description) {

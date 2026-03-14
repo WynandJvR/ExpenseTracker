@@ -15,12 +15,38 @@ public class CategorizationRules {
     public String categorize(String description) {
         if (description == null || description.isEmpty()) return null;
         String lower = description.toLowerCase();
+        String normalized = normalize(lower);
+        String compact = normalized.replace(" ", "");
         for (Map.Entry<String, String> entry : rules.entrySet()) {
-            if (lower.contains(entry.getKey().toLowerCase())) {
+            String keyLower = entry.getKey().toLowerCase();
+            // Try exact substring match first
+            if (lower.contains(keyLower)) {
+                return entry.getValue();
+            }
+            // Try normalized match (strips punctuation, special chars, collapses whitespace)
+            String keyNormalized = normalize(keyLower);
+            if (normalized.contains(keyNormalized)) {
+                return entry.getValue();
+            }
+            // Try compact match (also strip spaces) for cases like "Mr.D" vs "Mr D"
+            String keyCompact = keyNormalized.replace(" ", "");
+            if (keyCompact.length() >= 3 && compact.contains(keyCompact)) {
                 return entry.getValue();
             }
         }
         return null;
+    }
+
+    /**
+     * Normalize a string for fuzzy matching: strip punctuation, special chars
+     * like asterisks and truncation markers, collapse whitespace.
+     */
+    private static String normalize(String s) {
+        // Remove common special chars: dots, asterisks, hyphens, underscores, slashes
+        String result = s.replaceAll("[.*\\-_/\\\\,;:!?'\"()\\[\\]{}#@&+=<>|~^`]", "");
+        // Collapse multiple whitespace into single space
+        result = result.replaceAll("\\s+", " ").trim();
+        return result;
     }
 
     public void addRule(String keyword, String category) {

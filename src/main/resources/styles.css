@@ -1004,6 +1004,62 @@
     -fx-background-color: rgba(244, 67, 54, 0.20);
 }
 
+/* Context menus */
+.context-menu {
+    -fx-background-color: #2A2A2A;
+    -fx-border-color: #3A3A3A;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-background-radius: 6;
+    -fx-padding: 4;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 10, 0, 0, 3);
+}
+
+.context-menu .menu-item {
+    -fx-background-color: transparent;
+    -fx-padding: 6 16;
+    -fx-background-radius: 4;
+}
+
+.context-menu .menu-item .label {
+    -fx-text-fill: #E0E0E0;
+    -fx-font-size: 12px;
+}
+
+.context-menu .menu-item:focused {
+    -fx-background-color: transparent;
+}
+
+.context-menu .menu-item:focused .label {
+    -fx-text-fill: #E0E0E0;
+}
+
+.context-menu .menu-item:hover {
+    -fx-background-color: rgba(121, 134, 203, 0.2);
+}
+
+.context-menu .menu-item:hover .label {
+    -fx-text-fill: #9FA8DA;
+}
+
+.context-menu .menu-item {
+    -fx-cursor: hand;
+}
+
+.context-menu .separator .line {
+    -fx-border-color: #3A3A3A;
+}
+
+/* Excluded from analytics rows */
+.excluded-row {
+    -fx-background-color: rgba(255, 255, 255, 0.05);
+}
+
+.excluded-row .table-cell {
+    -fx-text-fill: #666666;
+    -fx-font-style: italic;
+}
+
 /* Import: CSV preview area */
 .import-preview {
     -fx-control-inner-background: #1E1E1E;
