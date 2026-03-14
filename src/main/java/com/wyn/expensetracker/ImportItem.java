@@ -10,6 +10,9 @@ public class ImportItem {
     private final ObjectProperty<LocalDate> date = new SimpleObjectProperty<>();
     private final StringProperty description = new SimpleStringProperty("");
     private final StringProperty status = new SimpleStringProperty("Uncategorized");
+    private final BooleanProperty duplicate = new SimpleBooleanProperty(false);
+    private Expense duplicateMatch;
+    private String sourceFile;
 
     public ImportItem(double amount, String description, LocalDate date) {
         this.amount.set(amount);
@@ -46,4 +49,16 @@ public class ImportItem {
     public String getStatus() { return status.get(); }
     public void setStatus(String val) { status.set(val); }
     public StringProperty statusProperty() { return status; }
+
+    // Duplicate
+    public boolean isDuplicate() { return duplicate.get(); }
+    public void setDuplicate(boolean val) { duplicate.set(val); }
+    public BooleanProperty duplicateProperty() { return duplicate; }
+
+    public Expense getDuplicateMatch() { return duplicateMatch; }
+    public void setDuplicateMatch(Expense val) { this.duplicateMatch = val; }
+
+    // Source file tracking (for per-file import logs)
+    public String getSourceFile() { return sourceFile; }
+    public void setSourceFile(String val) { this.sourceFile = val; }
 }
