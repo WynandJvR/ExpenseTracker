@@ -111,6 +111,17 @@ public class MainController {
     @FXML private TableColumn<CategoryTotal, Double> budgetColumn;
     @FXML private TableColumn<CategoryTotal, Double> progressColumn;
 
+    // --- Analytics charts ---
+    @FXML private TabPane analyticsTabPane;
+    @FXML private BarChart<String, Number> incomeVsExpensesChart;
+    @FXML private BarChart<String, Number> budgetVsActualChart;
+    @FXML private Label budgetVsActualSubtitle;
+    @FXML private LineChart<Number, Number> cumulativeSpendingChart;
+    @FXML private Label cumulativeSubtitle;
+    @FXML private StackedAreaChart<String, Number> categoryTrendChart;
+    @FXML private LineChart<String, Number> yearOverYearChart;
+    @FXML private PieChart recurringVsOneTimeChart;
+
     // --- Constants ---
     private static final String[] CATEGORY_COLORS = {
         "#FF6F61", "#6B5B95", "#88B04B", "#F7B731", "#4ECDC4",
@@ -1583,21 +1594,9 @@ public class MainController {
         }
     }
 
-    private void updateCharts() {
-        Integer selectedYear = yearCombo.getValue();
-        Month selectedMonth = monthCombo.getValue();
-        String chartPeriod = chartPeriodCombo.getValue();
-
-        if (selectedYear == null || selectedMonth == null || chartPeriod == null) {
-            categoryChart.setData(FXCollections.observableArrayList());
-            monthlyTrendChart.getData().clear();
-            return;
-        }
-
-        YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
-        YearMonth now = YearMonth.now();
-
-        List<Expense> chartExpenses = expenseList.stream()
+    private List<Expense> filterExpensesByPeriod(String chartPeriod, int selectedYear,
+                                                    YearMonth selectedYearMonth, YearMonth now) {
+        return expenseList.stream()
             .filter(expense -> {
                 YearMonth ym = YearMonth.from(expense.getDate());
                 switch (chartPeriod) {
@@ -1614,8 +1613,82 @@ public class MainController {
                 }
             })
             .collect(Collectors.toList());
+    }
 
-        // --- PieChart ---
+    private void getMonthRange(String chartPeriod, int selectedYear, YearMonth selectedYearMonth,
+                                YearMonth now, Map<YearMonth, Double> monthlyTotals,
+                                YearMonth[] out) {
+        switch (chartPeriod) {
+            case "By Year":
+                out[0] = YearMonth.of(selectedYear, 1);
+                out[1] = YearMonth.of(selectedYear, 12);
+                break;
+            case "Last 6 Months":
+                out[0] = now.minusMonths(5);
+                out[1] = now;
+                break;
+            case "Last 12 Months":
+                out[0] = now.minusMonths(11);
+                out[1] = now;
+                break;
+            default: // All Time
+                if (monthlyTotals.isEmpty()) {
+                    out[0] = now;
+                    out[1] = now;
+                } else {
+                    out[0] = monthlyTotals.keySet().stream().min(Comparator.naturalOrder()).get();
+                    out[1] = monthlyTotals.keySet().stream().max(Comparator.naturalOrder()).get();
+                }
+                break;
+        }
+    }
+
+    private void updateCharts() {
+        Integer selectedYear = yearCombo.getValue();
+        Month selectedMonth = monthCombo.getValue();
+        String chartPeriod = chartPeriodCombo.getValue();
+
+        if (selectedYear == null || selectedMonth == null || chartPeriod == null) {
+            categoryChart.setData(FXCollections.observableArrayList());
+            monthlyTrendChart.getData().clear();
+            incomeVsExpensesChart.getData().clear();
+            budgetVsActualChart.getData().clear();
+            cumulativeSpendingChart.getData().clear();
+            categoryTrendChart.getData().clear();
+            yearOverYearChart.getData().clear();
+            recurringVsOneTimeChart.setData(FXCollections.observableArrayList());
+            return;
+        }
+
+        YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
+        YearMonth now = YearMonth.now();
+
+        List<Expense> chartExpenses = filterExpensesByPeriod(chartPeriod, selectedYear, selectedYearMonth, now);
+
+        // --- Existing charts ---
+        updateCategoryPieChart(chartExpenses);
+        updateMonthlyTrendBarChart(chartExpenses, chartPeriod, selectedYear, selectedMonth, selectedYearMonth, now);
+
+        // --- New charts ---
+        updateIncomeVsExpensesChart(chartPeriod, selectedYear, selectedYearMonth, now);
+        updateBudgetVsActualChart(selectedYearMonth);
+        updateCumulativeSpendingChart(selectedYearMonth);
+        updateCategoryTrendChart(chartPeriod, selectedYear, selectedYearMonth, now);
+        updateYearOverYearChart(selectedYear);
+        updateRecurringVsOneTimeChart(chartExpenses);
+
+        // Fade-in animation for all charts
+        animateChartFadeIn(categoryChart);
+        animateChartFadeIn(monthlyTrendChart);
+        animateChartFadeIn(incomeVsExpensesChart);
+        animateChartFadeIn(budgetVsActualChart);
+        animateChartFadeIn(cumulativeSpendingChart);
+        animateChartFadeIn(categoryTrendChart);
+        animateChartFadeIn(yearOverYearChart);
+        animateChartFadeIn(recurringVsOneTimeChart);
+    }
+
+    private void updateCategoryPieChart(List<Expense> chartExpenses) {
         Map<String, Double> categoryMap = chartExpenses.stream()
             .collect(Collectors.groupingBy(
                 Expense::getCategory,
@@ -1649,8 +1722,11 @@ public class MainController {
         }
         categoryChart.setData(pieChartData);
         categoryChart.setAnimated(true);
+    }
 
-        // --- BarChart ---
+    private void updateMonthlyTrendBarChart(List<Expense> chartExpenses, String chartPeriod,
+                                             int selectedYear, Month selectedMonth,
+                                             YearMonth selectedYearMonth, YearMonth now) {
         CategoryAxis xAxis = (CategoryAxis) monthlyTrendChart.getXAxis();
         xAxis.setAnimated(false);
         monthlyTrendChart.setAnimated(false);
@@ -1666,7 +1742,6 @@ public class MainController {
         XYChart.Series<String, Number> series = new XYChart.Series<>();
 
         if (isDailyMode) {
-            // Weekly breakdown for the selected month
             Map<Integer, Double> dailyTotals = chartExpenses.stream()
                 .collect(Collectors.groupingBy(
                     expense -> expense.getDate().getDayOfMonth(),
@@ -1682,7 +1757,7 @@ public class MainController {
                 final double wTotal = weekTotal;
                 final int ws = weekStart;
                 final int we = weekEnd;
-                String label = ws + "–" + we;
+                String label = ws + "\u2013" + we;
                 barLabels.add(label);
                 XYChart.Data<String, Number> data = new XYChart.Data<>(label, weekTotal);
                 data.nodeProperty().addListener((obs, oldNode, newNode) -> {
@@ -1694,7 +1769,7 @@ public class MainController {
                         newNode.setStyle("-fx-bar-fill: " + barColor + ";");
                         Tooltip tooltip = new Tooltip(
                             selectedMonth.getDisplayName(TextStyle.SHORT, Locale.getDefault())
-                            + " " + ws + "–" + we + ": " + fmt(wTotal));
+                            + " " + ws + "\u2013" + we + ": " + fmt(wTotal));
                         tooltip.setStyle("-fx-font-size: 13px;");
                         Tooltip.install(newNode, tooltip);
                     }
@@ -1704,37 +1779,15 @@ public class MainController {
             monthlyTrendChart.setTitle("Weekly Spending \u2014 "
                 + selectedMonth.getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + selectedYear);
         } else {
-            // Monthly trend
             Map<YearMonth, Double> monthlyTotals = expenseList.stream()
                 .collect(Collectors.groupingBy(
                     expense -> YearMonth.from(expense.getDate()),
                     Collectors.summingDouble(Expense::getAmount)));
 
-            // Determine month range so months with zero expenses still appear
-            YearMonth rangeStart, rangeEnd;
-            switch (chartPeriod) {
-                case "By Year":
-                    rangeStart = YearMonth.of(selectedYear, 1);
-                    rangeEnd = YearMonth.of(selectedYear, 12);
-                    break;
-                case "Last 6 Months":
-                    rangeStart = now.minusMonths(5);
-                    rangeEnd = now;
-                    break;
-                case "Last 12 Months":
-                    rangeStart = now.minusMonths(11);
-                    rangeEnd = now;
-                    break;
-                default: // All Time
-                    if (monthlyTotals.isEmpty()) {
-                        rangeStart = now;
-                        rangeEnd = now;
-                    } else {
-                        rangeStart = monthlyTotals.keySet().stream().min(Comparator.naturalOrder()).get();
-                        rangeEnd = monthlyTotals.keySet().stream().max(Comparator.naturalOrder()).get();
-                    }
-                    break;
-            }
+            YearMonth[] range = new YearMonth[2];
+            getMonthRange(chartPeriod, selectedYear, selectedYearMonth, now, monthlyTotals, range);
+            YearMonth rangeStart = range[0];
+            YearMonth rangeEnd = range[1];
 
             boolean sameYear = rangeStart.getYear() == rangeEnd.getYear();
 
@@ -1768,10 +1821,470 @@ public class MainController {
         xAxis.setCategories(FXCollections.observableArrayList(barLabels));
         monthlyTrendChart.getData().add(series);
         monthlyTrendChart.setAnimated(true);
+    }
 
-        // Fade-in animation for both charts
-        animateChartFadeIn(categoryChart);
-        animateChartFadeIn(monthlyTrendChart);
+    // ==================== NEW CHARTS ====================
+
+    private void updateIncomeVsExpensesChart(String chartPeriod, int selectedYear,
+                                              YearMonth selectedYearMonth, YearMonth now) {
+        CategoryAxis xAxis = (CategoryAxis) incomeVsExpensesChart.getXAxis();
+        xAxis.setAnimated(false);
+        incomeVsExpensesChart.setAnimated(false);
+        incomeVsExpensesChart.getData().clear();
+        xAxis.getCategories().clear();
+        xAxis.setAutoRanging(false);
+
+        Map<YearMonth, Double> monthlyExpenses = expenseList.stream()
+            .collect(Collectors.groupingBy(
+                expense -> YearMonth.from(expense.getDate()),
+                Collectors.summingDouble(Expense::getAmount)));
+
+        YearMonth[] range = new YearMonth[2];
+        getMonthRange(chartPeriod, selectedYear, selectedYearMonth, now, monthlyExpenses, range);
+        YearMonth rangeStart = range[0];
+        YearMonth rangeEnd = range[1];
+
+        boolean sameYear = rangeStart.getYear() == rangeEnd.getYear();
+
+        List<String> labels = new ArrayList<>();
+        XYChart.Series<String, Number> incomeSeries = new XYChart.Series<>();
+        incomeSeries.setName("Income");
+        XYChart.Series<String, Number> expenseSeries = new XYChart.Series<>();
+        expenseSeries.setName("Expenses");
+
+        YearMonth cursor = rangeStart;
+        while (!cursor.isAfter(rangeEnd)) {
+            final YearMonth ym = cursor;
+            String label = ym.getMonth().getDisplayName(TextStyle.SHORT, Locale.getDefault())
+                + (sameYear ? "" : " '" + String.format("%02d", ym.getYear() % 100));
+            labels.add(label);
+
+            double expenseAmt = monthlyExpenses.getOrDefault(ym, 0.0);
+            double incomeAmt = incomes.getOrDefault(ym, recurringIncome);
+
+            final double fIncome = incomeAmt;
+            final double fExpense = expenseAmt;
+
+            XYChart.Data<String, Number> incomeData = new XYChart.Data<>(label, incomeAmt);
+            incomeData.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    newNode.setStyle("-fx-bar-fill: #4CAF50;");
+                    Tooltip t = new Tooltip(ym.getMonth().getDisplayName(TextStyle.FULL, Locale.getDefault())
+                        + " " + ym.getYear() + "\nIncome: " + fmt(fIncome));
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, t);
+                }
+            });
+            incomeSeries.getData().add(incomeData);
+
+            XYChart.Data<String, Number> expenseData = new XYChart.Data<>(label, expenseAmt);
+            expenseData.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    newNode.setStyle("-fx-bar-fill: #FF6F61;");
+                    Tooltip t = new Tooltip(ym.getMonth().getDisplayName(TextStyle.FULL, Locale.getDefault())
+                        + " " + ym.getYear() + "\nExpenses: " + fmt(fExpense));
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, t);
+                }
+            });
+            expenseSeries.getData().add(expenseData);
+
+            cursor = cursor.plusMonths(1);
+        }
+
+        xAxis.setCategories(FXCollections.observableArrayList(labels));
+        incomeVsExpensesChart.getData().addAll(incomeSeries, expenseSeries);
+        incomeVsExpensesChart.setAnimated(true);
+        styleChartLegend(incomeVsExpensesChart, "#4CAF50", "#FF6F61");
+    }
+
+    private void updateBudgetVsActualChart(YearMonth selectedYearMonth) {
+        CategoryAxis xAxis = (CategoryAxis) budgetVsActualChart.getXAxis();
+        xAxis.setAnimated(false);
+        budgetVsActualChart.setAnimated(false);
+        budgetVsActualChart.getData().clear();
+        xAxis.getCategories().clear();
+        xAxis.setAutoRanging(false);
+
+        budgetVsActualSubtitle.setText("Showing "
+            + selectedYearMonth.getMonth().getDisplayName(TextStyle.FULL, Locale.getDefault())
+            + " " + selectedYearMonth.getYear());
+
+        // Only include categories that have a budget
+        Map<String, Double> actualByCategory = expenseList.stream()
+            .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
+            .collect(Collectors.groupingBy(Expense::getCategory, Collectors.summingDouble(Expense::getAmount)));
+
+        List<String> budgetedCategories = budgets.entrySet().stream()
+            .filter(e -> e.getValue() > 0)
+            .map(Map.Entry::getKey)
+            .sorted()
+            .collect(Collectors.toList());
+
+        if (budgetedCategories.isEmpty()) {
+            budgetVsActualSubtitle.setText("Set budgets via right-click on category table");
+            return;
+        }
+
+        List<String> labels = new ArrayList<>(budgetedCategories);
+        XYChart.Series<String, Number> budgetSeries = new XYChart.Series<>();
+        budgetSeries.setName("Budget");
+        XYChart.Series<String, Number> actualSeries = new XYChart.Series<>();
+        actualSeries.setName("Actual");
+
+        for (String category : budgetedCategories) {
+            double budgetAmt = budgets.get(category);
+            double actualAmt = actualByCategory.getOrDefault(category, 0.0);
+            final double fBudget = budgetAmt;
+            final double fActual = actualAmt;
+
+            XYChart.Data<String, Number> bData = new XYChart.Data<>(category, budgetAmt);
+            bData.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    newNode.setStyle("-fx-bar-fill: #5C6BC0;");
+                    Tooltip t = new Tooltip(category + "\nBudget: " + fmt(fBudget));
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, t);
+                }
+            });
+            budgetSeries.getData().add(bData);
+
+            XYChart.Data<String, Number> aData = new XYChart.Data<>(category, actualAmt);
+            aData.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    String barColor = fActual > fBudget ? "#E53935" : "#4CAF50";
+                    newNode.setStyle("-fx-bar-fill: " + barColor + ";");
+                    Tooltip t = new Tooltip(category + "\nActual: " + fmt(fActual)
+                        + (fActual > fBudget ? " (OVER)" : ""));
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, t);
+                }
+            });
+            actualSeries.getData().add(aData);
+        }
+
+        xAxis.setCategories(FXCollections.observableArrayList(labels));
+        budgetVsActualChart.getData().addAll(budgetSeries, actualSeries);
+        budgetVsActualChart.setAnimated(true);
+        styleChartLegend(budgetVsActualChart, "#5C6BC0", "#4CAF50");
+    }
+
+    private void updateCumulativeSpendingChart(YearMonth selectedYearMonth) {
+        NumberAxis xAxis = (NumberAxis) cumulativeSpendingChart.getXAxis();
+        NumberAxis yAxis = (NumberAxis) cumulativeSpendingChart.getYAxis();
+        cumulativeSpendingChart.setAnimated(false);
+        cumulativeSpendingChart.getData().clear();
+
+        cumulativeSubtitle.setText(selectedYearMonth.getMonth()
+            .getDisplayName(TextStyle.FULL, Locale.getDefault()) + " " + selectedYearMonth.getYear());
+
+        int daysInMonth = selectedYearMonth.lengthOfMonth();
+        xAxis.setAutoRanging(false);
+        xAxis.setLowerBound(1);
+        xAxis.setUpperBound(daysInMonth);
+        xAxis.setTickUnit(daysInMonth <= 15 ? 1 : 5);
+        xAxis.setLabel("Day of Month");
+        yAxis.setAutoRanging(true);
+        yAxis.setLabel("Amount");
+
+        Map<Integer, Double> dailyTotals = expenseList.stream()
+            .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
+            .collect(Collectors.groupingBy(
+                e -> e.getDate().getDayOfMonth(),
+                Collectors.summingDouble(Expense::getAmount)));
+
+        // Actual cumulative line
+        XYChart.Series<Number, Number> actualSeries = new XYChart.Series<>();
+        actualSeries.setName("Actual");
+        double runningTotal = 0;
+        for (int day = 1; day <= daysInMonth; day++) {
+            runningTotal += dailyTotals.getOrDefault(day, 0.0);
+            final double total = runningTotal;
+            final int d = day;
+            XYChart.Data<Number, Number> data = new XYChart.Data<>(day, runningTotal);
+            data.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    newNode.setStyle("-fx-background-color: transparent;");
+                    Tooltip t = new Tooltip("Day " + d + ": " + fmt(total));
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, t);
+                }
+            });
+            actualSeries.getData().add(data);
+        }
+        cumulativeSpendingChart.getData().add(actualSeries);
+
+        // Budget line (total of all budgets)
+        double totalBudget = budgets.values().stream().mapToDouble(Double::doubleValue).sum();
+        if (totalBudget > 0) {
+            XYChart.Series<Number, Number> budgetLine = new XYChart.Series<>();
+            budgetLine.setName("Budget (" + fmt(totalBudget) + ")");
+            budgetLine.getData().add(new XYChart.Data<>(1, totalBudget));
+            budgetLine.getData().add(new XYChart.Data<>(daysInMonth, totalBudget));
+            for (XYChart.Data<Number, Number> d : budgetLine.getData()) {
+                d.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                    if (newNode != null) newNode.setStyle("-fx-background-color: transparent;");
+                });
+            }
+            cumulativeSpendingChart.getData().add(budgetLine);
+        }
+
+        // Style the lines after they are added
+        Platform.runLater(() -> {
+            if (actualSeries.getNode() != null) {
+                Node line = actualSeries.getNode().lookup(".chart-series-line");
+                if (line != null) line.setStyle("-fx-stroke: #5C6BC0; -fx-stroke-width: 2px;");
+            }
+            if (totalBudget > 0 && cumulativeSpendingChart.getData().size() > 1) {
+                Node budgetNode = cumulativeSpendingChart.getData().get(1).getNode();
+                if (budgetNode != null) {
+                    Node line = budgetNode.lookup(".chart-series-line");
+                    if (line != null) {
+                        line.setStyle("-fx-stroke: #FF9800; -fx-stroke-width: 2px; -fx-stroke-dash-array: 8 4;");
+                    }
+                }
+            }
+        });
+
+        cumulativeSpendingChart.setCreateSymbols(false);
+        if (totalBudget > 0) {
+            styleChartLegend(cumulativeSpendingChart, "#5C6BC0", "#FF9800");
+        } else {
+            styleChartLegend(cumulativeSpendingChart, "#5C6BC0");
+        }
+    }
+
+    private void updateCategoryTrendChart(String chartPeriod, int selectedYear,
+                                           YearMonth selectedYearMonth, YearMonth now) {
+        CategoryAxis xAxis = (CategoryAxis) categoryTrendChart.getXAxis();
+        xAxis.setAnimated(false);
+        categoryTrendChart.setAnimated(false);
+        categoryTrendChart.getData().clear();
+        xAxis.getCategories().clear();
+        xAxis.setAutoRanging(false);
+
+        Map<YearMonth, Double> monthlyTotals = expenseList.stream()
+            .collect(Collectors.groupingBy(
+                e -> YearMonth.from(e.getDate()),
+                Collectors.summingDouble(Expense::getAmount)));
+
+        YearMonth[] range = new YearMonth[2];
+        getMonthRange(chartPeriod, selectedYear, selectedYearMonth, now, monthlyTotals, range);
+        YearMonth rangeStart = range[0];
+        YearMonth rangeEnd = range[1];
+
+        boolean sameYear = rangeStart.getYear() == rangeEnd.getYear();
+
+        // Build month labels
+        List<String> monthLabels = new ArrayList<>();
+        YearMonth cursor = rangeStart;
+        while (!cursor.isAfter(rangeEnd)) {
+            String label = cursor.getMonth().getDisplayName(TextStyle.SHORT, Locale.getDefault())
+                + (sameYear ? "" : " '" + String.format("%02d", cursor.getYear() % 100));
+            monthLabels.add(label);
+            cursor = cursor.plusMonths(1);
+        }
+
+        // Get top categories by total spend in the range
+        List<Expense> rangeExpenses = filterExpensesByPeriod(chartPeriod, selectedYear, selectedYearMonth, now);
+        Map<String, Double> categoryTotalMap = rangeExpenses.stream()
+            .collect(Collectors.groupingBy(Expense::getCategory, Collectors.summingDouble(Expense::getAmount)));
+
+        List<String> topCategories = categoryTotalMap.entrySet().stream()
+            .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+            .limit(8)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toList());
+
+        // Group remaining categories as "Other"
+        boolean hasOther = categoryTotalMap.size() > 8;
+
+        // Build per-month per-category map
+        Map<YearMonth, Map<String, Double>> monthCategoryMap = rangeExpenses.stream()
+            .collect(Collectors.groupingBy(
+                e -> YearMonth.from(e.getDate()),
+                Collectors.groupingBy(
+                    e -> topCategories.contains(e.getCategory()) ? e.getCategory() : "Other",
+                    Collectors.summingDouble(Expense::getAmount))));
+
+        List<String> allCategories = new ArrayList<>(topCategories);
+        if (hasOther) allCategories.add("Other");
+
+        for (String category : allCategories) {
+            XYChart.Series<String, Number> series = new XYChart.Series<>();
+            series.setName(category);
+            cursor = rangeStart;
+            int labelIdx = 0;
+            while (!cursor.isAfter(rangeEnd)) {
+                Map<String, Double> catMap = monthCategoryMap.getOrDefault(cursor, Collections.emptyMap());
+                double amt = catMap.getOrDefault(category, 0.0);
+                series.getData().add(new XYChart.Data<>(monthLabels.get(labelIdx), amt));
+                cursor = cursor.plusMonths(1);
+                labelIdx++;
+            }
+            categoryTrendChart.getData().add(series);
+        }
+
+        xAxis.setCategories(FXCollections.observableArrayList(monthLabels));
+
+        // Apply category colors to areas and legend
+        String[] catColors = allCategories.stream()
+            .map(this::getCategoryColor).toArray(String[]::new);
+
+        Platform.runLater(() -> {
+            for (XYChart.Series<String, Number> s : categoryTrendChart.getData()) {
+                String color = getCategoryColor(s.getName());
+                if (s.getNode() != null) {
+                    Node fill = s.getNode().lookup(".chart-series-area-fill");
+                    Node line = s.getNode().lookup(".chart-series-area-line");
+                    if (fill != null) fill.setStyle("-fx-fill: " + color + "44;");
+                    if (line != null) line.setStyle("-fx-stroke: " + color + ";");
+                }
+            }
+        });
+        styleChartLegend(categoryTrendChart, catColors);
+
+        categoryTrendChart.setAnimated(true);
+    }
+
+    private void updateYearOverYearChart(int selectedYear) {
+        CategoryAxis xAxis = (CategoryAxis) yearOverYearChart.getXAxis();
+        xAxis.setAnimated(false);
+        yearOverYearChart.setAnimated(false);
+        yearOverYearChart.getData().clear();
+        xAxis.getCategories().clear();
+        xAxis.setAutoRanging(false);
+
+        int prevYear = selectedYear - 1;
+        yearOverYearChart.setTitle(selectedYear + " vs " + prevYear);
+
+        List<String> monthLabels = new ArrayList<>();
+        for (Month m : Month.values()) {
+            monthLabels.add(m.getDisplayName(TextStyle.SHORT, Locale.getDefault()));
+        }
+
+        Map<YearMonth, Double> monthlyTotals = expenseList.stream()
+            .filter(e -> e.getDate().getYear() == selectedYear || e.getDate().getYear() == prevYear)
+            .collect(Collectors.groupingBy(
+                e -> YearMonth.from(e.getDate()),
+                Collectors.summingDouble(Expense::getAmount)));
+
+        XYChart.Series<String, Number> currentSeries = new XYChart.Series<>();
+        currentSeries.setName(String.valueOf(selectedYear));
+        XYChart.Series<String, Number> prevSeries = new XYChart.Series<>();
+        prevSeries.setName(String.valueOf(prevYear));
+
+        for (Month m : Month.values()) {
+            String label = m.getDisplayName(TextStyle.SHORT, Locale.getDefault());
+
+            double currentAmt = monthlyTotals.getOrDefault(YearMonth.of(selectedYear, m), 0.0);
+            double prevAmt = monthlyTotals.getOrDefault(YearMonth.of(prevYear, m), 0.0);
+            final double fCurrent = currentAmt;
+            final double fPrev = prevAmt;
+
+            XYChart.Data<String, Number> cData = new XYChart.Data<>(label, currentAmt);
+            cData.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    newNode.setStyle("-fx-background-color: #5C6BC0;");
+                    Tooltip t = new Tooltip(label + " " + selectedYear + ": " + fmt(fCurrent));
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, t);
+                }
+            });
+            currentSeries.getData().add(cData);
+
+            XYChart.Data<String, Number> pData = new XYChart.Data<>(label, prevAmt);
+            pData.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    newNode.setStyle("-fx-background-color: #A0A0A0;");
+                    Tooltip t = new Tooltip(label + " " + prevYear + ": " + fmt(fPrev));
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, t);
+                }
+            });
+            prevSeries.getData().add(pData);
+        }
+
+        xAxis.setCategories(FXCollections.observableArrayList(monthLabels));
+        yearOverYearChart.getData().addAll(currentSeries, prevSeries);
+
+        // Style the lines
+        Platform.runLater(() -> {
+            if (currentSeries.getNode() != null) {
+                Node line = currentSeries.getNode().lookup(".chart-series-line");
+                if (line != null) line.setStyle("-fx-stroke: #5C6BC0; -fx-stroke-width: 2px;");
+            }
+            if (prevSeries.getNode() != null) {
+                Node line = prevSeries.getNode().lookup(".chart-series-line");
+                if (line != null) line.setStyle("-fx-stroke: #A0A0A0; -fx-stroke-width: 2px;");
+            }
+        });
+        styleChartLegend(yearOverYearChart, "#5C6BC0", "#A0A0A0");
+
+        yearOverYearChart.setAnimated(true);
+    }
+
+    private void updateRecurringVsOneTimeChart(List<Expense> chartExpenses) {
+        double recurringTotal = chartExpenses.stream()
+            .filter(e -> e.getRecurringId() != null)
+            .mapToDouble(Expense::getAmount)
+            .sum();
+        double oneTimeTotal = chartExpenses.stream()
+            .filter(e -> e.getRecurringId() == null)
+            .mapToDouble(Expense::getAmount)
+            .sum();
+        double grandTotal = recurringTotal + oneTimeTotal;
+
+        ObservableList<PieChart.Data> data = FXCollections.observableArrayList();
+
+        if (grandTotal > 0) {
+            double recurPct = (recurringTotal / grandTotal) * 100;
+            double onePct = (oneTimeTotal / grandTotal) * 100;
+
+            PieChart.Data recurData = new PieChart.Data(
+                "Recurring (" + String.format("%.0f%%", recurPct) + ")", recurringTotal);
+            recurData.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    newNode.setStyle("-fx-pie-color: #FF9800;");
+                    Tooltip t = new Tooltip("Recurring: " + fmt(recurringTotal)
+                        + " (" + String.format("%.1f%%", recurPct) + ")");
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, t);
+                }
+            });
+
+            PieChart.Data oneData = new PieChart.Data(
+                "One-Time (" + String.format("%.0f%%", onePct) + ")", oneTimeTotal);
+            oneData.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    newNode.setStyle("-fx-pie-color: #45AAF2;");
+                    Tooltip t = new Tooltip("One-Time: " + fmt(oneTimeTotal)
+                        + " (" + String.format("%.1f%%", onePct) + ")");
+                    t.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, t);
+                }
+            });
+
+            data.addAll(recurData, oneData);
+        }
+
+        recurringVsOneTimeChart.setData(data);
+        recurringVsOneTimeChart.setAnimated(true);
+        if (grandTotal > 0) {
+            styleChartLegend(recurringVsOneTimeChart, "#FF9800", "#45AAF2");
+        }
+    }
+
+    private void styleChartLegend(Chart chart, String... colors) {
+        Platform.runLater(() -> {
+            int i = 0;
+            for (Node legendItem : chart.lookupAll(".chart-legend-item-symbol")) {
+                if (i < colors.length) {
+                    legendItem.setStyle("-fx-background-color: " + colors[i] + ";");
+                }
+                i++;
+            }
+        });
     }
 
     private void animateChartFadeIn(Node chart) {
