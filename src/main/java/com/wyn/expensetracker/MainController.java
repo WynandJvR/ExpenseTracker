@@ -90,6 +90,11 @@ public class MainController {
     @FXML private VBox incomeFieldsBox;
     @FXML private Button toggleIncomeButton;
 
+    // --- Left panel: Income tab ---
+    @FXML private TableView<Expense> incomeTable;
+    @FXML private Label incomeTabSummary;
+    @FXML private Label incomeErrorLabel;
+
     // --- Left panel: Import tab ---
     @FXML private Label importErrorLabel;
     @FXML private TableView<CategorizationRules.RuleEntry> rulesTable;
@@ -172,6 +177,7 @@ public class MainController {
     private ObservableList<Integer> yearList;
     private ObservableList<CategoryTotal> categoryTotals;
     private ObservableList<RecurringExpense> recurringList;
+    private ObservableList<Expense> incomeList;
     private Map<YearMonth, Double> incomes;
     private Map<String, Double> budgets;
     private String currencySymbol = "R";
@@ -377,10 +383,12 @@ public class MainController {
             toggleExclude.setOnAction(e -> {
                 Expense item = row.getItem();
                 if (item != null) {
-                    item.setExcluded(!item.isExcluded());
+                    boolean prev = item.isExcluded();
+                    item.setExcluded(!prev);
                     try {
                         storage.saveExpenses(manager.getExpensesForSave());
                     } catch (IOException ex) {
+                        item.setExcluded(prev);
                         showMessage("Failed to save: " + ex.getMessage(), true);
                     }
                     refreshTable();
@@ -390,10 +398,12 @@ public class MainController {
             toggleIncome.setOnAction(e -> {
                 Expense item = row.getItem();
                 if (item != null) {
-                    item.setIncome(!item.isIncome());
+                    boolean prev = item.isIncome();
+                    item.setIncome(!prev);
                     try {
                         storage.saveExpenses(manager.getExpensesForSave());
                     } catch (IOException ex) {
+                        item.setIncome(prev);
                         showMessage("Failed to save: " + ex.getMessage(), true);
                     }
                     refreshTable();
@@ -403,13 +413,17 @@ public class MainController {
             toggleRefund.setOnAction(e -> {
                 Expense item = row.getItem();
                 if (item != null) {
-                    item.setRefund(!item.isRefund());
+                    boolean prevRefund = item.isRefund();
+                    boolean prevIncome = item.isIncome();
+                    item.setRefund(!prevRefund);
                     if (item.isRefund() && !item.isIncome()) {
                         item.setIncome(true); // Refunds are income (money received)
                     }
                     try {
                         storage.saveExpenses(manager.getExpensesForSave());
                     } catch (IOException ex) {
+                        item.setRefund(prevRefund);
+                        item.setIncome(prevIncome);
                         showMessage("Failed to save: " + ex.getMessage(), true);
                     }
                     refreshTable();
@@ -531,6 +545,31 @@ public class MainController {
 
         categoryTotals = FXCollections.observableArrayList();
         categoryTable.setItems(categoryTotals);
+
+        // Income table
+        incomeTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        incomeList = FXCollections.observableArrayList();
+        incomeTable.setItems(incomeList);
+        Label incomePlaceholder = new Label("No income transactions for this period.");
+        incomePlaceholder.getStyleClass().add("empty-state-label");
+        incomeTable.setPlaceholder(incomePlaceholder);
+        incomeTable.setRowFactory(tv -> {
+            TableRow<Expense> row = new TableRow<>() {
+                @Override
+                protected void updateItem(Expense item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setStyle("");
+                    } else {
+                        setStyle("-fx-background-color: rgba(76, 175, 80, 0.12);");
+                    }
+                }
+            };
+            return row;
+        });
+        incomeTable.setOnKeyPressed(e -> {
+            if (e.getCode() == KeyCode.DELETE) handleDeleteIncome();
+        });
     }
 
     private <S, T> void setupColumnCellFactory(TableColumn<S, T> column, Pos alignment) {
@@ -992,15 +1031,13 @@ public class MainController {
                 freq, endDate);
             if (expense.isIncome()) recurring.setIncome(true);
 
-            // Remove the one-time expense and add the recurring one
-            manager.executeCommand(new DeleteExpenseCommand(manager, expense));
+            // Add the recurring rule — keep the original expense as historical record
             manager.executeCommand(new AddExpenseCommand(manager, recurring));
             try {
                 manager.generateRecurringExpenses(LocalDate.now());
                 storage.saveExpenses(manager.getExpensesForSave());
                 recurringList.setAll(manager.getBaseRecurringExpenses());
             } catch (IOException ex) {
-                manager.undo();
                 manager.undo();
                 showMessage("Failed to save: " + ex.getMessage(), true);
                 dialog.close();
@@ -1022,7 +1059,7 @@ public class MainController {
         content.setPadding(new javafx.geometry.Insets(20));
         content.getStyleClass().add("root-pane");
 
-        Scene scene = new Scene(content, 400, 300);
+        Scene scene = new Scene(content, 400, 380);
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
         dialog.setScene(scene);
         dialog.showAndWait();
@@ -1216,7 +1253,7 @@ public class MainController {
                 return;
             }
 
-            int converted = 0;
+            int commandCount = 0;
             for (RecurringPatternDetector.DetectedPattern pattern : selected) {
                 RecurringExpense recurring = new RecurringExpense(
                     pattern.getAverageAmount(),
@@ -1227,13 +1264,14 @@ public class MainController {
                     null // no end date
                 );
                 manager.executeCommand(new AddExpenseCommand(manager, recurring));
+                commandCount++;
 
                 if (removeOriginals.isSelected()) {
                     for (Expense original : pattern.getMatchingExpenses()) {
                         manager.executeCommand(new DeleteExpenseCommand(manager, original));
+                        commandCount++;
                     }
                 }
-                converted++;
             }
 
             try {
@@ -1242,9 +1280,15 @@ public class MainController {
                 recurringList.setAll(manager.getBaseRecurringExpenses());
                 refreshTable();
             } catch (IOException ex) {
+                // Rollback all commands from the loop
+                for (int i = 0; i < commandCount; i++) {
+                    if (manager.canUndo()) manager.undo();
+                }
                 showMessage("Failed to save: " + ex.getMessage(), true);
+                return;
             }
 
+            int converted = selected.size();
             showMessage(converted + " recurring " + (converted == 1 ? "expense" : "expenses")
                 + " created successfully!", false);
             dialog.close();
@@ -1406,6 +1450,62 @@ public class MainController {
         incomeFieldsBox.setVisible(show);
         incomeFieldsBox.setManaged(show);
         toggleIncomeButton.setText(show ? "Hide" : "Edit");
+    }
+
+    // ======================== INCOME TABLE ========================
+
+    private void refreshIncomeTable() {
+        Integer selectedYear = yearCombo.getValue();
+        Month selectedMonth = monthCombo.getValue();
+        if (selectedYear == null || selectedMonth == null) {
+            incomeList.clear();
+            incomeTabSummary.setText("");
+            return;
+        }
+        YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
+        List<Expense> monthIncome = manager.getExpenses().stream()
+            .filter(e -> e.isIncome() && YearMonth.from(e.getDate()).equals(selectedYearMonth))
+            .sorted(Comparator.comparing(Expense::getDate).reversed())
+            .collect(Collectors.toList());
+        incomeList.setAll(monthIncome);
+        if (monthIncome.isEmpty()) {
+            incomeTabSummary.setText("No income this month.");
+        } else {
+            double total = monthIncome.stream().mapToDouble(Expense::getAmount).sum();
+            incomeTabSummary.setText(String.format("%d transaction(s) — Total: %s", monthIncome.size(), fmt(total)));
+        }
+    }
+
+    @FXML
+    private void handleDeleteIncome() {
+        Expense selected = incomeTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            incomeErrorLabel.setText("Select an income entry to delete.");
+            incomeErrorLabel.getStyleClass().setAll("error-label", "error-message");
+            return;
+        }
+
+        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmation.initOwner(stage);
+        confirmation.setTitle("Delete Income");
+        confirmation.setHeaderText(null);
+        confirmation.setContentText("Delete this income entry (" + fmt(selected.getAmount()) + ")?");
+        confirmation.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+
+        Optional<ButtonType> result = confirmation.showAndWait();
+        if (result.isPresent() && result.get() == ButtonType.OK) {
+            manager.executeCommand(new DeleteExpenseCommand(manager, selected));
+            try {
+                storage.saveExpenses(manager.getExpensesForSave());
+                refreshTable();
+                incomeErrorLabel.setText("Income deleted.");
+                incomeErrorLabel.getStyleClass().setAll("error-label", "success-message");
+            } catch (Exception ex) {
+                manager.undo();
+                incomeErrorLabel.setText("Error: " + ex.getMessage());
+                incomeErrorLabel.getStyleClass().setAll("error-label", "error-message");
+            }
+        }
     }
 
     // ======================== DATE NAVIGATION ========================
@@ -1810,6 +1910,7 @@ public class MainController {
             updateTotalExpenses();
             updateCharts();
             updateIncomeField();
+            refreshIncomeTable();
             updateUndoRedoButtons();
             updateStatusBar();
         } catch (Exception e) {
@@ -3667,11 +3768,15 @@ public class MainController {
             manager.executeCommand(cmd);
             try {
                 storage.saveExpenses(manager.getExpensesForSave());
-                storage.saveCategories(categories);
             } catch (IOException ex) {
                 manager.undo();
                 showMessage("Failed to save imported expenses: " + ex.getMessage(), true);
                 return;
+            }
+            try {
+                storage.saveCategories(categories);
+            } catch (IOException ex) {
+                showMessage("Expenses saved but failed to save categories: " + ex.getMessage(), true);
             }
         }
 
