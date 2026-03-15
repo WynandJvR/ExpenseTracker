@@ -368,6 +368,32 @@ public class FileStorage {
         }
     }
 
+    public void saveUIState(Map<String, String> uiState) throws IOException {
+        atomicWrite(Path.of(baseDir + File.separator + "ui_state.txt"), out -> {
+            for (Map.Entry<String, String> entry : uiState.entrySet()) {
+                out.println(entry.getKey() + "=" + entry.getValue());
+            }
+        });
+    }
+
+    public Map<String, String> loadUIState() {
+        Map<String, String> state = new HashMap<>();
+        File file = new File(baseDir + File.separator + "ui_state.txt");
+        if (!file.exists()) return state;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                int eq = line.indexOf('=');
+                if (eq > 0) {
+                    state.put(line.substring(0, eq).trim(), line.substring(eq + 1).trim());
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Error loading UI state: " + e.getMessage());
+        }
+        return state;
+    }
+
     public void saveBudgets(Map<String, Double> budgets) throws IOException {
         atomicWrite(Path.of(baseDir + File.separator + "budgets.txt"), out -> {
             for (Map.Entry<String, Double> entry : budgets.entrySet()) {

@@ -132,6 +132,7 @@ public class MainController {
     @FXML private TableColumn<CategoryTotal, Double> progressColumn;
 
     // --- Analytics charts ---
+    @FXML private TitledPane analyticsTitledPane;
     @FXML private TabPane analyticsTabPane;
     @FXML private BarChart<String, Number> incomeVsExpensesChart;
     @FXML private BarChart<String, Number> budgetVsActualChart;
@@ -246,6 +247,12 @@ public class MainController {
 
         // Initial refresh
         refreshTable();
+
+        // Restore UI state from previous session
+        restoreUIState();
+
+        // Save UI state on window close
+        stage.setOnCloseRequest(e -> saveUIState());
 
         // Defer tab height adjustment until CSS is applied
         Platform.runLater(() -> {
@@ -766,6 +773,67 @@ public class MainController {
                 }
             }
         });
+    }
+
+    // ======================== UI STATE PERSISTENCE ========================
+
+    private void saveUIState() {
+        try {
+            Map<String, String> state = new HashMap<>();
+            state.put("sidebarCollapsed", String.valueOf(sidebarCollapsed));
+            state.put("dividerPosition", String.valueOf(
+                sidebarCollapsed ? savedDividerPosition : splitPane.getDividerPositions()[0]));
+            state.put("analyticsExpanded", String.valueOf(analyticsTitledPane.isExpanded()));
+            state.put("analyticsTab", String.valueOf(analyticsTabPane.getSelectionModel().getSelectedIndex()));
+            state.put("chartPeriod", chartPeriodCombo.getValue());
+            storage.saveUIState(state);
+        } catch (IOException e) {
+            System.err.println("Error saving UI state: " + e.getMessage());
+        }
+    }
+
+    private void restoreUIState() {
+        Map<String, String> state = storage.loadUIState();
+        if (state.isEmpty()) return;
+
+        // Restore analytics pane expanded state
+        if (state.containsKey("analyticsExpanded")) {
+            analyticsTitledPane.setExpanded(Boolean.parseBoolean(state.get("analyticsExpanded")));
+        }
+
+        // Restore analytics tab selection
+        if (state.containsKey("analyticsTab")) {
+            try {
+                int tabIndex = Integer.parseInt(state.get("analyticsTab"));
+                if (tabIndex >= 0 && tabIndex < analyticsTabPane.getTabs().size()) {
+                    analyticsTabPane.getSelectionModel().select(tabIndex);
+                }
+            } catch (NumberFormatException e) { /* ignore */ }
+        }
+
+        // Restore chart period
+        if (state.containsKey("chartPeriod")) {
+            String period = state.get("chartPeriod");
+            if (chartPeriodCombo.getItems().contains(period)) {
+                chartPeriodCombo.setValue(period);
+            }
+        }
+
+        // Restore sidebar state
+        if (state.containsKey("dividerPosition")) {
+            try {
+                savedDividerPosition = Double.parseDouble(state.get("dividerPosition"));
+            } catch (NumberFormatException e) { /* ignore */ }
+        }
+        if ("true".equals(state.get("sidebarCollapsed"))) {
+            // Collapse without animation
+            leftPane.setVisible(false);
+            leftPane.setManaged(false);
+            splitPane.setDividerPositions(0.0);
+            sidebarCollapsed = true;
+        } else if (state.containsKey("dividerPosition")) {
+            splitPane.setDividerPositions(savedDividerPosition);
+        }
     }
 
     // ======================== EVENT HANDLERS ========================
