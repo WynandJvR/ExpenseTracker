@@ -139,6 +139,9 @@ public class ExpenseManager {
                         recurringId,
                         recurringExpense
                     );
+                    if (recurringExpense.isIncome()) generated.setIncome(true);
+                    if (recurringExpense.isRefund()) generated.setRefund(true);
+                    if (recurringExpense.isExcluded()) generated.setExcluded(true);
                     generatedExpenses.add(generated);
                     generatedRecurringIds.add(recurringId);
                 }

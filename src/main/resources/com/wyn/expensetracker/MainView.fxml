@@ -141,6 +141,10 @@
                                         </columns>
                                     </TableView>
 
+                                    <HBox spacing="10">
+                                        <Button text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteRecurring"/>
+                                    </HBox>
+
                                     <Separator/>
 
                                     <!-- Edit Recurring Form -->
@@ -167,10 +171,41 @@
 
                                         <HBox spacing="10">
                                             <Button fx:id="updateRecurringButton" text="Update Expense" styleClass="success-button" disable="true" onAction="#handleUpdateRecurring"/>
-                                            <Button text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteRecurring"/>
                                         </HBox>
                                         <Label fx:id="editRecurringErrorLabel" styleClass="error-label"/>
                                     </VBox>
+                                </VBox>
+                            </Tab>
+
+                            <!-- ===== Income Tab ===== -->
+                            <Tab text="Income" closable="false">
+                                <VBox spacing="5" styleClass="panel-box">
+                                    <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+
+                                    <Label text="Income Transactions" styleClass="section-title"/>
+                                    <Label fx:id="incomeTabSummary" text="" styleClass="form-label"/>
+
+                                    <TableView fx:id="incomeTable" styleClass="table-view" prefHeight="250">
+                                        <columns>
+                                            <TableColumn text="Amount" prefWidth="80">
+                                                <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Category" prefWidth="100">
+                                                <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Date" prefWidth="90">
+                                                <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
+                                            </TableColumn>
+                                            <TableColumn text="Description" prefWidth="150">
+                                                <cellValueFactory><PropertyValueFactory property="description"/></cellValueFactory>
+                                            </TableColumn>
+                                        </columns>
+                                    </TableView>
+
+                                    <HBox spacing="10">
+                                        <Button text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteIncome"/>
+                                    </HBox>
+                                    <Label fx:id="incomeErrorLabel" styleClass="error-label"/>
                                 </VBox>
                             </Tab>
 
@@ -302,7 +337,8 @@
                             <TextField fx:id="filterMaxAmount" promptText="Any" styleClass="text-field" prefWidth="80"/>
                             <Button text="Clear Filters" styleClass="primary-button" onAction="#handleClearFilters" minWidth="-1"/>
                         </HBox>
-                        <HBox spacing="10" alignment="CENTER_RIGHT">
+                        <HBox spacing="10" alignment="CENTER_LEFT">
+                            <Button text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteExpense"/>
                             <Region HBox.hgrow="ALWAYS"/>
                             <Button text="Export All" styleClass="success-button" onAction="#handleExport"/>
                             <Button text="Export View" styleClass="primary-button" onAction="#handleExportFiltered"/>

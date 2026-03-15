@@ -55,13 +55,17 @@ public class FileStorage {
         atomicWrite(Path.of(expensesFile), out -> {
             for (Expense expense : expenses) {
                 if (expense instanceof RecurringExpense recurringExpense) {
+                    String excludedFlag = expense.isExcluded() ? ",EXCLUDED" : "";
+                    String incomeFlag = expense.isIncome() ? ",INCOME" : "";
+                    String refundFlag = expense.isRefund() ? ",REFUND" : "";
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
                             escapeCsv(expense.getDescription()) + "," +
                             "RECURRING," +
                             recurringExpense.getFrequency() + "," +
-                            (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : ""));
+                            (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : "") +
+                            excludedFlag + incomeFlag + refundFlag);
                 } else {
                     String importId = expense.getImportId() != null ? expense.getImportId() : "";
                     String excludedFlag = expense.isExcluded() ? ",EXCLUDED" : "";
@@ -108,7 +112,13 @@ public class FileStorage {
                         if ("RECURRING".equals(type) && parts.length >= 7) {
                             RecurrenceType frequency = RecurrenceType.valueOf(parts[5]);
                             LocalDate endDate = parts[6].isEmpty() ? null : LocalDate.parse(parts[6]);
-                            expenses.add(new RecurringExpense(amount, category, date, description, frequency, endDate));
+                            RecurringExpense rec = new RecurringExpense(amount, category, date, description, frequency, endDate);
+                            for (int i = 7; i < parts.length; i++) {
+                                if ("EXCLUDED".equals(parts[i])) rec.setExcluded(true);
+                                if ("INCOME".equals(parts[i])) rec.setIncome(true);
+                                if ("REFUND".equals(parts[i])) rec.setRefund(true);
+                            }
+                            expenses.add(rec);
                         } else if ("REGULAR".equals(type)) {
                             Expense exp = new Expense(amount, category, date, description);
                             if (parts.length >= 6 && !parts[5].isEmpty()) {
