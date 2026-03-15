@@ -1,13 +1,7 @@
 package com.wyn.expensetracker;
 
 import javafx.animation.FadeTransition;
-import javafx.animation.Interpolator;
-import javafx.animation.KeyFrame;
-import javafx.animation.KeyValue;
 import javafx.animation.PauseTransition;
-import javafx.animation.Timeline;
-import javafx.beans.property.DoubleProperty;
-import javafx.beans.property.SimpleDoubleProperty;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -42,13 +36,23 @@ import java.util.stream.Collectors;
 
 public class MainController {
 
-    // --- Layout ---
-    @FXML private SplitPane splitPane;
-    @FXML private ScrollPane leftScrollPane;
-    @FXML private Button toggleSidebarButton;
+    // --- Navigation ---
+    @FXML private StackPane contentArea;
+    @FXML private ToggleButton navDashboard;
+    @FXML private ToggleButton navExpenses;
+    @FXML private ToggleButton navRecurring;
+    @FXML private ToggleButton navImport;
+    @FXML private ToggleButton navAnalytics;
 
-    // --- Left panel: Expense tab ---
-    @FXML private TabPane tabPane;
+    // --- Views ---
+    @FXML private ScrollPane dashboardView;
+    @FXML private ScrollPane expensesView;
+    @FXML private ScrollPane recurringView;
+    @FXML private ScrollPane importView;
+    @FXML private ScrollPane analyticsView;
+    @FXML private TitledPane addExpensePane;
+
+    // --- Expense form ---
     @FXML private VBox expenseTabContent;
     @FXML private VBox recurringTabContent;
     @FXML private TextField amountField;
@@ -100,10 +104,12 @@ public class MainController {
     @FXML private TableView<CategorizationRules.RuleEntry> rulesTable;
     // importHistoryList removed — shown in dialog via handleShowImportHistory
 
-    // --- Right panel: Filters ---
+    // --- Filters ---
     @FXML private ComboBox<String> filterCategoryCombo;
     @FXML private TextField filterMinAmount;
     @FXML private TextField filterMaxAmount;
+    @FXML private HBox filterFieldsBox;
+    @FXML private Button filterToggleButton;
 
     // --- Right panel ---
     @FXML private ComboBox<Integer> yearCombo;
@@ -113,7 +119,6 @@ public class MainController {
     @FXML private TableColumn<Expense, String> expenseCategoryColumn;
     @FXML private TableColumn<Expense, LocalDate> dateColumn;
     @FXML private TableColumn<Expense, String> descriptionColumn;
-    @FXML private Button exportButton;
     @FXML private ComboBox<String> chartPeriodCombo;
     @FXML private PieChart categoryChart;
     @FXML private StackedBarChart<String, Number> monthlyTrendChart;
@@ -132,7 +137,6 @@ public class MainController {
     @FXML private TableColumn<CategoryTotal, Double> progressColumn;
 
     // --- Analytics charts ---
-    @FXML private TitledPane analyticsTitledPane;
     @FXML private TabPane analyticsTabPane;
     @FXML private BarChart<String, Number> incomeVsExpensesChart;
     @FXML private BarChart<String, Number> budgetVsActualChart;
@@ -191,12 +195,9 @@ public class MainController {
     private CategorizationRules categorizationRules;
     private ReceiptScanner receiptScanner;
     private ObservableList<ImportLog> importLogs;
-    private boolean sidebarCollapsed = false;
-    private boolean sidebarAnimating = false;
     private boolean projectionsNeedUpdate = true;
     private ProjectionEngine projectionEngine = new ProjectionEngine();
-    private double savedDividerPosition = 0.3;
-    private Node leftPane;
+    private String currentViewName = "dashboard";
 
     @FXML
     public void initialize() {
@@ -235,15 +236,15 @@ public class MainController {
         setupEmptyStates();
         setupRulesTable();
 
-        // Store reference to left pane for sidebar toggle
-        leftPane = leftScrollPane;
+        // Setup navigation
+        setupNavigation();
 
         // Initial date pickers
         datePicker.setValue(LocalDate.now());
         addRecurringDatePicker.setValue(LocalDate.now());
 
-        // Select first tab
-        tabPane.getSelectionModel().select(0);
+        // Select default view
+        navDashboard.setSelected(true);
 
         // Initial refresh
         refreshTable();
@@ -253,16 +254,6 @@ public class MainController {
 
         // Save UI state on window close
         stage.setOnCloseRequest(e -> saveUIState());
-
-        // Defer tab height adjustment until CSS is applied
-        Platform.runLater(() -> {
-            expenseTabContent.applyCss();
-            expenseTabContent.layout();
-            tabPane.applyCss();
-            tabPane.layout();
-            double initialHeight = expenseTabContent.prefHeight(-1) + 40;
-            tabPane.setPrefHeight(initialHeight);
-        });
     }
 
     // ======================== SETUP ========================
@@ -565,13 +556,43 @@ public class MainController {
                 @Override
                 protected void updateItem(Expense item, boolean empty) {
                     super.updateItem(item, empty);
+                    getStyleClass().removeAll("excluded-row");
                     if (empty || item == null) {
+                        setStyle("");
+                        setOpacity(1.0);
+                    } else if (item.isExcluded()) {
+                        getStyleClass().add("excluded-row");
+                        setOpacity(0.45);
                         setStyle("");
                     } else {
                         setStyle("-fx-background-color: rgba(76, 175, 80, 0.12);");
+                        setOpacity(1.0);
                     }
                 }
             };
+            ContextMenu menu = new ContextMenu();
+            MenuItem toggleExclude = new MenuItem("Exclude from Analytics");
+            toggleExclude.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null) {
+                    boolean prev = item.isExcluded();
+                    item.setExcluded(!prev);
+                    try {
+                        storage.saveExpenses(manager.getExpensesForSave());
+                    } catch (IOException ex) {
+                        item.setExcluded(prev);
+                        showMessage("Failed to save: " + ex.getMessage(), true);
+                    }
+                    refreshTable();
+                }
+            });
+            menu.setOnShowing(e -> {
+                Expense item = row.getItem();
+                toggleExclude.setText(item != null && item.isExcluded()
+                    ? "Include in Analytics" : "Exclude from Analytics");
+            });
+            menu.getItems().add(toggleExclude);
+            row.setContextMenu(menu);
             return row;
         });
         incomeTable.setOnKeyPressed(e -> {
@@ -605,21 +626,6 @@ public class MainController {
     }
 
     private void setupListeners() {
-        // Tab height adjustment
-        tabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
-            if (newTab != null) {
-                tabPane.applyCss();
-                tabPane.layout();
-                VBox content;
-                if (newTab == tabPane.getTabs().get(0)) content = expenseTabContent;
-                else if (newTab == tabPane.getTabs().get(1)) content = recurringTabContent;
-                else content = (VBox) newTab.getContent();
-                content.applyCss();
-                content.layout();
-                tabPane.setPrefHeight(content.prefHeight(-1) + 40);
-            }
-        });
-
         // Recurring table selection
         recurringTable.getSelectionModel().selectedItemProperty().addListener((obs, oldSelection, newSelection) -> {
             if (newSelection != null) {
@@ -651,6 +657,7 @@ public class MainController {
                 updateTotalExpenses();
                 updateCharts();
                 updateIncomeField();
+                refreshIncomeTable();
             }
         });
         monthCombo.valueProperty().addListener((observable, oldValue, newValue) -> {
@@ -658,6 +665,7 @@ public class MainController {
                 updateTotalExpenses();
                 updateCharts();
                 updateIncomeField();
+                refreshIncomeTable();
             }
         });
 
@@ -739,6 +747,10 @@ public class MainController {
                         }
                         break;
                     case N:
+                        if (!"expenses".equals(currentViewName)) {
+                            navExpenses.setSelected(true);
+                        }
+                        addExpensePane.setExpanded(true);
                         amountField.requestFocus();
                         event.consume();
                         break;
@@ -747,11 +759,10 @@ public class MainController {
                         event.consume();
                         break;
                     case F:
+                        if (!"expenses".equals(currentViewName)) {
+                            navExpenses.setSelected(true);
+                        }
                         searchField.requestFocus();
-                        event.consume();
-                        break;
-                    case B:
-                        handleToggleSidebar();
                         event.consume();
                         break;
                     default:
@@ -780,10 +791,7 @@ public class MainController {
     private void saveUIState() {
         try {
             Map<String, String> state = new HashMap<>();
-            state.put("sidebarCollapsed", String.valueOf(sidebarCollapsed));
-            state.put("dividerPosition", String.valueOf(
-                sidebarCollapsed ? savedDividerPosition : splitPane.getDividerPositions()[0]));
-            state.put("analyticsExpanded", String.valueOf(analyticsTitledPane.isExpanded()));
+            state.put("activeView", currentViewName);
             state.put("analyticsTab", String.valueOf(analyticsTabPane.getSelectionModel().getSelectedIndex()));
             state.put("chartPeriod", chartPeriodCombo.getValue());
             storage.saveUIState(state);
@@ -796,9 +804,15 @@ public class MainController {
         Map<String, String> state = storage.loadUIState();
         if (state.isEmpty()) return;
 
-        // Restore analytics pane expanded state
-        if (state.containsKey("analyticsExpanded")) {
-            analyticsTitledPane.setExpanded(Boolean.parseBoolean(state.get("analyticsExpanded")));
+        // Restore active view
+        if (state.containsKey("activeView")) {
+            switch (state.get("activeView")) {
+                case "expenses" -> navExpenses.setSelected(true);
+                case "recurring" -> navRecurring.setSelected(true);
+                case "import" -> navImport.setSelected(true);
+                case "analytics" -> navAnalytics.setSelected(true);
+                default -> navDashboard.setSelected(true);
+            }
         }
 
         // Restore analytics tab selection
@@ -818,65 +832,64 @@ public class MainController {
                 chartPeriodCombo.setValue(period);
             }
         }
+    }
 
-        // Restore sidebar state
-        if (state.containsKey("dividerPosition")) {
-            try {
-                savedDividerPosition = Double.parseDouble(state.get("dividerPosition"));
-            } catch (NumberFormatException e) { /* ignore */ }
-        }
-        if ("true".equals(state.get("sidebarCollapsed"))) {
-            // Collapse without animation
-            leftPane.setVisible(false);
-            leftPane.setManaged(false);
-            splitPane.setDividerPositions(0.0);
-            sidebarCollapsed = true;
-        } else if (state.containsKey("dividerPosition")) {
-            splitPane.setDividerPositions(savedDividerPosition);
-        }
+    // ======================== NAVIGATION ========================
+
+    private void setupNavigation() {
+        ToggleGroup navGroup = new ToggleGroup();
+        navDashboard.setToggleGroup(navGroup);
+        navExpenses.setToggleGroup(navGroup);
+        navRecurring.setToggleGroup(navGroup);
+        navImport.setToggleGroup(navGroup);
+        navAnalytics.setToggleGroup(navGroup);
+
+        navGroup.selectedToggleProperty().addListener((obs, oldToggle, newToggle) -> {
+            if (newToggle == null) {
+                if (oldToggle != null) oldToggle.setSelected(true);
+                return;
+            }
+            if (newToggle == navDashboard) switchView("dashboard");
+            else if (newToggle == navExpenses) switchView("expenses");
+            else if (newToggle == navRecurring) switchView("recurring");
+            else if (newToggle == navImport) switchView("import");
+            else if (newToggle == navAnalytics) switchView("analytics");
+        });
+    }
+
+    private void switchView(String viewName) {
+        dashboardView.setVisible(false); dashboardView.setManaged(false);
+        expensesView.setVisible(false); expensesView.setManaged(false);
+        recurringView.setVisible(false); recurringView.setManaged(false);
+        importView.setVisible(false); importView.setManaged(false);
+        analyticsView.setVisible(false); analyticsView.setManaged(false);
+
+        ScrollPane target = switch (viewName) {
+            case "expenses" -> expensesView;
+            case "recurring" -> recurringView;
+            case "import" -> importView;
+            case "analytics" -> analyticsView;
+            default -> dashboardView;
+        };
+        target.setVisible(true);
+        target.setManaged(true);
+        currentViewName = viewName;
+
+        FadeTransition fade = new FadeTransition(Duration.millis(150), target);
+        fade.setFromValue(0.0);
+        fade.setToValue(1.0);
+        fade.play();
+    }
+
+    @FXML
+    private void handleToggleFilters() {
+        boolean showing = filterFieldsBox.isVisible();
+        filterFieldsBox.setVisible(!showing);
+        filterFieldsBox.setManaged(!showing);
+        filterToggleButton.setText(showing ? "Filters" : "Hide Filters");
     }
 
     // ======================== EVENT HANDLERS ========================
-
-    @FXML
-    private void handleToggleSidebar() {
-        if (sidebarAnimating) return;
-        sidebarAnimating = true;
-
-        double fromPos, toPos;
-        if (sidebarCollapsed) {
-            // Expanding — make left pane visible before animating
-            leftPane.setVisible(true);
-            leftPane.setManaged(true);
-            fromPos = splitPane.getDividerPositions()[0];
-            toPos = savedDividerPosition;
-        } else {
-            // Collapsing — save current position
-            savedDividerPosition = splitPane.getDividerPositions()[0];
-            fromPos = savedDividerPosition;
-            toPos = 0.0;
-        }
-
-        DoubleProperty dividerProxy = new SimpleDoubleProperty(fromPos);
-        dividerProxy.addListener((obs, oldVal, newVal) ->
-            splitPane.setDividerPositions(newVal.doubleValue())
-        );
-
-        Timeline timeline = new Timeline(
-            new KeyFrame(Duration.ZERO, new KeyValue(dividerProxy, fromPos)),
-            new KeyFrame(Duration.millis(250), new KeyValue(dividerProxy, toPos, Interpolator.EASE_BOTH))
-        );
-        timeline.setOnFinished(e -> {
-            if (!sidebarCollapsed) {
-                // Just finished collapsing
-                leftPane.setVisible(false);
-                leftPane.setManaged(false);
-            }
-            sidebarCollapsed = !sidebarCollapsed;
-            sidebarAnimating = false;
-        });
-        timeline.play();
-    }
 
     @FXML
     private void handleAddExpense() {
@@ -2393,6 +2406,8 @@ public class MainController {
         animateChartFadeIn(recurringVsOneTimeChart);
     }
 
+    private static final int MAX_PIE_SLICES = 8;
+
     private void updateCategoryPieChart(List<Expense> chartExpenses) {
         Map<String, Double> categoryMap = chartExpenses.stream()
             .collect(Collectors.groupingBy(
@@ -2401,12 +2416,24 @@ public class MainController {
 
         double pieTotal = categoryMap.values().stream().mapToDouble(Double::doubleValue).sum();
 
-        ObservableList<PieChart.Data> pieChartData = FXCollections.observableArrayList();
         List<Map.Entry<String, Double>> sortedEntries = categoryMap.entrySet().stream()
             .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
             .collect(Collectors.toList());
 
-        for (Map.Entry<String, Double> entry : sortedEntries) {
+        // Group small categories into "Other" to prevent label overlap
+        List<Map.Entry<String, Double>> displayEntries;
+        double otherTotal = 0;
+        if (sortedEntries.size() > MAX_PIE_SLICES) {
+            displayEntries = new ArrayList<>(sortedEntries.subList(0, MAX_PIE_SLICES));
+            for (int i = MAX_PIE_SLICES; i < sortedEntries.size(); i++) {
+                otherTotal += sortedEntries.get(i).getValue();
+            }
+        } else {
+            displayEntries = sortedEntries;
+        }
+
+        ObservableList<PieChart.Data> pieChartData = FXCollections.observableArrayList();
+        for (Map.Entry<String, Double> entry : displayEntries) {
             final String color = getCategoryColor(entry.getKey());
             final String category = entry.getKey();
             final double amount = entry.getValue();
@@ -2425,7 +2452,27 @@ public class MainController {
             });
             pieChartData.add(data);
         }
+
+        if (otherTotal > 0) {
+            final double otherAmt = otherTotal;
+            double otherPct = pieTotal > 0 ? (otherAmt / pieTotal) * 100 : 0;
+            PieChart.Data otherData = new PieChart.Data(
+                "Other (" + String.format("%.0f%%", otherPct) + ")",
+                otherAmt);
+            otherData.nodeProperty().addListener((obs, oldNode, newNode) -> {
+                if (newNode != null) {
+                    newNode.setStyle("-fx-pie-color: #888888;");
+                    Tooltip tooltip = new Tooltip("Other: " + fmt(otherAmt)
+                        + " (" + String.format("%.1f%%", pieTotal > 0 ? (otherAmt / pieTotal) * 100 : 0) + ")");
+                    tooltip.setStyle("-fx-font-size: 13px;");
+                    Tooltip.install(newNode, tooltip);
+                }
+            });
+            pieChartData.add(otherData);
+        }
+
         categoryChart.setData(pieChartData);
+        categoryChart.setLabelLineLength(10);
         categoryChart.setAnimated(true);
     }
 
@@ -4104,6 +4151,9 @@ public class MainController {
         filterMinAmount.clear();
         filterMaxAmount.clear();
         searchField.clear();
+        filterFieldsBox.setVisible(false);
+        filterFieldsBox.setManaged(false);
+        filterToggleButton.setText("Filters");
     }
 
     private String fmt(double amount) {
@@ -4118,13 +4168,14 @@ public class MainController {
     private PauseTransition messageFade;
 
     private void showMessage(String message, boolean isError) {
-        // Route to the correct label based on the active tab
+        // Route to the correct label based on the active view
         Label target;
-        int activeTab = tabPane.getSelectionModel().getSelectedIndex();
-        if (activeTab == 2) {
+        if ("import".equals(currentViewName)) {
             target = importErrorLabel;
-        } else if (activeTab == 1) {
+        } else if ("recurring".equals(currentViewName)) {
             target = addRecurringErrorLabel;
+        } else if ("dashboard".equals(currentViewName)) {
+            target = errorLabel;
         } else {
             target = expenseErrorLabel;
         }
