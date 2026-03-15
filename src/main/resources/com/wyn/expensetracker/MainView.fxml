@@ -363,7 +363,7 @@
                     </TableView>
 
                     <!-- Analytics (collapsed by default) -->
-                    <TitledPane text="Analytics" expanded="false" styleClass="analytics-titled-pane">
+                    <TitledPane fx:id="analyticsTitledPane" text="Analytics" expanded="false" styleClass="analytics-titled-pane">
                         <VBox spacing="5" styleClass="panel-box">
                             <HBox spacing="10">
                                 <Label text="View by:" styleClass="form-label"/>
