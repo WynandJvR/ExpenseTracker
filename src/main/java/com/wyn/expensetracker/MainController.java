@@ -14,6 +14,8 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.chart.*;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
@@ -63,6 +65,8 @@ public class MainController {
     @FXML private Button deleteButton;
     @FXML private Button undoButton;
     @FXML private Button redoButton;
+    @FXML private HBox detailBar;
+    @FXML private TextField detailText;
 
     // --- Left panel: Recurring tab ---
     @FXML private TextField addRecurringAmountField;
@@ -125,12 +129,12 @@ public class MainController {
     @FXML private FlowPane trendChartLegend;
     @FXML private Label statusSaveLabel;
     @FXML private Label statusCountLabel;
-    @FXML private Label dashTotalSpent;
-    @FXML private Label dashTopCategory;
-    @FXML private Label dashTopCategoryAmount;
-    @FXML private Label dashBudgetStatus;
-    @FXML private Label dashBudgetSubtitle;
-    @FXML private Label dashMonthChange;
+    @FXML private TextField dashTotalSpent;
+    @FXML private TextField dashTopCategory;
+    @FXML private TextField dashTopCategoryAmount;
+    @FXML private TextField dashBudgetStatus;
+    @FXML private TextField dashBudgetSubtitle;
+    @FXML private TextField dashMonthChange;
     @FXML private TableView<CategoryTotal> categoryTable;
     @FXML private TableColumn<CategoryTotal, String> categoryNameColumn;
     @FXML private TableColumn<CategoryTotal, Double> categoryTotalColumn;
@@ -236,6 +240,10 @@ public class MainController {
         setupListeners();
         setupEmptyStates();
         setupRulesTable();
+
+        // Make remaining labels copyable via right-click
+        makeLabelCopyable(totalLabel);
+        makeLabelCopyable(moneySavedLabel);
 
         // Setup navigation
         setupNavigation();
@@ -460,7 +468,9 @@ public class MainController {
                 makeRecurring.setVisible(item != null && item.getRecurringId() == null
                     && !(item instanceof RecurringExpense));
             });
-            menu.getItems().addAll(toggleExclude, toggleIncome, toggleRefund, new SeparatorMenuItem(), makeRecurring);
+            MenuItem copyItem = new MenuItem("Copy");
+            copyItem.setOnAction(e -> copySelectedExpense(expenseTable));
+            menu.getItems().addAll(copyItem, new SeparatorMenuItem(), toggleExclude, toggleIncome, toggleRefund, new SeparatorMenuItem(), makeRecurring);
             row.setContextMenu(menu);
             return row;
         });
@@ -654,6 +664,22 @@ public class MainController {
     }
 
     private void setupListeners() {
+        // Expense table selection — show selectable detail bar
+        expenseTable.getSelectionModel().selectedItemProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal != null) {
+                detailBar.setVisible(true);
+                detailBar.setManaged(true);
+                detailText.setText(String.format("%s  |  %s  |  %s  |  %s",
+                    fmt(newVal.getAmount()), newVal.getCategory(),
+                    newVal.getDate().format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy")),
+                    newVal.getDescription() != null ? newVal.getDescription() : ""));
+            } else {
+                detailBar.setVisible(false);
+                detailBar.setManaged(false);
+                detailText.setText("");
+            }
+        });
+
         // Recurring table selection
         recurringTable.getSelectionModel().selectedItemProperty().addListener((obs, oldSelection, newSelection) -> {
             if (newSelection != null) {
@@ -749,14 +775,32 @@ public class MainController {
             if (e.getCode() == KeyCode.ENTER) addButton.fire();
         });
 
-        // Delete key on expense table
+        // Delete and Copy keys on expense table
         expenseTable.setOnKeyPressed(e -> {
             if (e.getCode() == KeyCode.DELETE) deleteButton.fire();
+            if (e.isControlDown() && e.getCode() == KeyCode.C) {
+                copySelectedExpense(expenseTable);
+                e.consume();
+            }
+        });
+
+        // Copy key on income table
+        incomeTable.setOnKeyPressed(e -> {
+            if (e.getCode() == KeyCode.DELETE) handleDeleteIncome();
+            if (e.isControlDown() && e.getCode() == KeyCode.C) {
+                copySelectedExpense(incomeTable);
+                e.consume();
+            }
         });
     }
 
     public void setupKeyboardShortcuts(Scene scene) {
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.isControlDown() && event.isShiftDown() && event.getCode() == KeyCode.C) {
+                showCopyableViewContent();
+                event.consume();
+                return;
+            }
             if (event.isControlDown()) {
                 Node focused = scene.getFocusOwner();
                 boolean inTextField = focused instanceof TextField || focused instanceof TextArea;
@@ -1416,7 +1460,15 @@ public class MainController {
         cancelBtn.getStyleClass().add("danger-button");
         cancelBtn.setOnAction(e -> dialog.close());
 
-        HBox actionButtons = new HBox(10, convertBtn, cancelBtn);
+        // Copy All button — dumps all patterns into a selectable text dialog
+        Button copyAllBtn = new Button("Copy All");
+        copyAllBtn.getStyleClass().add("secondary-button");
+        copyAllBtn.setTooltip(new Tooltip("Copy all detected patterns as text (Ctrl+Shift+C)"));
+        copyAllBtn.setOnAction(e -> showCopyablePatterns(patterns));
+
+        HBox actionButtons = new HBox(10, convertBtn, cancelBtn, new javafx.scene.layout.Region() {{
+            HBox.setHgrow(this, javafx.scene.layout.Priority.ALWAYS);
+        }}, copyAllBtn);
         actionButtons.setAlignment(javafx.geometry.Pos.CENTER_RIGHT);
 
         VBox content = new VBox(12, header, subtitle, patternTable, selectionButtons,
@@ -1426,6 +1478,13 @@ public class MainController {
 
         Scene scene = new Scene(content, 700, 500);
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        // Ctrl+Shift+C in this dialog too
+        scene.addEventFilter(KeyEvent.KEY_PRESSED, ev -> {
+            if (ev.isControlDown() && ev.isShiftDown() && ev.getCode() == KeyCode.C) {
+                showCopyablePatterns(patterns);
+                ev.consume();
+            }
+        });
         dialog.setScene(scene);
         dialog.showAndWait();
     }
@@ -2124,9 +2183,9 @@ public class MainController {
             dashTopCategory.setText("-");
             dashTopCategoryAmount.setText("");
             dashBudgetStatus.setText("-");
-            dashBudgetStatus.getStyleClass().setAll("dashboard-card-value");
+            dashBudgetStatus.getStyleClass().setAll("dashboard-card-value-field");
             dashMonthChange.setText("-");
-            dashMonthChange.getStyleClass().setAll("dashboard-card-value");
+            dashMonthChange.getStyleClass().setAll("dashboard-card-value-field");
             return;
         }
 
@@ -2294,15 +2353,15 @@ public class MainController {
             int pctUsed = (int) Math.round((totalBudgeted / totalBudget) * 100);
             if (remaining >= 0) {
                 dashBudgetStatus.setText(fmt(remaining) + " left");
-                dashBudgetStatus.getStyleClass().setAll("dashboard-card-value", "dashboard-positive");
+                dashBudgetStatus.getStyleClass().setAll("dashboard-card-value-field", "dashboard-positive");
             } else {
                 dashBudgetStatus.setText(fmt(Math.abs(remaining)) + " over");
-                dashBudgetStatus.getStyleClass().setAll("dashboard-card-value", "dashboard-negative");
+                dashBudgetStatus.getStyleClass().setAll("dashboard-card-value-field", "dashboard-negative");
             }
             dashBudgetSubtitle.setText(String.format("%d%% of %s budget used", pctUsed, fmt(totalBudget)));
         } else {
             dashBudgetStatus.setText("No budgets");
-            dashBudgetStatus.getStyleClass().setAll("dashboard-card-value");
+            dashBudgetStatus.getStyleClass().setAll("dashboard-card-value-field");
             dashBudgetSubtitle.setText("");
         }
 
@@ -2312,11 +2371,11 @@ public class MainController {
             double pct = (change / prevTotal) * 100;
             String arrow = change >= 0 ? "\u25B2" : "\u25BC";
             dashMonthChange.setText(String.format("%s %.0f%%", arrow, Math.abs(pct)));
-            dashMonthChange.getStyleClass().setAll("dashboard-card-value",
+            dashMonthChange.getStyleClass().setAll("dashboard-card-value-field",
                 change <= 0 ? "dashboard-positive" : "dashboard-negative");
         } else {
             dashMonthChange.setText("-");
-            dashMonthChange.getStyleClass().setAll("dashboard-card-value");
+            dashMonthChange.getStyleClass().setAll("dashboard-card-value-field");
         }
     }
 
@@ -4260,6 +4319,32 @@ public class MainController {
         filterToggleButton.setText("Filters");
     }
 
+    private void copySelectedExpense(TableView<Expense> table) {
+        Expense selected = table.getSelectionModel().getSelectedItem();
+        if (selected == null) return;
+        String text = String.format("%s\t%s\t%s\t%s",
+            fmt(selected.getAmount()), selected.getCategory(),
+            selected.getDate().format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy")),
+            selected.getDescription() != null ? selected.getDescription() : "");
+        ClipboardContent content = new ClipboardContent();
+        content.putString(text);
+        Clipboard.getSystemClipboard().setContent(content);
+        showMessage("Copied to clipboard", false);
+    }
+
+    /** Add right-click "Copy" context menu to a label. */
+    private void makeLabelCopyable(Label label) {
+        ContextMenu menu = new ContextMenu();
+        MenuItem copy = new MenuItem("Copy");
+        copy.setOnAction(e -> {
+            ClipboardContent content = new ClipboardContent();
+            content.putString(label.getText());
+            Clipboard.getSystemClipboard().setContent(content);
+        });
+        menu.getItems().add(copy);
+        label.setContextMenu(menu);
+    }
+
     private String fmt(double amount) {
         return currencySymbol + String.format("%.2f", amount);
     }
@@ -4323,6 +4408,115 @@ public class MainController {
         showKeyboardShortcuts();
     }
 
+    private void showCopyablePatterns(List<RecurringPatternDetector.DetectedPattern> patterns) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Detected Recurring Patterns\n");
+        sb.append("===========================\n\n");
+        sb.append(String.format("%-30s %-15s %-12s %-12s %-8s %-12s\n",
+            "Description", "Category", "Avg Amount", "Frequency", "Count", "First Seen"));
+        sb.append("-".repeat(89)).append("\n");
+        for (RecurringPatternDetector.DetectedPattern p : patterns) {
+            sb.append(String.format("%-30s %-15s %-12s %-12s %-8d %-12s\n",
+                truncate(p.getDescription(), 30),
+                truncate(p.getCategory(), 15),
+                fmt(p.getAverageAmount()),
+                p.getFrequency(),
+                p.getOccurrences(),
+                p.getEarliestDate()));
+        }
+        sb.append("\n").append(patterns.size()).append(" pattern(s) detected.\n");
+
+        TextArea textArea = new TextArea(sb.toString());
+        textArea.setEditable(false);
+        textArea.setWrapText(false);
+        textArea.setStyle("-fx-font-family: monospace; -fx-font-size: 13px; -fx-control-inner-background: #2A2A2A; -fx-text-fill: #E0E0E0;");
+        textArea.setPrefHeight(400);
+        textArea.setPrefWidth(700);
+        textArea.selectAll();
+
+        Alert dialog = new Alert(Alert.AlertType.NONE);
+        dialog.initOwner(stage);
+        dialog.setTitle("Detected Patterns — Select & Copy");
+        dialog.setHeaderText("All text is selectable. Use Ctrl+A then Ctrl+C to copy.");
+        dialog.getDialogPane().setContent(textArea);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        dialog.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        dialog.showAndWait();
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, max - 3) + "...";
+    }
+
+    private void showCopyableViewContent() {
+        StringBuilder sb = new StringBuilder();
+
+        switch (currentViewName) {
+            case "dashboard" -> {
+                sb.append("=== Dashboard ===\n\n");
+                sb.append("Total Spent: ").append(dashTotalSpent.getText()).append("\n");
+                sb.append("Top Category: ").append(dashTopCategory.getText())
+                    .append("  ").append(dashTopCategoryAmount.getText()).append("\n");
+                sb.append("Budget Status: ").append(dashBudgetStatus.getText())
+                    .append("  ").append(dashBudgetSubtitle.getText()).append("\n");
+                sb.append("vs Last Month: ").append(dashMonthChange.getText()).append("\n");
+                sb.append("\n").append(totalLabel.getText()).append("\n");
+                sb.append(moneySavedLabel.getText()).append("\n");
+                if (!incomeTable.getItems().isEmpty()) {
+                    sb.append("\n--- Income Transactions ---\n");
+                    for (Expense e : incomeTable.getItems()) {
+                        sb.append(String.format("%s\t%s\t%s\t%s\n",
+                            fmt(e.getAmount()), e.getCategory(), e.getDate(), e.getDescription()));
+                    }
+                }
+            }
+            case "expenses" -> {
+                sb.append("=== Expenses ===\n\n");
+                sb.append("Amount\tCategory\tDate\tDescription\n");
+                sb.append("------\t--------\t----\t-----------\n");
+                for (Expense e : expenseTable.getItems()) {
+                    sb.append(String.format("%s\t%s\t%s\t%s\n",
+                        fmt(e.getAmount()), e.getCategory(),
+                        e.getDate().format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy")),
+                        e.getDescription() != null ? e.getDescription() : ""));
+                }
+                sb.append(String.format("\n%d expenses shown\n", expenseTable.getItems().size()));
+            }
+            case "recurring" -> {
+                sb.append("=== Recurring Expenses ===\n\n");
+                sb.append("Amount\tCategory\tStart Date\tDescription\tFrequency\tEnd Date\n");
+                for (RecurringExpense r : recurringTable.getItems()) {
+                    sb.append(String.format("%s\t%s\t%s\t%s\t%s\t%s\n",
+                        fmt(r.getAmount()), r.getCategory(), r.getDate(),
+                        r.getDescription(), r.getFrequency(),
+                        r.getEndDate() != null ? r.getEndDate() : "None"));
+                }
+            }
+            default -> {
+                sb.append("=== ").append(currentViewName).append(" ===\n\n");
+                sb.append("Use Ctrl+C on a selected row to copy it.\n");
+            }
+        }
+
+        TextArea textArea = new TextArea(sb.toString());
+        textArea.setEditable(false);
+        textArea.setWrapText(false);
+        textArea.setStyle("-fx-font-family: monospace; -fx-font-size: 13px; -fx-control-inner-background: #2A2A2A; -fx-text-fill: #E0E0E0;");
+        textArea.setPrefHeight(450);
+        textArea.setPrefWidth(700);
+        textArea.selectAll();
+
+        Alert dialog = new Alert(Alert.AlertType.NONE);
+        dialog.initOwner(stage);
+        dialog.setTitle("View Content — Select & Copy");
+        dialog.setHeaderText("All text is selectable. Press Ctrl+A then Ctrl+C to copy everything.");
+        dialog.getDialogPane().setContent(textArea);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        dialog.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        dialog.showAndWait();
+    }
+
     private void showKeyboardShortcuts() {
         Alert help = new Alert(Alert.AlertType.INFORMATION);
         help.initOwner(stage);
@@ -4339,6 +4533,7 @@ public class MainController {
             {"Ctrl+E", "Export to Excel"},
             {"Ctrl+Z", "Undo"},
             {"Ctrl+Y", "Redo"},
+            {"Ctrl+Shift+C", "Copy all view content (selectable)"},
             {"Ctrl+/  or  F1", "Show this help"},
             {"Alt+Left", "Previous month"},
             {"Alt+Right", "Next month"},
