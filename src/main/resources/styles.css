@@ -565,6 +565,36 @@
     -fx-font-weight: bold;
 }
 
+/* Selectable dashboard value fields (TextField styled as label) */
+.dashboard-card-value-field {
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+    -fx-cursor: text;
+}
+
+.dashboard-card-value-field:focused {
+    -fx-background-color: rgba(92, 107, 192, 0.1);
+    -fx-border-color: transparent;
+}
+
+.dashboard-card-subtitle-field {
+    -fx-text-fill: #A0A0A0;
+    -fx-font-size: 11px;
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+    -fx-cursor: text;
+}
+
+.dashboard-card-subtitle-field:focused {
+    -fx-background-color: rgba(92, 107, 192, 0.1);
+    -fx-border-color: transparent;
+}
+
 .dashboard-card-subtitle {
     -fx-text-fill: #A0A0A0;
     -fx-font-size: 11px;
@@ -599,6 +629,33 @@
 }
 
 /* Empty state labels */
+/* Detail bar for selected row */
+.detail-bar {
+    -fx-background-color: #2A2A2A;
+    -fx-border-color: #3A3A3A;
+    -fx-border-width: 1;
+    -fx-background-radius: 5;
+    -fx-border-radius: 5;
+}
+
+.detail-text-field {
+    -fx-background-color: transparent;
+    -fx-text-fill: #E0E0E0;
+    -fx-font-size: 13px;
+    -fx-border-color: transparent;
+    -fx-padding: 2 4;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.detail-text-field:focused {
+    -fx-background-color: #333333;
+    -fx-border-color: #5C6BC0;
+    -fx-border-width: 1;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+}
+
 .empty-state-label {
     -fx-text-fill: #757575;
     -fx-font-size: 14px;

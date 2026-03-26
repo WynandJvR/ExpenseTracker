@@ -66,21 +66,21 @@
                     <HBox fx:id="dashboardCards" spacing="12" alignment="CENTER_LEFT">
                         <VBox styleClass="dashboard-card dashboard-card-spent" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
                             <Label text="Total Spent" styleClass="dashboard-card-title"/>
-                            <Label fx:id="dashTotalSpent" text="0.00" styleClass="dashboard-card-value"/>
+                            <TextField fx:id="dashTotalSpent" text="0.00" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
                         </VBox>
                         <VBox styleClass="dashboard-card dashboard-card-top" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
                             <Label text="Top Category" styleClass="dashboard-card-title"/>
-                            <Label fx:id="dashTopCategory" text="-" styleClass="dashboard-card-value"/>
-                            <Label fx:id="dashTopCategoryAmount" text="" styleClass="dashboard-card-subtitle"/>
+                            <TextField fx:id="dashTopCategory" text="-" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+                            <TextField fx:id="dashTopCategoryAmount" text="" editable="false" styleClass="dashboard-card-subtitle-field" alignment="CENTER"/>
                         </VBox>
                         <VBox styleClass="dashboard-card dashboard-card-budget" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
                             <Label text="Budget Status" styleClass="dashboard-card-title"/>
-                            <Label fx:id="dashBudgetStatus" text="-" styleClass="dashboard-card-value"/>
-                            <Label fx:id="dashBudgetSubtitle" text="" styleClass="dashboard-card-subtitle"/>
+                            <TextField fx:id="dashBudgetStatus" text="-" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+                            <TextField fx:id="dashBudgetSubtitle" text="" editable="false" styleClass="dashboard-card-subtitle-field" alignment="CENTER"/>
                         </VBox>
                         <VBox styleClass="dashboard-card dashboard-card-trend" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
                             <Label text="vs Last Month" styleClass="dashboard-card-title"/>
-                            <Label fx:id="dashMonthChange" text="-" styleClass="dashboard-card-value"/>
+                            <TextField fx:id="dashMonthChange" text="-" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
                         </VBox>
                     </HBox>
 
@@ -212,6 +212,13 @@
                             </TableColumn>
                         </columns>
                     </TableView>
+
+                    <!-- Selectable detail bar for selected expense -->
+                    <HBox fx:id="detailBar" spacing="8" alignment="CENTER_LEFT" visible="false" managed="false" styleClass="detail-bar">
+                        <padding><Insets top="6" right="10" bottom="6" left="10"/></padding>
+                        <Label text="Selected:" styleClass="form-label"/>
+                        <TextField fx:id="detailText" editable="false" styleClass="detail-text-field" HBox.hgrow="ALWAYS"/>
+                    </HBox>
                 </VBox>
             </ScrollPane>
 
