@@ -123,7 +123,10 @@ public class RecurringPatternDetector {
 
     private boolean amountsAreSimilar(List<Expense> group) {
         double[] amounts = group.stream().mapToDouble(Expense::getAmount).sorted().toArray();
-        double median = amounts[amounts.length / 2];
+        int mid = amounts.length / 2;
+        double median = (amounts.length % 2 == 0)
+            ? (amounts[mid - 1] + amounts[mid]) / 2.0
+            : amounts[mid];
         double tolerance = median * 0.10; // 10% tolerance
 
         for (double amount : amounts) {
