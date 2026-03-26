@@ -3558,6 +3558,9 @@ public class MainController {
         StackPane wrapper = new StackPane(originalRoot, overlay);
         scene.setRoot(wrapper);
 
+        // Save original close handler so we can restore it after OCR completes
+        javafx.event.EventHandler<javafx.stage.WindowEvent> originalCloseHandler = stage.getOnCloseRequest();
+
         Thread ocrThread = new Thread(() -> {
             if (Thread.currentThread().isInterrupted()) return;
             try {
@@ -3579,6 +3582,7 @@ public class MainController {
 
                 if (Thread.currentThread().isInterrupted()) return;
                 Platform.runLater(() -> {
+                    stage.setOnCloseRequest(originalCloseHandler);
                     wrapper.getChildren().clear();
                     scene.setRoot(originalRoot);
 
@@ -3611,6 +3615,7 @@ public class MainController {
             } catch (Exception e) {
                 if (Thread.currentThread().isInterrupted()) return;
                 Platform.runLater(() -> {
+                    stage.setOnCloseRequest(originalCloseHandler);
                     wrapper.getChildren().clear();
                     scene.setRoot(originalRoot);
                     showMessage("OCR failed: " + e.getMessage(), true);
@@ -3620,10 +3625,10 @@ public class MainController {
         ocrThread.setDaemon(true);
         ocrThread.start();
 
-        // Clean up overlay if window is closed during OCR
+        // Interrupt OCR thread if window is closed mid-scan, then delegate to original handler
         stage.setOnCloseRequest(e -> {
             ocrThread.interrupt();
-            saveUIState();
+            if (originalCloseHandler != null) originalCloseHandler.handle(e);
         });
     }
 
