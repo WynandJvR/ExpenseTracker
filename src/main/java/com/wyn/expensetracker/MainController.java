@@ -129,6 +129,7 @@ public class MainController {
     @FXML private Label dashTopCategory;
     @FXML private Label dashTopCategoryAmount;
     @FXML private Label dashBudgetStatus;
+    @FXML private Label dashBudgetSubtitle;
     @FXML private Label dashMonthChange;
     @FXML private TableView<CategoryTotal> categoryTable;
     @FXML private TableColumn<CategoryTotal, String> categoryNameColumn;
@@ -970,7 +971,8 @@ public class MainController {
             }
             refreshTable();
             resetExpenseForm();
-            showMessage("Expense added successfully!", false);
+            showMessage(String.format("Added %s to %s on %s",
+                fmt(amount), category, date.format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy"))), false);
         } catch (NumberFormatException ex) {
             showMessage("Invalid amount: Please enter a valid number (e.g., 10.99)", true);
         } catch (Exception ex) {
@@ -1742,7 +1744,7 @@ public class MainController {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && textField != null) { setGraphic(textField); setText(null); }
-                else { setText(item.toString()); setGraphic(null); setAlignment(Pos.CENTER_RIGHT); }
+                else { setText(fmt(item)); setGraphic(null); setAlignment(Pos.CENTER_RIGHT); }
             }
         });
     }
@@ -1873,7 +1875,11 @@ public class MainController {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && picker != null) { setGraphic(picker); setText(null); }
-                else { setText(item.toString()); setGraphic(null); setAlignment(Pos.CENTER); }
+                else {
+                    setText(item.format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy")));
+                    setGraphic(null);
+                    setAlignment(Pos.CENTER);
+                }
             }
         });
     }
@@ -1925,7 +1931,17 @@ public class MainController {
                 super.updateItem(item, empty);
                 if (empty) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && textField != null) { setGraphic(textField); setText(null); }
-                else { setText(item != null ? item : ""); setGraphic(null); setAlignment(Pos.CENTER_LEFT); }
+                else {
+                    String text = item != null ? item : "";
+                    setText(text);
+                    setGraphic(null);
+                    setAlignment(Pos.CENTER_LEFT);
+                    if (text.length() > 30) {
+                        setTooltip(new Tooltip(text));
+                    } else {
+                        setTooltip(null);
+                    }
+                }
             }
         });
     }
@@ -2258,7 +2274,8 @@ public class MainController {
                 .max(Map.Entry.comparingByValue()).orElse(null);
             if (top != null) {
                 dashTopCategory.setText(top.getKey());
-                dashTopCategoryAmount.setText(fmt(top.getValue()));
+                int topPct = total > 0 ? (int) Math.round((top.getValue() / total) * 100) : 0;
+                dashTopCategoryAmount.setText(fmt(top.getValue()) + " (" + topPct + "%)");
             }
         }
 
@@ -2274,6 +2291,7 @@ public class MainController {
         }
         if (totalBudget > 0) {
             double remaining = totalBudget - totalBudgeted;
+            int pctUsed = (int) Math.round((totalBudgeted / totalBudget) * 100);
             if (remaining >= 0) {
                 dashBudgetStatus.setText(fmt(remaining) + " left");
                 dashBudgetStatus.getStyleClass().setAll("dashboard-card-value", "dashboard-positive");
@@ -2281,9 +2299,11 @@ public class MainController {
                 dashBudgetStatus.setText(fmt(Math.abs(remaining)) + " over");
                 dashBudgetStatus.getStyleClass().setAll("dashboard-card-value", "dashboard-negative");
             }
+            dashBudgetSubtitle.setText(String.format("%d%% of %s budget used", pctUsed, fmt(totalBudget)));
         } else {
             dashBudgetStatus.setText("No budgets");
             dashBudgetStatus.getStyleClass().setAll("dashboard-card-value");
+            dashBudgetSubtitle.setText("");
         }
 
         // Month-over-month change
@@ -3547,8 +3567,14 @@ public class MainController {
             .filter(e -> !e.isExcluded() && !e.isIncome() && !e.isRefund())
             .mapToDouble(Expense::getAmount).sum();
 
+        String monthLabel = "this month";
+        if (yearCombo.getValue() != null && monthCombo.getValue() != null) {
+            monthLabel = monthCombo.getValue().getDisplayName(TextStyle.SHORT, Locale.getDefault())
+                + " " + yearCombo.getValue();
+        }
+
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("%d expenses (%d this month)", total, thisMonth));
+        sb.append(String.format("%d expenses (%d in %s)", total, thisMonth, monthLabel));
         sb.append(String.format("  |  Month total: %s", fmt(monthTotal)));
 
         // Show budget remaining if income is set
