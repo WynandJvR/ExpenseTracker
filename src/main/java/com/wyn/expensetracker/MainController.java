@@ -337,6 +337,7 @@ public class MainController {
     private void setupTables() {
         // Expense table — editable via double-click
         expenseTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        expenseTable.setTooltip(new Tooltip("Double-click a cell to edit  |  Right-click for more options  |  Press F1 for shortcuts"));
         setupEditableAmountColumn();
         setupEditableCategoryColumn();
         setupEditableDateColumn();
@@ -612,17 +613,40 @@ public class MainController {
     }
 
     private void setupEmptyStates() {
-        Label expensePlaceholder = new Label("No expenses for this period.");
-        expensePlaceholder.getStyleClass().add("empty-state-label");
-        expenseTable.setPlaceholder(expensePlaceholder);
+        // Expense table — actionable empty state
+        VBox expenseEmptyState = new VBox(6);
+        expenseEmptyState.setAlignment(Pos.CENTER);
+        Label expenseMsg = new Label("No expenses for this period.");
+        expenseMsg.getStyleClass().add("empty-state-label");
+        Label expenseHint = new Label("Press Ctrl+N to add one, or import from the Import tab.");
+        expenseHint.getStyleClass().add("empty-state-hint");
+        expenseEmptyState.getChildren().addAll(expenseMsg, expenseHint);
+        expenseTable.setPlaceholder(expenseEmptyState);
 
-        Label recurringPlaceholder = new Label("No recurring expenses yet.");
-        recurringPlaceholder.getStyleClass().add("empty-state-label");
-        recurringTable.setPlaceholder(recurringPlaceholder);
+        // Recurring table
+        VBox recurringEmptyState = new VBox(6);
+        recurringEmptyState.setAlignment(Pos.CENTER);
+        Label recurringMsg = new Label("No recurring expenses yet.");
+        recurringMsg.getStyleClass().add("empty-state-label");
+        Label recurringHint = new Label("Add one above, or use \"Detect Recurring Patterns\" to find them automatically.");
+        recurringHint.getStyleClass().add("empty-state-hint");
+        recurringEmptyState.getChildren().addAll(recurringMsg, recurringHint);
+        recurringTable.setPlaceholder(recurringEmptyState);
 
+        // Category table
         Label categoryPlaceholder = new Label("No category data for this period.");
         categoryPlaceholder.getStyleClass().add("empty-state-label");
         categoryTable.setPlaceholder(categoryPlaceholder);
+
+        // Income table
+        VBox incomeEmptyState = new VBox(6);
+        incomeEmptyState.setAlignment(Pos.CENTER);
+        Label incomeMsg = new Label("No income transactions for this period.");
+        incomeMsg.getStyleClass().add("empty-state-label");
+        Label incomeHint = new Label("Import a bank statement or mark expenses as income via right-click.");
+        incomeHint.getStyleClass().add("empty-state-hint");
+        incomeEmptyState.getChildren().addAll(incomeMsg, incomeHint);
+        incomeTable.setPlaceholder(incomeEmptyState);
     }
 
     private void setupListeners() {
@@ -765,9 +789,17 @@ public class MainController {
                         Platform.runLater(() -> searchField.requestFocus());
                         event.consume();
                         break;
+                    case SLASH:
+                        showKeyboardShortcuts();
+                        event.consume();
+                        break;
                     default:
                         break;
                 }
+            }
+            if (event.getCode() == KeyCode.F1) {
+                showKeyboardShortcuts();
+                event.consume();
             }
             if (event.isAltDown()) {
                 switch (event.getCode()) {
@@ -3505,9 +3537,30 @@ public class MainController {
 
     private void updateStatusBar() {
         statusSaveLabel.setText("Last saved: just now");
+
         int total = expenseList.size();
         long thisMonth = filteredData.size();
-        statusCountLabel.setText(String.format("%d expenses total | %d this month", total, thisMonth));
+        double monthTotal = filteredData.stream()
+            .filter(e -> !e.isExcluded() && !e.isIncome() && !e.isRefund())
+            .mapToDouble(Expense::getAmount).sum();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("%d expenses (%d this month)", total, thisMonth));
+        sb.append(String.format("  |  Month total: %s", fmt(monthTotal)));
+
+        // Show budget remaining if income is set
+        YearMonth ym = yearCombo.getValue() != null && monthCombo.getValue() != null
+            ? YearMonth.of(yearCombo.getValue(), monthCombo.getValue()) : null;
+        if (ym != null) {
+            Double monthIncome = incomes.get(ym);
+            double effectiveIncome = (monthIncome != null && monthIncome > 0) ? monthIncome : recurringIncome;
+            if (effectiveIncome > 0) {
+                double remaining = effectiveIncome - monthTotal;
+                sb.append(String.format("  |  Remaining: %s", fmt(remaining)));
+            }
+        }
+
+        statusCountLabel.setText(sb.toString());
     }
 
     private void markSaved() {
@@ -4234,5 +4287,53 @@ public class MainController {
             });
             messageFade.playFromStart();
         }
+    }
+
+    @FXML
+    private void handleShowShortcuts() {
+        showKeyboardShortcuts();
+    }
+
+    private void showKeyboardShortcuts() {
+        Alert help = new Alert(Alert.AlertType.INFORMATION);
+        help.initOwner(stage);
+        help.setTitle("Keyboard Shortcuts");
+        help.setHeaderText("Keyboard Shortcuts");
+        help.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+
+        VBox content = new VBox(12);
+        content.setPadding(new javafx.geometry.Insets(8));
+
+        String[][] shortcuts = {
+            {"Ctrl+N", "Add new expense"},
+            {"Ctrl+F", "Search expenses"},
+            {"Ctrl+E", "Export to Excel"},
+            {"Ctrl+Z", "Undo"},
+            {"Ctrl+Y", "Redo"},
+            {"Ctrl+/  or  F1", "Show this help"},
+            {"Alt+Left", "Previous month"},
+            {"Alt+Right", "Next month"},
+            {"Delete", "Delete selected item"},
+            {"Enter", "Submit form / Confirm edit"},
+            {"Escape", "Cancel inline edit"},
+            {"Double-click", "Edit a cell in the table"},
+            {"Right-click", "Context menu (mark as income, exclude, etc.)"},
+        };
+
+        for (String[] shortcut : shortcuts) {
+            HBox row = new HBox(12);
+            row.setAlignment(Pos.CENTER_LEFT);
+            Label key = new Label(shortcut[0]);
+            key.setMinWidth(160);
+            key.setStyle("-fx-font-weight: bold; -fx-text-fill: #5C6BC0; -fx-font-family: monospace; -fx-font-size: 13px;");
+            Label desc = new Label(shortcut[1]);
+            desc.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 13px;");
+            row.getChildren().addAll(key, desc);
+            content.getChildren().add(row);
+        }
+
+        help.getDialogPane().setContent(content);
+        help.getDialogPane().setPrefWidth(450);
+        help.showAndWait();
     }
 }

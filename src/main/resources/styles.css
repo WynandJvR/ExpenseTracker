@@ -337,6 +337,13 @@
 
 .table-view .table-row-cell:hover {
     -fx-background-color: #4A4A4A;
+    -fx-cursor: hand;
+}
+
+/* Editable cell hover hint */
+.table-view.editable-table .table-row-cell:hover .table-cell {
+    -fx-border-color: transparent transparent rgba(92, 107, 192, 0.3) transparent;
+    -fx-border-width: 0 0 1 0;
 }
 
 .table-view .table-row-cell:selected:hover {
@@ -596,7 +603,13 @@
     -fx-text-fill: #757575;
     -fx-font-size: 14px;
     -fx-font-style: italic;
-    -fx-padding: 20;
+    -fx-padding: 20 20 0 20;
+}
+
+.empty-state-hint {
+    -fx-text-fill: #5C6BC0;
+    -fx-font-size: 12px;
+    -fx-padding: 0 20 20 20;
 }
 
 /* Period navigation */
@@ -693,6 +706,30 @@
     -fx-text-fill: #FFFFFF;
 }
 
+/* Help button */
+.help-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #808080;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-padding: 2 7;
+    -fx-cursor: hand;
+    -fx-border-color: #555555;
+    -fx-border-width: 1;
+    -fx-border-radius: 50;
+    -fx-background-radius: 50;
+    -fx-min-width: 24;
+    -fx-min-height: 24;
+    -fx-max-width: 24;
+    -fx-max-height: 24;
+}
+
+.help-button:hover {
+    -fx-background-color: #3A3A3A;
+    -fx-text-fill: #5C6BC0;
+    -fx-border-color: #5C6BC0;
+}
+
 /* Status bar */
 .status-bar {
     -fx-background-color: #252525;
@@ -703,6 +740,12 @@
 .status-text {
     -fx-text-fill: #808080;
     -fx-font-size: 11px;
+}
+
+.status-hint {
+    -fx-text-fill: #555555;
+    -fx-font-size: 10px;
+    -fx-font-style: italic;
 }
 
 /* Tooltip */

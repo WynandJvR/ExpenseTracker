@@ -19,6 +19,9 @@
             <Button fx:id="redoButton" text="Redo" styleClass="primary-button" disable="true" onAction="#handleRedo">
                 <tooltip><Tooltip text="Redo (Ctrl+Y)"/></tooltip>
             </Button>
+            <Button text="?" styleClass="help-button" onAction="#handleShowShortcuts">
+                <tooltip><Tooltip text="Keyboard Shortcuts (Ctrl+/ or F1)"/></tooltip>
+            </Button>
             <Region HBox.hgrow="ALWAYS"/>
             <Button text="&#x25C0;" styleClass="nav-arrow" onAction="#handlePrevMonth">
                 <tooltip><Tooltip text="Previous Month (Alt+Left)"/></tooltip>
@@ -135,7 +138,7 @@
                     <Label text="Expenses" styleClass="view-title"/>
 
                     <!-- Add Expense Form (collapsible) -->
-                    <TitledPane fx:id="addExpensePane" text="Add New Expense" expanded="false" styleClass="form-titled-pane">
+                    <TitledPane fx:id="addExpensePane" text="Add New Expense" expanded="true" styleClass="form-titled-pane">
                         <VBox fx:id="expenseTabContent" spacing="8" styleClass="panel-box">
                             <padding><Insets top="12" right="12" bottom="12" left="12"/></padding>
 
@@ -192,7 +195,7 @@
                     </VBox>
 
                     <!-- Expense Table -->
-                    <TableView fx:id="expenseTable" styleClass="table-view" VBox.vgrow="ALWAYS" prefHeight="500">
+                    <TableView fx:id="expenseTable" styleClass="table-view,editable-table" VBox.vgrow="ALWAYS" prefHeight="500">
                         <columns>
                             <TableColumn fx:id="amountColumn" text="Amount" prefWidth="100">
                                 <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
@@ -544,6 +547,7 @@
             <Label fx:id="statusSaveLabel" text="Ready" styleClass="status-text"/>
             <Region HBox.hgrow="ALWAYS"/>
             <Label fx:id="statusCountLabel" text="" styleClass="status-text"/>
+            <Label text="F1 for shortcuts" styleClass="status-hint"/>
         </HBox>
     </bottom>
 </BorderPane>
