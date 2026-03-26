@@ -76,6 +76,7 @@
                         <VBox styleClass="dashboard-card dashboard-card-budget" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
                             <Label text="Budget Status" styleClass="dashboard-card-title"/>
                             <Label fx:id="dashBudgetStatus" text="-" styleClass="dashboard-card-value"/>
+                            <Label fx:id="dashBudgetSubtitle" text="" styleClass="dashboard-card-subtitle"/>
                         </VBox>
                         <VBox styleClass="dashboard-card dashboard-card-trend" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
                             <Label text="vs Last Month" styleClass="dashboard-card-title"/>
@@ -222,7 +223,7 @@
                     <Label text="Recurring Expenses" styleClass="view-title"/>
 
                     <!-- Add Recurring Form -->
-                    <TitledPane text="Add New Recurring Expense" expanded="false" styleClass="form-titled-pane">
+                    <TitledPane text="Add New Recurring Expense" expanded="true" styleClass="form-titled-pane">
                         <VBox spacing="8" styleClass="panel-box">
                             <padding><Insets top="12" right="12" bottom="12" left="12"/></padding>
 
