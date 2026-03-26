@@ -16,6 +16,7 @@ public class FileStorage {
     private final String expensesFile;
     private final String categoriesFile;
     private final String incomeFile;
+    private final List<String> parseWarnings = new ArrayList<>();
 
     @FunctionalInterface
     interface IOConsumer<T> {
@@ -35,6 +36,18 @@ public class FileStorage {
         if (!dir.exists()) {
             dir.mkdirs();
         }
+    }
+
+    /** Returns and clears any warnings accumulated during the last load operations. */
+    public List<String> drainParseWarnings() {
+        List<String> warnings = new ArrayList<>(parseWarnings);
+        parseWarnings.clear();
+        return warnings;
+    }
+
+    private void addParseWarning(String message) {
+        System.err.println(message);
+        parseWarnings.add(message);
     }
 
     private void atomicWrite(Path target, IOConsumer<PrintWriter> writer) throws IOException {
@@ -101,7 +114,7 @@ public class FileStorage {
                     if (parts.length >= 5) {
                         double amount = Double.parseDouble(parts[0]);
                         if (amount <= 0) {
-                            System.err.println("Invalid amount at line " + lineNumber + ": " + line);
+                            addParseWarning("Invalid amount at line " + lineNumber + ": " + line);
                             continue;
                         }
                         String category = parts[1];
@@ -131,13 +144,13 @@ public class FileStorage {
                             }
                             expenses.add(exp);
                         } else {
-                            System.err.println("Unknown expense type at line " + lineNumber + ": " + line);
+                            addParseWarning("Unknown expense type at line " + lineNumber + ": " + line);
                         }
                     } else {
-                        System.err.println("Malformed line at " + lineNumber + ": " + line);
+                        addParseWarning("Malformed line at " + lineNumber + ": " + line);
                     }
                 } catch (Exception e) {
-                    System.err.println("Error parsing line " + lineNumber + ": " + e.getMessage());
+                    addParseWarning("Error parsing expense line " + lineNumber + ": " + e.getMessage());
                 }
             }
         }
@@ -158,7 +171,7 @@ public class FileStorage {
                 System.out.println("Migrated " + expenses.size() + " expenses from Excel to text format");
                 return true;
             } catch (Exception e) {
-                System.err.println("Excel migration failed: " + e.getMessage());
+                addParseWarning("Excel migration failed: " + e.getMessage());
             }
         }
         return false;
@@ -190,7 +203,7 @@ public class FileStorage {
                         expenses.add(exp);
                     }
                 } catch (Exception e) {
-                    System.err.println("Error parsing row " + row.getRowNum() + ": " + e.getMessage());
+                    addParseWarning("Error parsing Excel row " + row.getRowNum() + ": " + e.getMessage());
                 }
             }
         }
@@ -202,12 +215,16 @@ public class FileStorage {
         if (!file.exists()) return;
         // Delete oldest backup
         File oldest = new File(filePath + "." + maxBackups);
-        if (oldest.exists()) oldest.delete();
+        if (oldest.exists()) {
+            Files.deleteIfExists(oldest.toPath());
+        }
         // Rotate existing backups
         for (int i = maxBackups - 1; i >= 1; i--) {
             File from = new File(filePath + "." + i);
-            File to = new File(filePath + "." + (i + 1));
-            if (from.exists()) from.renameTo(to);
+            Path toPath = new File(filePath + "." + (i + 1)).toPath();
+            if (from.exists()) {
+                Files.move(from.toPath(), toPath, StandardCopyOption.REPLACE_EXISTING);
+            }
         }
         // Copy current to .1 — let IOException propagate
         Files.copy(file.toPath(), new File(filePath + ".1").toPath(),
@@ -264,15 +281,15 @@ public class FileStorage {
                         YearMonth yearMonth = YearMonth.parse(parts[0]);
                         double income = Double.parseDouble(parts[1]);
                         if (income < 0) {
-                            System.err.println("Invalid income at line " + lineNumber + ": " + line);
+                            addParseWarning("Invalid income at line " + lineNumber + ": " + line);
                             continue;
                         }
                         incomes.put(yearMonth, income);
                     } else {
-                        System.err.println("Malformed line at " + lineNumber + ": " + line);
+                        addParseWarning("Malformed income line at " + lineNumber + ": " + line);
                     }
                 } catch (Exception e) {
-                    System.err.println("Error parsing line " + lineNumber + ": " + e.getMessage());
+                    addParseWarning("Error parsing income line " + lineNumber + ": " + e.getMessage());
                 }
             }
         }
@@ -422,10 +439,10 @@ public class FileStorage {
                             budgets.put(category, budget);
                         }
                     } else {
-                        System.err.println("Malformed budget line at " + lineNumber + ": " + line);
+                        addParseWarning("Malformed budget line at " + lineNumber + ": " + line);
                     }
                 } catch (Exception e) {
-                    System.err.println("Error parsing budget line " + lineNumber + ": " + e.getMessage());
+                    addParseWarning("Error parsing budget line " + lineNumber + ": " + e.getMessage());
                 }
             }
         }

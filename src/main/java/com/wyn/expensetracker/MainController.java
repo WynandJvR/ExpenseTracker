@@ -2348,8 +2348,8 @@ public class MainController {
                     out[0] = now;
                     out[1] = now;
                 } else {
-                    out[0] = monthlyTotals.keySet().stream().min(Comparator.naturalOrder()).get();
-                    out[1] = monthlyTotals.keySet().stream().max(Comparator.naturalOrder()).get();
+                    out[0] = monthlyTotals.keySet().stream().min(Comparator.naturalOrder()).orElse(now);
+                    out[1] = monthlyTotals.keySet().stream().max(Comparator.naturalOrder()).orElse(now);
                 }
                 break;
         }
@@ -3559,9 +3559,11 @@ public class MainController {
         scene.setRoot(wrapper);
 
         Thread ocrThread = new Thread(() -> {
+            if (Thread.currentThread().isInterrupted()) return;
             try {
                 String ocrText = receiptScanner.performOcr(file);
 
+                if (Thread.currentThread().isInterrupted()) return;
                 Platform.runLater(() -> ocrStatusLabel.setText("Parsing items..."));
 
                 List<ImportItem> items = receiptScanner.parseReceipt(ocrText, fallbackDate);
@@ -3575,6 +3577,7 @@ public class MainController {
                     }
                 }
 
+                if (Thread.currentThread().isInterrupted()) return;
                 Platform.runLater(() -> {
                     wrapper.getChildren().clear();
                     scene.setRoot(originalRoot);
@@ -3606,6 +3609,7 @@ public class MainController {
                     }
                 });
             } catch (Exception e) {
+                if (Thread.currentThread().isInterrupted()) return;
                 Platform.runLater(() -> {
                     wrapper.getChildren().clear();
                     scene.setRoot(originalRoot);
@@ -3615,6 +3619,12 @@ public class MainController {
         });
         ocrThread.setDaemon(true);
         ocrThread.start();
+
+        // Clean up overlay if window is closed during OCR
+        stage.setOnCloseRequest(e -> {
+            ocrThread.interrupt();
+            saveUIState();
+        });
     }
 
     @FXML
