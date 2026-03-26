@@ -170,12 +170,23 @@ public class ExpenseManager {
     }
 
     private LocalDate getNextRecurringDate(RecurringExpense expense, LocalDate fromDate) {
+        int originalDay = expense.getDate().getDayOfMonth();
         return switch (expense.getFrequency()) {
             case DAILY -> fromDate.plusDays(1);
             case WEEKLY -> fromDate.plusWeeks(1);
-            case MONTHLY -> fromDate.plusMonths(1);
-            case YEARLY -> fromDate.plusYears(1);
+            case BIWEEKLY -> fromDate.plusWeeks(2);
+            case MONTHLY -> adjustDay(fromDate.plusMonths(1), originalDay);
+            case QUARTERLY -> adjustDay(fromDate.plusMonths(3), originalDay);
+            case YEARLY -> adjustDay(fromDate.plusYears(1), originalDay);
         };
+    }
+
+    /** Preserve the original day-of-month, clamping to month length for short months. */
+    private static LocalDate adjustDay(LocalDate date, int targetDay) {
+        if (targetDay > date.lengthOfMonth()) {
+            return date.withDayOfMonth(date.lengthOfMonth());
+        }
+        return date.withDayOfMonth(targetDay);
     }
 
     private String generateRecurringId(RecurringExpense expense, LocalDate date) {

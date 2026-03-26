@@ -30,5 +30,5 @@ public class RecurringExpense extends Expense {
 }
 
 enum RecurrenceType {
-    DAILY, WEEKLY, MONTHLY, YEARLY
+    DAILY, WEEKLY, BIWEEKLY, MONTHLY, QUARTERLY, YEARLY
 }

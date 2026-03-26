@@ -157,7 +157,9 @@ public class RecurringPatternDetector {
 
         // Check each frequency with tolerance
         if (isWithinRange(avgInterval, 7, 2)) return RecurrenceType.WEEKLY;
+        if (isWithinRange(avgInterval, 14, 3)) return RecurrenceType.BIWEEKLY;
         if (isWithinRange(avgInterval, 30, 5)) return RecurrenceType.MONTHLY;
+        if (isWithinRange(avgInterval, 91, 15)) return RecurrenceType.QUARTERLY;
         if (isWithinRange(avgInterval, 365, 30)) return RecurrenceType.YEARLY;
 
         // Also check consistency — if intervals vary too much, skip
@@ -166,7 +168,9 @@ public class RecurringPatternDetector {
 
         // Try to match on best-fit even with wider range
         if (avgInterval >= 25 && avgInterval <= 35) return RecurrenceType.MONTHLY;
+        if (avgInterval >= 11 && avgInterval <= 17) return RecurrenceType.BIWEEKLY;
         if (avgInterval >= 5 && avgInterval <= 9) return RecurrenceType.WEEKLY;
+        if (avgInterval >= 80 && avgInterval <= 100) return RecurrenceType.QUARTERLY;
         if (avgInterval >= 335 && avgInterval <= 395) return RecurrenceType.YEARLY;
 
         return null;
