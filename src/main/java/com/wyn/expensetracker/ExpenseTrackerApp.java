@@ -1,18 +1,24 @@
 package com.wyn.expensetracker;
 
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
+import javafx.scene.control.TextArea;
 import javafx.scene.image.Image;
 import javafx.stage.Stage;
 
 import java.io.File;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class ExpenseTrackerApp extends Application {
@@ -22,6 +28,19 @@ public class ExpenseTrackerApp extends Application {
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
             System.err.println("Uncaught exception in thread " + t.getName() + ":");
             e.printStackTrace();
+            Platform.runLater(() -> {
+                Alert alert = new Alert(Alert.AlertType.ERROR);
+                alert.setTitle("Unexpected Error");
+                alert.setHeaderText("An unexpected error occurred.");
+                alert.setContentText(e.getMessage());
+                StringWriter sw = new StringWriter();
+                e.printStackTrace(new PrintWriter(sw));
+                TextArea details = new TextArea(sw.toString());
+                details.setEditable(false);
+                details.setWrapText(true);
+                alert.getDialogPane().setExpandableContent(details);
+                alert.showAndWait();
+            });
         });
 
         ExpenseManager manager = new ExpenseManager();
@@ -66,6 +85,20 @@ public class ExpenseTrackerApp extends Application {
         } catch (Exception e) {
             incomes = new HashMap<>();
             System.err.println("Failed to load incomes: " + e.getMessage());
+        }
+
+        // Show parse warnings if any data was malformed
+        List<String> warnings = storage.drainParseWarnings();
+        if (!warnings.isEmpty()) {
+            Alert alert = new Alert(Alert.AlertType.WARNING);
+            alert.setTitle("Data Warnings");
+            alert.setHeaderText(warnings.size() + " issue(s) found while loading data.");
+            alert.setContentText("Some entries were skipped. Expand for details.");
+            TextArea details = new TextArea(String.join("\n", warnings));
+            details.setEditable(false);
+            details.setWrapText(true);
+            alert.getDialogPane().setExpandableContent(details);
+            alert.showAndWait();
         }
 
         // Load FXML and get controller
