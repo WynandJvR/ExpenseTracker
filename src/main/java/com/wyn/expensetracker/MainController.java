@@ -762,7 +762,7 @@ public class MainController {
                         if (!"expenses".equals(currentViewName)) {
                             navExpenses.setSelected(true);
                         }
-                        searchField.requestFocus();
+                        Platform.runLater(() -> searchField.requestFocus());
                         event.consume();
                         break;
                     default:
@@ -2409,6 +2409,13 @@ public class MainController {
     private static final int MAX_PIE_SLICES = 8;
 
     private void updateCategoryPieChart(List<Expense> chartExpenses) {
+        if (chartExpenses.isEmpty()) {
+            categoryChart.setData(FXCollections.observableArrayList());
+            categoryChart.setTitle("Expenses by Category — No data for this period");
+            return;
+        }
+        categoryChart.setTitle("Expenses by Category");
+
         Map<String, Double> categoryMap = chartExpenses.stream()
             .collect(Collectors.groupingBy(
                 Expense::getCategory,

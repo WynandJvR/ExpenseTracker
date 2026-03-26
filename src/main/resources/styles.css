@@ -747,6 +747,14 @@
     -fx-scale-x: 0.95;
 }
 
+.secondary-button:disabled {
+    -fx-background-color: transparent;
+    -fx-text-fill: #555555;
+    -fx-border-color: #3A3A3A;
+    -fx-effect: none;
+    -fx-cursor: default;
+}
+
 /* Analytics inner tab pane */
 .analytics-tab-pane {
     -fx-background-color: transparent;
@@ -1060,6 +1068,12 @@
 .sidebar-nav-button:hover {
     -fx-background-color: #2A2A2A;
     -fx-text-fill: #E0E0E0;
+}
+
+.sidebar-nav-button:focused {
+    -fx-background-color: #2A2A2A;
+    -fx-text-fill: #E0E0E0;
+    -fx-border-color: transparent transparent transparent #7986CB;
 }
 
 .sidebar-nav-button:selected {
