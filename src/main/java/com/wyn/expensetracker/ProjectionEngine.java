@@ -216,8 +216,10 @@ public class ProjectionEngine {
             double monthlyEquivalent = switch (re.getFrequency()) {
                 case DAILY -> re.getAmount() * targetMonth.lengthOfMonth();
                 case WEEKLY -> re.getAmount() * targetMonth.lengthOfMonth() / 7.0;
+                case BIWEEKLY -> re.getAmount() * targetMonth.lengthOfMonth() / 14.0;
                 case MONTHLY -> re.getAmount();
-                case YEARLY -> re.getAmount() / 12;
+                case QUARTERLY -> re.getAmount() / 3.0;
+                case YEARLY -> re.getAmount() / 12.0;
             };
 
             result.merge(re.getCategory(), monthlyEquivalent, Double::sum);

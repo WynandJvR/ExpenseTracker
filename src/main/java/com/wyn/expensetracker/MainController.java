@@ -417,6 +417,9 @@ public class MainController {
                     item.setRefund(!prevRefund);
                     if (item.isRefund() && !item.isIncome()) {
                         item.setIncome(true); // Refunds are income (money received)
+                    } else if (!item.isRefund() && prevRefund) {
+                        // Restore income state from before the refund was set
+                        item.setIncome(prevIncome && !prevRefund);
                     }
                     try {
                         storage.saveExpenses(manager.getExpensesForSave());
