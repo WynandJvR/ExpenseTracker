@@ -12,6 +12,8 @@ import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 
+import javafx.scene.Cursor;
+
 import java.time.Month;
 import java.time.YearMonth;
 import java.time.format.TextStyle;
@@ -36,6 +38,8 @@ public class AnalyticsController {
     @FXML private LineChart<String, Number> yearOverYearChart;
     @FXML private PieChart recurringVsOneTimeChart;
     @FXML private Tab projectionsTab;
+    @FXML private Tab cashFlowTab;
+    @FXML private VBox cashFlowContent;
     @FXML private VBox projectionsContent;
     @FXML private Label projExpenses;
     @FXML private Label projExpensesSubtitle;
@@ -58,6 +62,7 @@ public class AnalyticsController {
     // --- State ---
     private SharedState state;
     private boolean initialized = false;
+    private List<Expense> lastChartExpenses = Collections.emptyList();
 
     @FXML
     public void initialize() {
@@ -75,10 +80,13 @@ public class AnalyticsController {
 
         chartPeriodCombo.valueProperty().addListener((obs, oldVal, newVal) -> updateCharts());
 
-        // Projections tab — lazy compute
+        // Projections and Cash Flow tabs — lazy compute
         analyticsTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
             if (newTab == projectionsTab && state.isProjectionsNeedUpdate()) {
                 updateProjections();
+            }
+            if (newTab == cashFlowTab) {
+                updateCashFlowCalendar();
             }
         });
     }
@@ -110,6 +118,7 @@ public class AnalyticsController {
         YearMonth now = YearMonth.now();
 
         List<Expense> chartExpenses = state.filterExpensesByPeriod(chartPeriod, selectedYear, selectedYearMonth, now);
+        this.lastChartExpenses = chartExpenses;
 
         updateCategoryPieChart(chartExpenses);
         updateMonthlyTrendBarChart(chartExpenses, chartPeriod, selectedYear, selectedMonth, selectedYearMonth, now);
@@ -182,10 +191,17 @@ public class AnalyticsController {
             data.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
                     newNode.setStyle("-fx-pie-color: " + color + ";");
+                    newNode.setCursor(Cursor.HAND);
                     Tooltip tooltip = new Tooltip(category + ": " + fmt(amount)
                         + " (" + String.format("%.1f%%", pieTotal > 0 ? (amount / pieTotal) * 100 : 0) + ")");
                     tooltip.setStyle("-fx-font-size: 13px;");
                     Tooltip.install(newNode, tooltip);
+                    newNode.setOnMouseClicked(event -> {
+                        List<Expense> filtered = lastChartExpenses.stream()
+                            .filter(e -> e.getCategory().equals(category))
+                            .collect(Collectors.toList());
+                        DrillDownDialog.show(state.getStage(), "Category: " + category, filtered, state.getCurrencySymbol());
+                    });
                 }
             });
             pieChartData.add(data);
@@ -197,13 +213,22 @@ public class AnalyticsController {
             PieChart.Data otherData = new PieChart.Data(
                 "Other (" + String.format("%.0f%%", otherPct) + ")",
                 otherAmt);
+            Set<String> topCategories = displayEntries.stream()
+                .map(Map.Entry::getKey).collect(Collectors.toSet());
             otherData.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
                     newNode.setStyle("-fx-pie-color: #888888;");
+                    newNode.setCursor(Cursor.HAND);
                     Tooltip tooltip = new Tooltip("Other: " + fmt(otherAmt)
                         + " (" + String.format("%.1f%%", pieTotal > 0 ? (otherAmt / pieTotal) * 100 : 0) + ")");
                     tooltip.setStyle("-fx-font-size: 13px;");
                     Tooltip.install(newNode, tooltip);
+                    newNode.setOnMouseClicked(event -> {
+                        List<Expense> filtered = lastChartExpenses.stream()
+                            .filter(e -> !topCategories.contains(e.getCategory()))
+                            .collect(Collectors.toList());
+                        DrillDownDialog.show(state.getStage(), "Other Categories", filtered, state.getCurrencySymbol());
+                    });
                 }
             });
             pieChartData.add(otherData);
@@ -319,9 +344,17 @@ public class AnalyticsController {
                     if (newNode != null) {
                         newNode.setStyle("-fx-bar-fill: " + color + ";");
                         if (amt > 0) {
+                            newNode.setCursor(Cursor.HAND);
                             Tooltip tooltip = new Tooltip(category + " (" + barLabel + "): " + fmt(amt));
                             tooltip.setStyle("-fx-font-size: 13px;");
                             Tooltip.install(newNode, tooltip);
+                            newNode.setOnMouseClicked(event -> {
+                                List<Expense> filtered = lastChartExpenses.stream()
+                                    .filter(e -> e.getCategory().equals(category))
+                                    .collect(Collectors.toList());
+                                DrillDownDialog.show(state.getStage(),
+                                    category + " (" + barLabel + ")", filtered, state.getCurrencySymbol());
+                            });
                         }
                     }
                 });
@@ -900,10 +933,17 @@ public class AnalyticsController {
             recurData.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
                     newNode.setStyle("-fx-pie-color: #FF9800;");
+                    newNode.setCursor(Cursor.HAND);
                     Tooltip t = new Tooltip("Recurring: " + fmt(finalRecurringTotal)
                         + " (" + String.format("%.1f%%", recurPct) + ")");
                     t.setStyle("-fx-font-size: 13px;");
                     Tooltip.install(newNode, t);
+                    newNode.setOnMouseClicked(event -> {
+                        List<Expense> filtered = allPeriodExpenses.stream()
+                            .filter(e -> e.getRecurringId() != null)
+                            .collect(Collectors.toList());
+                        DrillDownDialog.show(state.getStage(), "Recurring Expenses", filtered, state.getCurrencySymbol());
+                    });
                 }
             });
 
@@ -912,10 +952,17 @@ public class AnalyticsController {
             oneData.nodeProperty().addListener((obs, oldNode, newNode) -> {
                 if (newNode != null) {
                     newNode.setStyle("-fx-pie-color: #45AAF2;");
+                    newNode.setCursor(Cursor.HAND);
                     Tooltip t = new Tooltip("One-Time: " + fmt(finalOneTimeTotal)
                         + " (" + String.format("%.1f%%", onePct) + ")");
                     t.setStyle("-fx-font-size: 13px;");
                     Tooltip.install(newNode, t);
+                    newNode.setOnMouseClicked(event -> {
+                        List<Expense> filtered = allPeriodExpenses.stream()
+                            .filter(e -> e.getRecurringId() == null)
+                            .collect(Collectors.toList());
+                        DrillDownDialog.show(state.getStage(), "One-Time Expenses", filtered, state.getCurrencySymbol());
+                    });
                 }
             });
 
@@ -927,6 +974,14 @@ public class AnalyticsController {
         if (grandTotal > 0) {
             UIUtils.styleChartLegend(recurringVsOneTimeChart, "#FF9800", "#45AAF2");
         }
+    }
+
+    // ======================== CASH FLOW CALENDAR ========================
+
+    private void updateCashFlowCalendar() {
+        cashFlowContent.getChildren().clear();
+        CashFlowCalendarView calendar = new CashFlowCalendarView(state);
+        cashFlowContent.getChildren().add(calendar);
     }
 
     // ======================== PROJECTIONS ========================

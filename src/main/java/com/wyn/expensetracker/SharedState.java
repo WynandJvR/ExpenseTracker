@@ -29,6 +29,10 @@ public class SharedState {
     private final ObservableList<CategoryTotal> categoryTotals = FXCollections.observableArrayList();
     private final ObservableList<Expense> incomeList = FXCollections.observableArrayList();
     private final ObservableList<ImportLog> importLogs = FXCollections.observableArrayList();
+    private final ObservableList<String> tags = FXCollections.observableArrayList();
+    private final ObservableList<SavingsGoal> savingsGoals = FXCollections.observableArrayList();
+    private final ObservableList<GoalContribution> goalContributions = FXCollections.observableArrayList();
+    private final Set<String> dismissedAnomalyKeys = new HashSet<>();
     private final FilteredList<Expense> filteredData;
 
     // Year list for combo
@@ -94,6 +98,10 @@ public class SharedState {
     public ObservableList<CategoryTotal> getCategoryTotals() { return categoryTotals; }
     public ObservableList<Expense> getIncomeList() { return incomeList; }
     public ObservableList<ImportLog> getImportLogs() { return importLogs; }
+    public ObservableList<String> getTags() { return tags; }
+    public ObservableList<SavingsGoal> getSavingsGoals() { return savingsGoals; }
+    public ObservableList<GoalContribution> getGoalContributions() { return goalContributions; }
+    public Set<String> getDismissedAnomalyKeys() { return dismissedAnomalyKeys; }
     public FilteredList<Expense> getFilteredData() { return filteredData; }
     public ObservableList<Integer> getYearList() { return yearList; }
 

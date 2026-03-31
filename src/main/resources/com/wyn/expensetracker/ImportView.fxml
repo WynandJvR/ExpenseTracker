@@ -23,7 +23,7 @@
             </VBox>
             <VBox spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS">
                 <Label text="Import Bank Statement" styleClass="section-title"/>
-                <Label text="Import transactions from a PDF bank statement or CSV file." styleClass="form-label" wrapText="true"/>
+                <Label text="Import transactions from PDF, CSV, OFX, or QIF bank statements." styleClass="form-label" wrapText="true"/>
                 <Button text="Import Bank Statement..." styleClass="success-button" onAction="#handleImportStatement"/>
             </VBox>
             <VBox spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS">

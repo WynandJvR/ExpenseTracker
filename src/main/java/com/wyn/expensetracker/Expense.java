@@ -1,6 +1,8 @@
 package com.wyn.expensetracker;
 
 import java.time.LocalDate;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 public class Expense {
     private double amount;
@@ -13,6 +15,7 @@ public class Expense {
     private boolean excluded;
     private boolean income;
     private boolean refund;
+    private final Set<String> tags = new LinkedHashSet<>();
 
     public Expense(double amount, String category, LocalDate date, String description) {
         this.amount = amount;
@@ -85,6 +88,37 @@ public class Expense {
 
     public void setRefund(boolean refund) {
         this.refund = refund;
+    }
+
+    public Set<String> getTags() {
+        return tags;
+    }
+
+    public void setTags(Set<String> tags) {
+        this.tags.clear();
+        if (tags != null) {
+            for (String tag : tags) {
+                addTag(tag);
+            }
+        }
+    }
+
+    public void addTag(String tag) {
+        if (tag != null && !tag.trim().isEmpty()) {
+            tags.add(sanitizeTag(tag.trim()));
+        }
+    }
+
+    private static String sanitizeTag(String tag) {
+        return tag.replace("|", "").replace(",", "").replace("\n", "").replace("\r", "");
+    }
+
+    public void removeTag(String tag) {
+        tags.remove(tag);
+    }
+
+    public boolean hasTag(String tag) {
+        return tags.contains(tag);
     }
 
     @Override

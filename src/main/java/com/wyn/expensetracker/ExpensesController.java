@@ -26,10 +26,7 @@ import java.time.Month;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Optional;
+import java.util.*;
 
 public class ExpensesController {
 
@@ -47,11 +44,13 @@ public class ExpensesController {
     @FXML private ComboBox<String> filterCategoryCombo;
     @FXML private TextField filterMinAmount;
     @FXML private TextField filterMaxAmount;
+    @FXML private ComboBox<String> filterTagCombo;
     @FXML private TableView<Expense> expenseTable;
     @FXML private TableColumn<Expense, Double> amountColumn;
     @FXML private TableColumn<Expense, String> expenseCategoryColumn;
     @FXML private TableColumn<Expense, LocalDate> dateColumn;
     @FXML private TableColumn<Expense, String> descriptionColumn;
+    @FXML private TableColumn<Expense, String> tagsColumn;
     @FXML private HBox detailBar;
     @FXML private TextField detailText;
     @FXML private Label expenseErrorLabel;
@@ -88,6 +87,7 @@ public class ExpensesController {
         setupEditableCategoryColumn();
         setupEditableDateColumn();
         setupEditableDescriptionColumn();
+        setupTagsColumn();
 
         // Table items bound to SortedList wrapping filteredData
         SortedList<Expense> sortedData = new SortedList<>(state.getFilteredData());
@@ -189,6 +189,29 @@ public class ExpensesController {
                 }
             });
 
+            MenuItem manageTags = new MenuItem("Manage Tags...");
+            manageTags.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null) {
+                    Set<String> result = new TagEditorPopup(state.getStage(), item.getTags(),
+                        new ArrayList<>(state.getTags())).showAndWait();
+                    if (result != null) {
+                        item.setTags(result);
+                        // Ensure new tags are added to global list
+                        for (String tag : result) {
+                            if (!state.getTags().contains(tag)) state.getTags().add(tag);
+                        }
+                        try {
+                            state.saveExpenses();
+                            state.getStorage().saveTags(new ArrayList<>(state.getTags()));
+                        } catch (IOException ex) {
+                            showMsg("Failed to save tags: " + ex.getMessage(), true);
+                        }
+                        state.requestRefresh();
+                    }
+                }
+            });
+
             MenuItem makeRecurring = new MenuItem("Make Recurring...");
             makeRecurring.setOnAction(e -> {
                 Expense item = row.getItem();
@@ -220,6 +243,7 @@ public class ExpensesController {
 
             menu.getItems().addAll(copyItem, new SeparatorMenuItem(),
                     toggleExclude, toggleIncome, toggleRefund,
+                    new SeparatorMenuItem(), manageTags,
                     new SeparatorMenuItem(), makeRecurring);
             row.setContextMenu(menu);
             return row;
@@ -256,6 +280,12 @@ public class ExpensesController {
         filterMinAmount.textProperty().addListener((obs, oldVal, newVal) -> updateFiltering());
         filterMaxAmount.textProperty().addListener((obs, oldVal, newVal) -> updateFiltering());
 
+        // Filter tag combo
+        updateFilterTagCombo();
+        filterTagCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (!suppressFilterListener) updateFiltering();
+        });
+
         // Empty state
         setupEmptyState();
 
@@ -282,6 +312,7 @@ public class ExpensesController {
 
     public void refresh() {
         updateFilterCategoryCombo();
+        updateFilterTagCombo();
         updateFiltering();
     }
 
@@ -304,6 +335,9 @@ public class ExpensesController {
         String selectedCategory = filterCategoryCombo.getValue();
         boolean filterByCategory = selectedCategory != null && !"All Categories".equals(selectedCategory);
 
+        String selectedTag = filterTagCombo.getValue();
+        boolean filterByTag = selectedTag != null && !"All Tags".equals(selectedTag);
+
         double minAmount = 0;
         double maxAmount = Double.MAX_VALUE;
         try {
@@ -320,12 +354,16 @@ public class ExpensesController {
         state.getFilteredData().setPredicate(expense -> {
             if (!YearMonth.from(expense.getDate()).equals(selectedYearMonth)) return false;
             if (filterByCategory && !expense.getCategory().equals(selectedCategory)) return false;
+            if (filterByTag && !expense.hasTag(selectedTag)) return false;
             if (expense.getAmount() < fMin || expense.getAmount() > fMax) return false;
             if (lowerCaseFilter == null) return true;
+            boolean matchesTags = expense.getTags().stream()
+                .anyMatch(t -> t.toLowerCase().contains(lowerCaseFilter));
             return String.valueOf(expense.getAmount()).contains(lowerCaseFilter) ||
                     expense.getCategory().toLowerCase().contains(lowerCaseFilter) ||
                     expense.getDate().toString().contains(lowerCaseFilter) ||
-                    (expense.getDescription() != null && expense.getDescription().toLowerCase().contains(lowerCaseFilter));
+                    (expense.getDescription() != null && expense.getDescription().toLowerCase().contains(lowerCaseFilter)) ||
+                    matchesTags;
         });
 
         // Update empty state message dynamically
@@ -354,6 +392,23 @@ public class ExpensesController {
                 filterCategoryCombo.setValue(current);
             } else {
                 filterCategoryCombo.setValue("All Categories");
+            }
+        } finally {
+            suppressFilterListener = false;
+        }
+    }
+
+    private void updateFilterTagCombo() {
+        suppressFilterListener = true;
+        try {
+            String current = filterTagCombo.getValue();
+            ObservableList<String> filterItems = FXCollections.observableArrayList("All Tags");
+            filterItems.addAll(state.getTags());
+            filterTagCombo.setItems(filterItems);
+            if (current != null && filterItems.contains(current)) {
+                filterTagCombo.setValue(current);
+            } else {
+                filterTagCombo.setValue("All Tags");
             }
         } finally {
             suppressFilterListener = false;
@@ -466,6 +521,7 @@ public class ExpensesController {
     @FXML
     private void handleClearFilters() {
         filterCategoryCombo.setValue("All Categories");
+        filterTagCombo.setValue("All Tags");
         filterMinAmount.clear();
         filterMaxAmount.clear();
         searchField.clear();
@@ -665,6 +721,7 @@ public class ExpensesController {
                     updated.setExcluded(old.isExcluded());
                     updated.setIncome(old.isIncome());
                     updated.setRefund(old.isRefund());
+                    updated.setTags(old.getTags());
                     handleInlineEdit(old, updated);
                 } catch (NumberFormatException ex) {
                     showMsg("Invalid amount", true);
@@ -746,6 +803,7 @@ public class ExpensesController {
                     updated.setExcluded(old.isExcluded());
                     updated.setIncome(old.isIncome());
                     updated.setRefund(old.isRefund());
+                    updated.setTags(old.getTags());
                     handleInlineEdit(old, updated);
                 } catch (Exception ex) {
                     System.err.println("Error in category commitInlineEdit: " + ex.getMessage());
@@ -889,6 +947,44 @@ public class ExpensesController {
                         setTooltip(new Tooltip(text));
                     } else {
                         setTooltip(null);
+                    }
+                }
+            }
+        });
+    }
+
+    private void setupTagsColumn() {
+        tagsColumn.setCellValueFactory(cellData -> {
+            Expense expense = cellData.getValue();
+            String joined = expense.getTags().isEmpty() ? "" : String.join(", ", expense.getTags());
+            return new javafx.beans.property.SimpleStringProperty(joined);
+        });
+        tagsColumn.setCellFactory(col -> new TableCell<Expense, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || getTableRow() == null || getTableRow().getItem() == null) {
+                    setGraphic(null);
+                    setText(null);
+                } else {
+                    Expense expense = getTableRow().getItem();
+                    Set<String> tags = expense.getTags();
+                    if (tags.isEmpty()) {
+                        setGraphic(null);
+                        setText("-");
+                        setStyle("-fx-text-fill: #666666; -fx-font-style: italic;");
+                    } else {
+                        HBox chipBox = new HBox(4);
+                        chipBox.setAlignment(Pos.CENTER_LEFT);
+                        for (String tag : tags) {
+                            Label chip = new Label(tag);
+                            chip.setStyle("-fx-background-color: rgba(92, 107, 192, 0.2); -fx-text-fill: #9FA8DA; "
+                                + "-fx-padding: 2 8; -fx-background-radius: 12; -fx-font-size: 11px;");
+                            chipBox.getChildren().add(chip);
+                        }
+                        setGraphic(chipBox);
+                        setText(null);
+                        setStyle("");
                     }
                 }
             }

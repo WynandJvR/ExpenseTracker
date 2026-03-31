@@ -68,6 +68,8 @@
                 <TextField fx:id="filterMinAmount" promptText="0" styleClass="text-field" prefWidth="80"/>
                 <Label text="Max:" styleClass="form-label"/>
                 <TextField fx:id="filterMaxAmount" promptText="Any" styleClass="text-field" prefWidth="80"/>
+                <Label text="Tag:" styleClass="form-label"/>
+                <ComboBox fx:id="filterTagCombo" promptText="All Tags" styleClass="combo-box" prefWidth="140"/>
                 <Button text="Clear" styleClass="secondary-button" onAction="#handleClearFilters"/>
             </HBox>
         </VBox>
@@ -84,8 +86,11 @@
                 <TableColumn fx:id="dateColumn" text="Date" prefWidth="120">
                     <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
                 </TableColumn>
-                <TableColumn fx:id="descriptionColumn" text="Description" prefWidth="250">
+                <TableColumn fx:id="descriptionColumn" text="Description" prefWidth="220">
                     <cellValueFactory><PropertyValueFactory property="description"/></cellValueFactory>
+                </TableColumn>
+                <TableColumn fx:id="tagsColumn" text="Tags" prefWidth="150">
+                    <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
                 </TableColumn>
             </columns>
         </TableView>
