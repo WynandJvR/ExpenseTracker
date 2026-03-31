@@ -2,11 +2,11 @@ package com.wyn.expensetracker;
 
 import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
+import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.input.KeyCode;
-import javafx.scene.layout.StackPane;
-import javafx.scene.layout.VBox;
+import javafx.scene.layout.*;
 
 import java.io.IOException;
 import java.time.Month;
@@ -47,6 +47,16 @@ public class DashboardController {
     @FXML private TableColumn<CategoryTotal, Double> budgetColumn;
     @FXML private TableColumn<CategoryTotal, Double> progressColumn;
 
+    // --- Budget alerts ---
+    @FXML private VBox budgetAlertBox;
+
+    // --- Anomaly detection ---
+    @FXML private VBox anomalyBox;
+
+    // --- Savings goals ---
+    @FXML private VBox goalsBox;
+    @FXML private VBox goalsProgressBox;
+
     // --- Error label ---
     @FXML private Label errorLabel;
 
@@ -80,6 +90,8 @@ public class DashboardController {
         updateTotalExpenses();
         refreshIncomeTable();
         updateIncomeField();
+        updateGoalsPanel();
+        updateAnomalyAlerts();
     }
 
     // ======================== CATEGORY TABLE SETUP ========================
@@ -404,6 +416,7 @@ public class DashboardController {
                 .sum();
 
         updateDashboardCards(total, categoryMap, prevTotal);
+        updateBudgetAlerts(categoryMap);
     }
 
     private void updateDashboardCards(double total, Map<String, Double> categoryMap, double prevTotal) {
@@ -464,6 +477,192 @@ public class DashboardController {
         } else {
             dashMonthChange.setText("-");
             dashMonthChange.getStyleClass().setAll("dashboard-card-value-field");
+        }
+    }
+
+    // ======================== ANOMALY DETECTION ========================
+
+    private void updateAnomalyAlerts() {
+        anomalyBox.getChildren().clear();
+        YearMonth ym = state.getSelectedYearMonth();
+        if (ym == null) return;
+
+        List<Anomaly> anomalies = AnomalyDetector.detect(
+            new ArrayList<>(state.getExpenseList()), ym, state.getCurrencySymbol());
+
+        // Filter out dismissed
+        anomalies.removeIf(a -> state.getDismissedAnomalyKeys().contains(a.getDismissKey()));
+
+        if (anomalies.isEmpty()) return;
+
+        // Show max 5 anomalies
+        int shown = 0;
+        for (Anomaly anomaly : anomalies) {
+            if (shown >= 5) break;
+
+            String borderColor = anomaly.getSeverity() > 0.6 ? "#E53935" : "#FF9800";
+            String bgColor = anomaly.getSeverity() > 0.6 ? "rgba(229, 57, 53, 0.1)" : "rgba(255, 152, 0, 0.1)";
+            String textColor = anomaly.getSeverity() > 0.6 ? "#EF5350" : "#FFB74D";
+
+            HBox alertBox = new HBox(8);
+            alertBox.setAlignment(Pos.CENTER_LEFT);
+            alertBox.setPadding(new Insets(6, 10, 6, 10));
+            alertBox.setStyle(String.format(
+                "-fx-background-color: %s; -fx-border-color: %s; -fx-border-width: 0 0 0 3; "
+                + "-fx-background-radius: 6; -fx-border-radius: 6;", bgColor, borderColor));
+
+            String icon = switch (anomaly.getType()) {
+                case AMOUNT_OUTLIER -> "\u26A0";
+                case LARGE_TRANSACTION -> "\u25B2";
+                case SPENDING_SPIKE -> "\u26A1";
+                case NEW_CATEGORY -> "\u2605";
+            };
+
+            Label iconLabel = new Label(icon);
+            iconLabel.setStyle("-fx-text-fill: " + textColor + "; -fx-font-size: 13px;");
+
+            Label msgLabel = new Label(anomaly.getMessage());
+            msgLabel.setStyle("-fx-text-fill: " + textColor + "; -fx-font-size: 11px;");
+            msgLabel.setWrapText(true);
+            HBox.setHgrow(msgLabel, Priority.ALWAYS);
+
+            Button dismissBtn = new Button("\u2715");
+            dismissBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: " + textColor
+                + "; -fx-font-size: 11px; -fx-cursor: hand; -fx-padding: 2 6;");
+            final Anomaly a = anomaly;
+            dismissBtn.setOnAction(e -> {
+                state.getDismissedAnomalyKeys().add(a.getDismissKey());
+                try {
+                    state.getStorage().saveDismissedAnomalies(state.getDismissedAnomalyKeys());
+                } catch (java.io.IOException ex) {
+                    System.err.println("Failed to save dismissed anomalies: " + ex.getMessage());
+                }
+                anomalyBox.getChildren().remove(alertBox);
+            });
+
+            alertBox.getChildren().addAll(iconLabel, msgLabel, dismissBtn);
+            anomalyBox.getChildren().add(alertBox);
+            shown++;
+        }
+    }
+
+    // ======================== SAVINGS GOALS ========================
+
+    private void updateGoalsPanel() {
+        goalsProgressBox.getChildren().clear();
+        List<SavingsGoal> goals = state.getSavingsGoals();
+
+        if (goals.isEmpty()) {
+            Label hint = new Label("No savings goals yet. Click \"Manage Goals\" to create one.");
+            hint.setStyle("-fx-text-fill: #757575; -fx-font-size: 12px; -fx-font-style: italic;");
+            goalsProgressBox.getChildren().add(hint);
+            return;
+        }
+
+        for (SavingsGoal goal : goals) {
+            double saved = state.getGoalContributions().stream()
+                .filter(c -> c.getGoalId().equals(goal.getId()))
+                .mapToDouble(GoalContribution::getAmount).sum();
+            double pct = goal.getTargetAmount() > 0 ? saved / goal.getTargetAmount() : 0;
+
+            HBox row = new HBox(10);
+            row.setAlignment(Pos.CENTER_LEFT);
+
+            Label nameLabel = new Label(goal.getName());
+            nameLabel.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 13px; -fx-font-weight: bold;");
+            nameLabel.setMinWidth(120);
+
+            ProgressBar bar = new ProgressBar(Math.min(pct, 1.0));
+            bar.setPrefWidth(200);
+            bar.setPrefHeight(16);
+            bar.setStyle(pct >= 1.0 ? "-fx-accent: #43A047;" : "-fx-accent: #5C6BC0;");
+            HBox.setHgrow(bar, Priority.ALWAYS);
+
+            Label pctLabel = new Label(String.format("%.0f%%", pct * 100));
+            pctLabel.setStyle("-fx-text-fill: " + (pct >= 1.0 ? "#43A047" : "#E0E0E0") + "; -fx-font-size: 12px; -fx-font-weight: bold;");
+            pctLabel.setMinWidth(45);
+
+            Label amountLabel = new Label(fmt(saved) + " / " + fmt(goal.getTargetAmount()));
+            amountLabel.setStyle("-fx-text-fill: #A0A0A0; -fx-font-size: 11px;");
+
+            row.getChildren().addAll(nameLabel, bar, pctLabel, amountLabel);
+
+            if (goal.getDeadline() != null) {
+                long daysLeft = java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.now(), goal.getDeadline());
+                String deadlineText = daysLeft > 0 ? daysLeft + " days left" : (daysLeft == 0 ? "Due today" : Math.abs(daysLeft) + " days overdue");
+                Label deadlineLabel = new Label(deadlineText);
+                deadlineLabel.setStyle("-fx-text-fill: " + (daysLeft < 0 ? "#EF5350" : "#A0A0A0") + "; -fx-font-size: 10px;");
+                row.getChildren().add(deadlineLabel);
+            }
+
+            goalsProgressBox.getChildren().add(row);
+        }
+    }
+
+    @FXML
+    private void handleManageGoals() {
+        new GoalManagementDialog(state).show();
+        updateGoalsPanel();
+    }
+
+    // ======================== BUDGET ALERTS ========================
+
+    private void updateBudgetAlerts(Map<String, Double> categoryMap) {
+        budgetAlertBox.getChildren().clear();
+        Map<String, Double> budgets = state.getBudgets();
+        if (budgets.isEmpty()) return;
+
+        List<BudgetAlert> alerts = new ArrayList<>();
+        for (Map.Entry<String, Double> entry : categoryMap.entrySet()) {
+            double budget = budgets.getOrDefault(entry.getKey(), 0.0);
+            if (budget > 0) {
+                double spent = entry.getValue();
+                double pct = (spent / budget) * 100;
+                if (pct >= 80) {
+                    alerts.add(new BudgetAlert(entry.getKey(), spent, budget));
+                }
+            }
+        }
+
+        if (alerts.isEmpty()) return;
+
+        alerts.sort(Comparator.comparingDouble(BudgetAlert::getPercentUsed).reversed());
+
+        for (BudgetAlert alert : alerts) {
+            boolean isDanger = alert.getSeverity() == BudgetAlert.Severity.DANGER;
+            String borderColor = isDanger ? "#E53935" : "#FF9800";
+            String bgColor = isDanger ? "rgba(229, 57, 53, 0.1)" : "rgba(255, 152, 0, 0.1)";
+            String textColor = isDanger ? "#EF5350" : "#FFB74D";
+
+            HBox alertBox = new HBox(8);
+            alertBox.setAlignment(Pos.CENTER_LEFT);
+            alertBox.setPadding(new Insets(8, 12, 8, 12));
+            alertBox.setStyle(String.format(
+                "-fx-background-color: %s; -fx-border-color: %s; -fx-border-width: 0 0 0 3; "
+                + "-fx-background-radius: 6; -fx-border-radius: 6;", bgColor, borderColor));
+
+            String icon = isDanger ? "\u26A0" : "\u25CF";
+            Label iconLabel = new Label(icon);
+            iconLabel.setStyle("-fx-text-fill: " + textColor + "; -fx-font-size: 14px;");
+
+            String message;
+            if (isDanger) {
+                double over = alert.getSpentAmount() - alert.getBudgetAmount();
+                message = String.format("%s: Budget exceeded by %s (%.0f%% used)",
+                    alert.getCategory(), fmt(over), alert.getPercentUsed());
+            } else {
+                double remaining = alert.getBudgetAmount() - alert.getSpentAmount();
+                message = String.format("%s: %.0f%% of %s budget used (%s remaining)",
+                    alert.getCategory(), alert.getPercentUsed(), fmt(alert.getBudgetAmount()), fmt(remaining));
+            }
+
+            Label msgLabel = new Label(message);
+            msgLabel.setStyle("-fx-text-fill: " + textColor + "; -fx-font-size: 12px; -fx-font-weight: bold;");
+            msgLabel.setWrapText(true);
+            HBox.setHgrow(msgLabel, Priority.ALWAYS);
+
+            alertBox.getChildren().addAll(iconLabel, msgLabel);
+            budgetAlertBox.getChildren().add(alertBox);
         }
     }
 

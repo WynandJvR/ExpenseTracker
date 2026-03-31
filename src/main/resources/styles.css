@@ -1379,3 +1379,30 @@
     -fx-background-color: #3A3A3A;
     -fx-padding: 0 2;
 }
+
+/* Tag chips */
+.tag-chip {
+    -fx-background-color: rgba(92, 107, 192, 0.2);
+    -fx-text-fill: #9FA8DA;
+    -fx-padding: 2 8;
+    -fx-background-radius: 12;
+    -fx-font-size: 11px;
+}
+
+.tag-chip-selected {
+    -fx-background-color: #5C6BC0;
+    -fx-text-fill: #FFFFFF;
+    -fx-padding: 5 12;
+    -fx-background-radius: 16;
+    -fx-cursor: hand;
+}
+
+.tag-chip-unselected {
+    -fx-background-color: rgba(92, 107, 192, 0.15);
+    -fx-padding: 5 12;
+    -fx-background-radius: 16;
+    -fx-border-color: rgba(92, 107, 192, 0.3);
+    -fx-border-radius: 16;
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+}

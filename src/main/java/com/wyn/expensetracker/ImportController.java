@@ -172,9 +172,11 @@ public class ImportController {
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Import Bank Statements");
         fileChooser.getExtensionFilters().addAll(
-            new FileChooser.ExtensionFilter("Bank Statements", "*.pdf", "*.csv"),
+            new FileChooser.ExtensionFilter("Bank Statements", "*.pdf", "*.csv", "*.ofx", "*.qfx", "*.qif"),
             new FileChooser.ExtensionFilter("PDF Files", "*.pdf"),
             new FileChooser.ExtensionFilter("CSV Files", "*.csv"),
+            new FileChooser.ExtensionFilter("OFX/QFX Files", "*.ofx", "*.qfx"),
+            new FileChooser.ExtensionFilter("QIF Files", "*.qif"),
             new FileChooser.ExtensionFilter("All Files", "*.*")
         );
         List<File> files = fileChooser.showOpenMultipleDialog(state.getStage());
@@ -190,6 +192,10 @@ public class ImportController {
 
                 if (fileName.endsWith(".pdf")) {
                     items = parsePdfStatement(file);
+                } else if (fileName.endsWith(".ofx") || fileName.endsWith(".qfx")) {
+                    items = parseOfxStatement(file);
+                } else if (fileName.endsWith(".qif")) {
+                    items = parseQifStatement(file);
                 } else {
                     items = parseCsvStatement(file);
                 }
@@ -246,7 +252,10 @@ public class ImportController {
             // Import each file's expenses separately
             for (Map.Entry<String, List<Expense>> entry : expensesByFile.entrySet()) {
                 String entryFileName = entry.getKey();
-                String type = entryFileName.toLowerCase().endsWith(".pdf") ? "PDF" : "CSV";
+                String lowerName = entryFileName.toLowerCase();
+                String type = lowerName.endsWith(".pdf") ? "PDF"
+                    : lowerName.endsWith(".ofx") || lowerName.endsWith(".qfx") ? "OFX"
+                    : lowerName.endsWith(".qif") ? "QIF" : "CSV";
                 importExpenses(entry.getValue(), entryFileName, type);
             }
         }
@@ -494,6 +503,30 @@ public class ImportController {
 
         // Show column mapping dialog
         return showCsvMappingDialog(text, headers, delimiter, lines);
+    }
+
+    private List<ImportItem> parseOfxStatement(File file) throws Exception {
+        String text = new String(java.nio.file.Files.readAllBytes(file.toPath()));
+        OfxStatementParser parser = new OfxStatementParser();
+        if (!parser.canParse(text)) {
+            showMsg("File does not appear to be a valid OFX/QFX file.", true);
+            return null;
+        }
+        List<ImportItem> items = parser.parse(text);
+        showMsg("OFX: " + items.size() + " transactions found.", false);
+        return items;
+    }
+
+    private List<ImportItem> parseQifStatement(File file) throws Exception {
+        String text = new String(java.nio.file.Files.readAllBytes(file.toPath()));
+        QifStatementParser parser = new QifStatementParser();
+        if (!parser.canParse(text)) {
+            showMsg("File does not appear to be a valid QIF file.", true);
+            return null;
+        }
+        List<ImportItem> items = parser.parse(text);
+        showMsg("QIF: " + items.size() + " transactions found.", false);
+        return items;
     }
 
     private List<ImportItem> showCsvMappingDialog(String text, String[] headers, char delimiter, String[] lines) {

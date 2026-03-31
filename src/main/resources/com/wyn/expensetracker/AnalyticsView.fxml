@@ -138,6 +138,15 @@
                         </StackedBarChart>
                     </VBox>
                 </Tab>
+
+                <!-- Cash Flow Calendar Tab -->
+                <Tab text="Cash Flow" fx:id="cashFlowTab">
+                    <ScrollPane fitToWidth="true" styleClass="scroll-pane">
+                        <VBox fx:id="cashFlowContent" spacing="10">
+                            <padding><Insets top="12" right="8" bottom="12" left="8"/></padding>
+                        </VBox>
+                    </ScrollPane>
+                </Tab>
             </tabs>
         </TabPane>
     </VBox>

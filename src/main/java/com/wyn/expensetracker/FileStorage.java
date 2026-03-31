@@ -71,6 +71,7 @@ public class FileStorage {
                     String excludedFlag = expense.isExcluded() ? ",EXCLUDED" : "";
                     String incomeFlag = expense.isIncome() ? ",INCOME" : "";
                     String refundFlag = expense.isRefund() ? ",REFUND" : "";
+                    String tagsFlag = expense.getTags().isEmpty() ? "" : ",TAGS:" + String.join("|", expense.getTags());
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
@@ -78,17 +79,18 @@ public class FileStorage {
                             "RECURRING," +
                             recurringExpense.getFrequency() + "," +
                             (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : "") +
-                            excludedFlag + incomeFlag + refundFlag);
+                            excludedFlag + incomeFlag + refundFlag + tagsFlag);
                 } else {
                     String importId = expense.getImportId() != null ? expense.getImportId() : "";
                     String excludedFlag = expense.isExcluded() ? ",EXCLUDED" : "";
                     String incomeFlag = expense.isIncome() ? ",INCOME" : "";
                     String refundFlag = expense.isRefund() ? ",REFUND" : "";
+                    String tagsFlag = expense.getTags().isEmpty() ? "" : ",TAGS:" + String.join("|", expense.getTags());
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
                             escapeCsv(expense.getDescription()) + "," +
-                            "REGULAR," + importId + excludedFlag + incomeFlag + refundFlag);
+                            "REGULAR," + importId + excludedFlag + incomeFlag + refundFlag + tagsFlag);
                 }
             }
         });
@@ -128,8 +130,9 @@ public class FileStorage {
                             RecurringExpense rec = new RecurringExpense(amount, category, date, description, frequency, endDate);
                             for (int i = 7; i < parts.length; i++) {
                                 if ("EXCLUDED".equals(parts[i])) rec.setExcluded(true);
-                                if ("INCOME".equals(parts[i])) rec.setIncome(true);
-                                if ("REFUND".equals(parts[i])) rec.setRefund(true);
+                                else if ("INCOME".equals(parts[i])) rec.setIncome(true);
+                                else if ("REFUND".equals(parts[i])) rec.setRefund(true);
+                                else if (parts[i].startsWith("TAGS:")) parseTags(rec, parts[i]);
                             }
                             expenses.add(rec);
                         } else if ("REGULAR".equals(type)) {
@@ -139,8 +142,9 @@ public class FileStorage {
                             }
                             for (int i = 6; i < parts.length; i++) {
                                 if ("EXCLUDED".equals(parts[i])) exp.setExcluded(true);
-                                if ("INCOME".equals(parts[i])) exp.setIncome(true);
-                                if ("REFUND".equals(parts[i])) exp.setRefund(true);
+                                else if ("INCOME".equals(parts[i])) exp.setIncome(true);
+                                else if ("REFUND".equals(parts[i])) exp.setRefund(true);
+                                else if (parts[i].startsWith("TAGS:")) parseTags(exp, parts[i]);
                             }
                             expenses.add(exp);
                         } else {
@@ -294,6 +298,136 @@ public class FileStorage {
             }
         }
         return incomes;
+    }
+
+    public void saveDismissedAnomalies(Set<String> keys) throws IOException {
+        atomicWrite(Path.of(baseDir + File.separator + "dismissed_anomalies.txt"), out -> {
+            for (String key : keys) {
+                out.println(key);
+            }
+        });
+    }
+
+    public Set<String> loadDismissedAnomalies() throws IOException {
+        Set<String> keys = new HashSet<>();
+        File file = new File(baseDir + File.separator + "dismissed_anomalies.txt");
+        if (!file.exists()) return keys;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.trim().isEmpty()) keys.add(line.trim());
+            }
+        }
+        return keys;
+    }
+
+    public void saveGoals(List<SavingsGoal> goals) throws IOException {
+        atomicWrite(Path.of(baseDir + File.separator + "goals.txt"), out -> {
+            for (SavingsGoal g : goals) {
+                out.println(escapeCsv(g.getId()) + "," +
+                    escapeCsv(g.getName()) + "," +
+                    g.getTargetAmount() + "," +
+                    (g.getDeadline() != null ? g.getDeadline() : "") + "," +
+                    g.getMonthlyTarget() + "," +
+                    g.getCreatedDate());
+            }
+        });
+    }
+
+    public List<SavingsGoal> loadGoals() throws IOException {
+        List<SavingsGoal> goals = new ArrayList<>();
+        File file = new File(baseDir + File.separator + "goals.txt");
+        if (!file.exists()) return goals;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            int lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                try {
+                    String[] parts = splitCsv(line);
+                    if (parts.length >= 6) {
+                        String id = parts[0];
+                        String name = parts[1];
+                        double targetAmount = Double.parseDouble(parts[2]);
+                        LocalDate deadline = parts[3].isEmpty() ? null : LocalDate.parse(parts[3]);
+                        double monthlyTarget = Double.parseDouble(parts[4]);
+                        LocalDate createdDate = LocalDate.parse(parts[5]);
+                        goals.add(new SavingsGoal(id, name, targetAmount, deadline, monthlyTarget, createdDate));
+                    }
+                } catch (Exception e) {
+                    addParseWarning("Error parsing goal line " + lineNumber + ": " + e.getMessage());
+                }
+            }
+        }
+        return goals;
+    }
+
+    public void saveGoalContributions(List<GoalContribution> contributions) throws IOException {
+        atomicWrite(Path.of(baseDir + File.separator + "goal_contributions.txt"), out -> {
+            for (GoalContribution c : contributions) {
+                out.println(escapeCsv(c.getGoalId()) + "," +
+                    c.getAmount() + "," +
+                    c.getDate() + "," +
+                    escapeCsv(c.getNote() != null ? c.getNote() : ""));
+            }
+        });
+    }
+
+    public List<GoalContribution> loadGoalContributions() throws IOException {
+        List<GoalContribution> contributions = new ArrayList<>();
+        File file = new File(baseDir + File.separator + "goal_contributions.txt");
+        if (!file.exists()) return contributions;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.trim().isEmpty()) continue;
+                try {
+                    String[] parts = splitCsv(line);
+                    if (parts.length >= 3) {
+                        String goalId = parts[0];
+                        double amount = Double.parseDouble(parts[1]);
+                        LocalDate date = LocalDate.parse(parts[2]);
+                        String note = parts.length >= 4 ? parts[3] : "";
+                        contributions.add(new GoalContribution(goalId, amount, date, note));
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error parsing goal contribution: " + e.getMessage());
+                }
+            }
+        }
+        return contributions;
+    }
+
+    private void parseTags(Expense expense, String tagsField) {
+        String tagsPart = tagsField.substring("TAGS:".length());
+        if (!tagsPart.isEmpty()) {
+            for (String tag : tagsPart.split("\\|")) {
+                if (!tag.trim().isEmpty()) expense.addTag(tag.trim());
+            }
+        }
+    }
+
+    public void saveTags(List<String> tags) throws IOException {
+        atomicWrite(Path.of(baseDir + File.separator + "tags.txt"), out -> {
+            for (String tag : tags) {
+                out.println(escapeCsv(tag));
+            }
+        });
+    }
+
+    public List<String> loadTags() throws IOException {
+        List<String> tags = new ArrayList<>();
+        File file = new File(baseDir + File.separator + "tags.txt");
+        if (!file.exists()) return tags;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.trim().isEmpty()) {
+                    tags.add(unescapeCsv(line.trim()));
+                }
+            }
+        }
+        return tags;
     }
 
     private String escapeCsv(String value) {

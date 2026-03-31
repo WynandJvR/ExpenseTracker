@@ -36,6 +36,12 @@
             </VBox>
         </HBox>
 
+        <!-- Anomaly Alerts -->
+        <VBox fx:id="anomalyBox" spacing="6"/>
+
+        <!-- Budget Alerts -->
+        <VBox fx:id="budgetAlertBox" spacing="6"/>
+
         <!-- Budget Section -->
         <VBox spacing="8" styleClass="panel-box">
             <HBox spacing="10" alignment="CENTER_LEFT">
@@ -98,6 +104,16 @@
                     </TableColumn>
                 </columns>
             </TableView>
+        </VBox>
+
+        <!-- Savings Goals -->
+        <VBox fx:id="goalsBox" spacing="8" styleClass="panel-box">
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Label text="Savings Goals" styleClass="section-title"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button text="Manage Goals" styleClass="primary-button" onAction="#handleManageGoals"/>
+            </HBox>
+            <VBox fx:id="goalsProgressBox" spacing="8"/>
         </VBox>
 
         <Label fx:id="errorLabel" styleClass="error-label"/>

@@ -91,6 +91,28 @@ public class MainController {
             System.err.println("Failed to load categorization rules: " + e.getMessage());
         }
 
+        // Load tags
+        try {
+            state.getTags().setAll(storage.loadTags());
+        } catch (IOException e) {
+            System.err.println("Failed to load tags: " + e.getMessage());
+        }
+
+        // Load savings goals
+        try {
+            state.getSavingsGoals().setAll(storage.loadGoals());
+            state.getGoalContributions().setAll(storage.loadGoalContributions());
+        } catch (IOException e) {
+            System.err.println("Failed to load savings goals: " + e.getMessage());
+        }
+
+        // Load dismissed anomalies
+        try {
+            state.getDismissedAnomalyKeys().addAll(storage.loadDismissedAnomalies());
+        } catch (IOException e) {
+            System.err.println("Failed to load dismissed anomalies: " + e.getMessage());
+        }
+
         // Set refresh callback
         state.setRefreshCallback(this::refreshTable);
 
@@ -527,6 +549,27 @@ public class MainController {
             state.getImportLogs().setAll(state.getStorage().loadImportLogs());
         } catch (Exception e) {
             state.getImportLogs().clear();
+        }
+
+        try {
+            state.getTags().setAll(state.getStorage().loadTags());
+        } catch (Exception e) {
+            state.getTags().clear();
+        }
+
+        try {
+            state.getSavingsGoals().setAll(state.getStorage().loadGoals());
+            state.getGoalContributions().setAll(state.getStorage().loadGoalContributions());
+        } catch (Exception e) {
+            state.getSavingsGoals().clear();
+            state.getGoalContributions().clear();
+        }
+
+        try {
+            state.getDismissedAnomalyKeys().clear();
+            state.getDismissedAnomalyKeys().addAll(state.getStorage().loadDismissedAnomalies());
+        } catch (Exception e) {
+            state.getDismissedAnomalyKeys().clear();
         }
 
         state.setCurrencySymbol(state.getStorage().loadCurrencySymbol());
