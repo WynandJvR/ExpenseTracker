@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.control.cell.PropertyValueFactory?>
+<?import javafx.scene.layout.*?>
+
+<ScrollPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="com.wyn.expensetracker.ImportController"
+            fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane"
+            visible="false" managed="false">
+    <VBox spacing="12" styleClass="content-view">
+        <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
+
+        <Label text="Import" styleClass="view-title"/>
+
+        <HBox spacing="16">
+            <VBox spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS">
+                <Label text="Scan Receipt" styleClass="section-title"/>
+                <Label text="Scan a receipt image (JPG, PNG, BMP, TIFF) to extract line items via OCR." styleClass="form-label" wrapText="true"/>
+                <Button text="Scan Receipt Image..." styleClass="success-button" onAction="#handleScanReceipt"/>
+            </VBox>
+            <VBox spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS">
+                <Label text="Import Bank Statement" styleClass="section-title"/>
+                <Label text="Import transactions from a PDF bank statement or CSV file." styleClass="form-label" wrapText="true"/>
+                <Button text="Import Bank Statement..." styleClass="success-button" onAction="#handleImportStatement"/>
+            </VBox>
+            <VBox spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS">
+                <Label text="Import History" styleClass="section-title"/>
+                <Label text="View previous imports and their results." styleClass="form-label" wrapText="true"/>
+                <Button text="View Import History..." styleClass="primary-button" onAction="#handleShowImportHistory"/>
+            </VBox>
+        </HBox>
+
+        <!-- Auto-Categorization Rules -->
+        <VBox spacing="8" styleClass="panel-box">
+            <Label text="Auto-Categorization Rules" styleClass="section-title"/>
+            <Label text="Keywords matched against transaction descriptions to auto-assign categories." styleClass="form-label"/>
+            <TableView fx:id="rulesTable" styleClass="table-view" prefHeight="250">
+                <columns>
+                    <TableColumn text="Keyword" prefWidth="250">
+                        <cellValueFactory><PropertyValueFactory property="keyword"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn text="Category" prefWidth="250">
+                        <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                    </TableColumn>
+                </columns>
+            </TableView>
+            <HBox spacing="10">
+                <Button text="Add Rule" styleClass="primary-button" onAction="#handleAddRule"/>
+                <Button text="Remove Rule" styleClass="danger-button" onAction="#handleRemoveRule"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button text="Re-categorize" styleClass="primary-button" onAction="#handleRecategorize">
+                    <tooltip><Tooltip text="Re-run rules on all uncategorized expenses"/></tooltip>
+                </Button>
+            </HBox>
+        </VBox>
+        <Label fx:id="importErrorLabel" styleClass="error-label"/>
+    </VBox>
+</ScrollPane>

@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.control.cell.PropertyValueFactory?>
+<?import javafx.scene.layout.*?>
+
+<ScrollPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="com.wyn.expensetracker.DashboardController"
+            fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane">
+    <VBox spacing="18" styleClass="content-view">
+        <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
+
+        <Label text="Dashboard" styleClass="view-title"/>
+
+        <!-- Dashboard Cards -->
+        <HBox fx:id="dashboardCards" spacing="12" alignment="CENTER_LEFT">
+            <VBox styleClass="dashboard-card dashboard-card-spent" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                <Label text="Total Spent" styleClass="dashboard-card-title"/>
+                <TextField fx:id="dashTotalSpent" text="0.00" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+            </VBox>
+            <VBox styleClass="dashboard-card dashboard-card-top" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                <Label text="Top Category" styleClass="dashboard-card-title"/>
+                <TextField fx:id="dashTopCategory" text="-" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+                <TextField fx:id="dashTopCategoryAmount" text="" editable="false" styleClass="dashboard-card-subtitle-field" alignment="CENTER"/>
+            </VBox>
+            <VBox styleClass="dashboard-card dashboard-card-budget" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                <Label text="Budget Status" styleClass="dashboard-card-title"/>
+                <TextField fx:id="dashBudgetStatus" text="-" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+                <TextField fx:id="dashBudgetSubtitle" text="" editable="false" styleClass="dashboard-card-subtitle-field" alignment="CENTER"/>
+            </VBox>
+            <VBox styleClass="dashboard-card dashboard-card-trend" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                <Label text="vs Last Month" styleClass="dashboard-card-title"/>
+                <TextField fx:id="dashMonthChange" text="-" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+            </VBox>
+        </HBox>
+
+        <!-- Budget Section -->
+        <VBox spacing="8" styleClass="panel-box">
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Label text="Budget:" styleClass="form-label"/>
+                <Label fx:id="moneySavedLabel" text="Money Saved: 0.00" styleClass="saved-label"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button fx:id="toggleIncomeButton" text="Edit" styleClass="secondary-button" onAction="#handleToggleIncome"/>
+            </HBox>
+            <Label fx:id="totalLabel" text="Total Expenses: 0.00" styleClass="total-label"/>
+            <VBox fx:id="incomeFieldsBox" spacing="5" visible="false" managed="false">
+                <Label text="Projected Monthly Income:" styleClass="form-label"/>
+                <TextField fx:id="recurringIncomeField" promptText="e.g., 15000.00" styleClass="text-field"/>
+                <Label text="This Month (projected):" styleClass="form-label"/>
+                <TextField fx:id="incomeField" promptText="Leave empty to use default" styleClass="text-field"/>
+            </VBox>
+        </VBox>
+
+        <!-- Income Transactions -->
+        <VBox spacing="8" styleClass="panel-box">
+            <Label text="Income Transactions" styleClass="section-title"/>
+            <Label fx:id="incomeTabSummary" text="" styleClass="form-label"/>
+            <TableView fx:id="incomeTable" styleClass="table-view" prefHeight="200">
+                <columns>
+                    <TableColumn text="Amount" prefWidth="100">
+                        <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn text="Category" prefWidth="120">
+                        <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn text="Date" prefWidth="100">
+                        <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn text="Description" prefWidth="200">
+                        <cellValueFactory><PropertyValueFactory property="description"/></cellValueFactory>
+                    </TableColumn>
+                </columns>
+            </TableView>
+            <HBox spacing="10">
+                <Button text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteIncome"/>
+            </HBox>
+            <Label fx:id="incomeErrorLabel" styleClass="error-label"/>
+        </VBox>
+
+        <!-- Category Table (for budget overview) -->
+        <VBox spacing="8" styleClass="panel-box">
+            <Label text="Expenses by Category" styleClass="table-title"/>
+            <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="200">
+                <columns>
+                    <TableColumn fx:id="categoryNameColumn" text="Category" prefWidth="120">
+                        <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="categoryTotalColumn" text="Spent" prefWidth="100">
+                        <cellValueFactory><PropertyValueFactory property="total"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="budgetColumn" text="Budget" prefWidth="100">
+                        <cellValueFactory><PropertyValueFactory property="budget"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="progressColumn" text="Progress" prefWidth="150">
+                        <cellValueFactory><PropertyValueFactory property="progress"/></cellValueFactory>
+                    </TableColumn>
+                </columns>
+            </TableView>
+        </VBox>
+
+        <Label fx:id="errorLabel" styleClass="error-label"/>
+    </VBox>
+</ScrollPane>

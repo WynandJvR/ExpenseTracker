@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.control.cell.PropertyValueFactory?>
+<?import javafx.scene.layout.*?>
+
+<ScrollPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="com.wyn.expensetracker.ExpensesController"
+            fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane"
+            visible="false" managed="false">
+    <VBox spacing="12" styleClass="content-view">
+        <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
+
+        <Label text="Expenses" styleClass="view-title"/>
+
+        <!-- Add Expense Form (collapsible) -->
+        <TitledPane fx:id="addExpensePane" text="Add New Expense" expanded="true" styleClass="form-titled-pane">
+            <VBox spacing="8" styleClass="panel-box">
+                <padding><Insets top="12" right="12" bottom="12" left="12"/></padding>
+
+                <HBox spacing="16">
+                    <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <Label text="Amount:" styleClass="form-label"/>
+                        <TextField fx:id="amountField" promptText="e.g., 10.99" styleClass="text-field"/>
+                    </VBox>
+                    <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <Label text="Category:" styleClass="form-label"/>
+                        <ComboBox fx:id="categoryCombo" promptText="Select or enter category" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+                    </VBox>
+                    <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <Label text="Date:" styleClass="form-label"/>
+                        <DatePicker fx:id="datePicker" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+                    </VBox>
+                </HBox>
+
+                <HBox spacing="16" alignment="CENTER_LEFT">
+                    <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <Label text="Description (optional):" styleClass="form-label"/>
+                        <TextField fx:id="descriptionField" promptText="Enter description" styleClass="text-field" onAction="#handleAddExpense"/>
+                    </VBox>
+                </HBox>
+
+                <HBox spacing="10" alignment="CENTER_LEFT">
+                    <Button fx:id="addButton" text="Add Expense" styleClass="success-button" onAction="#handleAddExpense"/>
+                    <Button text="+ Category" styleClass="secondary-button" onAction="#handleAddCategory"/>
+                    <Button text="- Category" styleClass="secondary-button" onAction="#handleRemoveCategory"/>
+                </HBox>
+                <Label fx:id="expenseErrorLabel" styleClass="error-label"/>
+            </VBox>
+        </TitledPane>
+
+        <!-- Filters -->
+        <VBox spacing="8">
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <TextField fx:id="searchField" promptText="Search expenses..." styleClass="text-field search-field" HBox.hgrow="ALWAYS"/>
+                <Button fx:id="filterToggleButton" text="Filters" styleClass="secondary-button" onAction="#handleToggleFilters"/>
+                <Region HBox.hgrow="SOMETIMES" minWidth="10"/>
+                <Button fx:id="deleteButton" text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteExpense"/>
+                <Button text="Export All" styleClass="success-button" onAction="#handleExport"/>
+                <Button text="Export View" styleClass="primary-button" onAction="#handleExportFiltered"/>
+            </HBox>
+            <HBox fx:id="filterFieldsBox" spacing="10" alignment="CENTER_LEFT" visible="false" managed="false" styleClass="filter-fields-box">
+                <Label text="Category:" styleClass="form-label"/>
+                <ComboBox fx:id="filterCategoryCombo" promptText="All Categories" styleClass="combo-box" prefWidth="160"/>
+                <Label text="Min:" styleClass="form-label"/>
+                <TextField fx:id="filterMinAmount" promptText="0" styleClass="text-field" prefWidth="80"/>
+                <Label text="Max:" styleClass="form-label"/>
+                <TextField fx:id="filterMaxAmount" promptText="Any" styleClass="text-field" prefWidth="80"/>
+                <Button text="Clear" styleClass="secondary-button" onAction="#handleClearFilters"/>
+            </HBox>
+        </VBox>
+
+        <!-- Expense Table -->
+        <TableView fx:id="expenseTable" styleClass="table-view,editable-table" VBox.vgrow="ALWAYS" prefHeight="500">
+            <columns>
+                <TableColumn fx:id="amountColumn" text="Amount" prefWidth="100">
+                    <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
+                </TableColumn>
+                <TableColumn fx:id="expenseCategoryColumn" text="Category" prefWidth="150">
+                    <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                </TableColumn>
+                <TableColumn fx:id="dateColumn" text="Date" prefWidth="120">
+                    <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
+                </TableColumn>
+                <TableColumn fx:id="descriptionColumn" text="Description" prefWidth="250">
+                    <cellValueFactory><PropertyValueFactory property="description"/></cellValueFactory>
+                </TableColumn>
+            </columns>
+        </TableView>
+
+        <!-- Selectable detail bar -->
+        <HBox fx:id="detailBar" spacing="8" alignment="CENTER_LEFT" visible="false" managed="false" styleClass="detail-bar">
+            <padding><Insets top="6" right="10" bottom="6" left="10"/></padding>
+            <Label text="Selected:" styleClass="form-label"/>
+            <TextField fx:id="detailText" editable="false" styleClass="detail-text-field" HBox.hgrow="ALWAYS"/>
+        </HBox>
+    </VBox>
+</ScrollPane>
