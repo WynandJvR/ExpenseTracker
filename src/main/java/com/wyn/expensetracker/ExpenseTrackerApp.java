@@ -12,7 +12,6 @@ import javafx.scene.control.TextArea;
 import javafx.scene.image.Image;
 import javafx.stage.Stage;
 
-import java.io.File;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.time.LocalDate;
@@ -43,8 +42,13 @@ public class ExpenseTrackerApp extends Application {
             });
         });
 
+        // Initialize profile manager and migrate existing data if needed
+        ProfileManager profileManager = new ProfileManager();
+        profileManager.migrateToProfiles();
+        String activeProfile = profileManager.getActiveProfile();
+
         ExpenseManager manager = new ExpenseManager();
-        FileStorage storage = new FileStorage();
+        FileStorage storage = new FileStorage(profileManager.getProfileDir(activeProfile));
 
         // Load application icon
         try {
@@ -105,7 +109,7 @@ public class ExpenseTrackerApp extends Application {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("MainView.fxml"));
         Parent root = loader.load();
         MainController controller = loader.getController();
-        controller.initializeData(manager, storage, categories, incomes, stage);
+        controller.initializeData(manager, storage, categories, incomes, stage, profileManager);
 
         // Create scene and apply stylesheet
         Scene scene = new Scene(root, 1200, 800);
@@ -121,7 +125,7 @@ public class ExpenseTrackerApp extends Application {
         // Configure and show stage
         stage.setMinWidth(800);
         stage.setMinHeight(600);
-        stage.setTitle("Expense Tracker");
+        stage.setTitle("Expense Tracker - " + activeProfile);
         stage.setScene(scene);
         stage.show();
     }

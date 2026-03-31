@@ -95,6 +95,7 @@ public class MainController {
     @FXML private Label addRecurringErrorLabel;
     @FXML private Label editRecurringErrorLabel;
     @FXML private ComboBox<String> currencyCombo;
+    @FXML private ComboBox<String> profileCombo;
     @FXML private VBox incomeFieldsBox;
     @FXML private Button toggleIncomeButton;
 
@@ -146,6 +147,7 @@ public class MainController {
     @FXML private BarChart<String, Number> incomeVsExpensesChart;
     @FXML private BarChart<String, Number> budgetVsActualChart;
     @FXML private Label budgetVsActualSubtitle;
+    @FXML private VBox budgetEmptyOverlay;
     @FXML private LineChart<Number, Number> cumulativeSpendingChart;
     @FXML private Label cumulativeSubtitle;
     @FXML private StackedAreaChart<String, Number> categoryTrendChart;
@@ -181,6 +183,7 @@ public class MainController {
     // --- Data ---
     private ExpenseManager manager;
     private FileStorage storage;
+    private ProfileManager profileManager;
     private ObservableList<String> categories;
     private ObservableList<Expense> expenseList;
     private FilteredList<Expense> filteredData;
@@ -210,12 +213,24 @@ public class MainController {
     }
 
     public void initializeData(ExpenseManager manager, FileStorage storage,
-                               ObservableList<String> categories, Map<YearMonth, Double> incomes, Stage stage) {
+                               ObservableList<String> categories, Map<YearMonth, Double> incomes,
+                               Stage stage, ProfileManager profileManager) {
         this.manager = manager;
         this.storage = storage;
         this.categories = categories;
         this.incomes = incomes;
         this.stage = stage;
+        this.profileManager = profileManager;
+
+        // Setup profile combo
+        profileCombo.setItems(FXCollections.observableArrayList(profileManager.listProfiles()));
+        profileCombo.setValue(profileManager.getActiveProfile());
+        profileCombo.setOnAction(e -> {
+            String selected = profileCombo.getValue();
+            if (selected != null && !selected.equals(profileManager.getActiveProfile())) {
+                switchToProfile(selected);
+            }
+        });
 
         // Load budgets
         try {
@@ -912,6 +927,191 @@ public class MainController {
                 chartPeriodCombo.setValue(period);
             }
         }
+    }
+
+    // ======================== PROFILES ========================
+
+    private void switchToProfile(String profileName) {
+        // Save current profile state
+        saveUIState();
+
+        // Create new storage and manager for the target profile
+        this.storage = new FileStorage(profileManager.getProfileDir(profileName));
+        this.manager = new ExpenseManager();
+
+        // Load categories
+        try {
+            List<String> newCats = storage.loadCategories();
+            if (newCats.isEmpty()) {
+                newCats = List.of("Food", "Transport", "Entertainment", "Utilities", "Other");
+            }
+            categories.setAll(newCats);
+        } catch (Exception e) {
+            categories.setAll("Food", "Transport", "Entertainment", "Utilities", "Other");
+        }
+
+        // Migrate from Excel if needed
+        storage.migrateFromExcelIfNeeded();
+
+        // Load expenses
+        try {
+            manager.loadExpenses(storage.loadExpenses());
+        } catch (Exception e) {
+            System.err.println("Error loading expenses for profile " + profileName + ": " + e.getMessage());
+        }
+
+        // Load incomes
+        incomes.clear();
+        try {
+            incomes.putAll(storage.loadIncomes());
+        } catch (Exception e) {
+            System.err.println("Error loading incomes for profile " + profileName + ": " + e.getMessage());
+        }
+
+        // Load budgets
+        try {
+            this.budgets = storage.loadBudgets();
+        } catch (Exception e) {
+            this.budgets = new HashMap<>();
+        }
+
+        // Load categorization rules
+        categorizationRules = new CategorizationRules();
+        try {
+            categorizationRules.loadFrom(storage.loadCategorizationRules());
+        } catch (Exception e) {
+            System.err.println("Error loading rules for profile " + profileName + ": " + e.getMessage());
+        }
+        rulesTable.setItems(categorizationRules.getRuleEntries());
+
+        // Load import logs
+        try {
+            importLogs.setAll(storage.loadImportLogs());
+        } catch (Exception e) {
+            importLogs.clear();
+        }
+
+        // Load settings
+        currencySymbol = storage.loadCurrencySymbol();
+        currencyCombo.setValue(currencySymbol);
+        recurringIncome = storage.loadRecurringIncome();
+        suppressIncomeListener = true;
+        recurringIncomeField.setText(recurringIncome > 0 ? String.format("%.2f", recurringIncome) : "");
+        suppressIncomeListener = false;
+
+        // Update observable lists for tables
+        expenseList.setAll(manager.getExpenses());
+        recurringList.setAll(manager.getBaseRecurringExpenses());
+
+        // Update undo/redo state
+        undoButton.setDisable(!manager.canUndo());
+        redoButton.setDisable(!manager.canRedo());
+
+        // Save active profile
+        try {
+            profileManager.setActiveProfile(profileName);
+        } catch (Exception e) {
+            System.err.println("Error saving active profile: " + e.getMessage());
+        }
+
+        // Update window title
+        stage.setTitle("Expense Tracker - " + profileName);
+
+        // Mark projections for recalculation
+        projectionsNeedUpdate = true;
+
+        // Refresh all views
+        refreshTable();
+
+        // Restore UI state for this profile
+        restoreUIState();
+
+        showMessage("Switched to profile: " + profileName, false);
+    }
+
+    @FXML
+    private void handleCreateProfile() {
+        TextInputDialog dialog = new TextInputDialog();
+        dialog.setTitle("New Profile");
+        dialog.setHeaderText("Create a new profile");
+        dialog.setContentText("Profile name:");
+        dialog.initOwner(stage);
+        dialog.showAndWait().ifPresent(name -> {
+            String trimmed = name.trim();
+            if (trimmed.isEmpty()) {
+                showMessage("Profile name cannot be empty.", true);
+                return;
+            }
+            if (profileManager.createProfile(trimmed)) {
+                profileCombo.getItems().setAll(profileManager.listProfiles());
+                profileCombo.setValue(trimmed);
+                switchToProfile(trimmed);
+            } else {
+                showMessage("Could not create profile. Name may already exist or contain invalid characters.", true);
+            }
+        });
+    }
+
+    @FXML
+    private void handleRenameProfile() {
+        String current = profileCombo.getValue();
+        if (current == null) return;
+        TextInputDialog dialog = new TextInputDialog(current);
+        dialog.setTitle("Rename Profile");
+        dialog.setHeaderText("Rename profile: " + current);
+        dialog.setContentText("New name:");
+        dialog.initOwner(stage);
+        dialog.showAndWait().ifPresent(name -> {
+            String trimmed = name.trim();
+            if (trimmed.isEmpty() || trimmed.equals(current)) return;
+            if (profileManager.renameProfile(current, trimmed)) {
+                try {
+                    profileManager.setActiveProfile(trimmed);
+                } catch (Exception e) {
+                    System.err.println("Error updating active profile after rename: " + e.getMessage());
+                }
+                profileCombo.getItems().setAll(profileManager.listProfiles());
+                profileCombo.setValue(trimmed);
+                stage.setTitle("Expense Tracker - " + trimmed);
+                showMessage("Profile renamed to: " + trimmed, false);
+            } else {
+                showMessage("Could not rename profile. Name may already exist or contain invalid characters.", true);
+            }
+        });
+    }
+
+    @FXML
+    private void handleDeleteProfile() {
+        String current = profileCombo.getValue();
+        if (current == null) return;
+        if (profileManager.listProfiles().size() <= 1) {
+            showMessage("Cannot delete the only profile.", true);
+            return;
+        }
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Delete Profile");
+        confirm.setHeaderText("Delete profile: " + current + "?");
+        confirm.setContentText("All data in this profile will be permanently deleted. This cannot be undone.");
+        confirm.initOwner(stage);
+        confirm.showAndWait().ifPresent(result -> {
+            if (result == ButtonType.OK) {
+                // Switch to another profile first
+                List<String> remaining = profileManager.listProfiles();
+                String switchTo = remaining.stream()
+                    .filter(p -> !p.equals(current))
+                    .findFirst()
+                    .orElse(ProfileManager.DEFAULT_PROFILE);
+
+                if (profileManager.deleteProfile(current)) {
+                    profileCombo.getItems().setAll(profileManager.listProfiles());
+                    profileCombo.setValue(switchTo);
+                    switchToProfile(switchTo);
+                    showMessage("Profile deleted: " + current, false);
+                } else {
+                    showMessage("Could not delete profile.", true);
+                }
+            }
+        });
     }
 
     // ======================== NAVIGATION ========================
@@ -2848,9 +3048,16 @@ public class MainController {
             .collect(Collectors.toList());
 
         if (budgetedCategories.isEmpty()) {
-            budgetVsActualSubtitle.setText("Set budgets via right-click on category table");
+            budgetVsActualSubtitle.setText("");
+            budgetVsActualChart.setVisible(false);
+            budgetEmptyOverlay.setVisible(true);
+            budgetEmptyOverlay.setManaged(true);
             return;
         }
+
+        budgetVsActualChart.setVisible(true);
+        budgetEmptyOverlay.setVisible(false);
+        budgetEmptyOverlay.setManaged(false);
 
         List<String> labels = new ArrayList<>(budgetedCategories);
         XYChart.Series<String, Number> budgetSeries = new XYChart.Series<>();

@@ -901,6 +901,18 @@
     -fx-padding: 0 0 5 0;
 }
 
+/* Chart empty state overlay */
+.chart-empty-title {
+    -fx-text-fill: #B0B0B0;
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+}
+
+.chart-empty-hint {
+    -fx-text-fill: #808080;
+    -fx-font-size: 13px;
+}
+
 /* Area chart fill transparency */
 .chart-series-area-fill {
     -fx-fill-opacity: 0.25;
@@ -1303,4 +1315,67 @@
 
 .search-field {
     -fx-min-width: 200;
+}
+
+/* ================================================================
+   PROFILE SELECTOR
+   ================================================================ */
+.profile-combo {
+    -fx-background-color: transparent;
+    -fx-text-fill: #E0E0E0;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-padding: 4 6;
+    -fx-background-radius: 5;
+    -fx-border-radius: 5;
+    -fx-border-color: #444444;
+    -fx-border-width: 1;
+    -fx-min-width: 100;
+    -fx-pref-width: 130;
+    -fx-cursor: hand;
+}
+
+.profile-combo:hover {
+    -fx-border-color: #5C6BC0;
+    -fx-background-color: rgba(92, 107, 192, 0.08);
+}
+
+.profile-combo .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: #E0E0E0;
+    -fx-font-size: 13px;
+}
+
+.profile-combo-popup .list-view {
+    -fx-background-color: #333333;
+}
+
+.profile-gear-button {
+    -fx-background-color: #5C6BC0;
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-padding: 5 10;
+    -fx-cursor: hand;
+    -fx-background-radius: 5;
+    -fx-alignment: CENTER;
+    -fx-content-display: TEXT_ONLY;
+}
+
+.profile-gear-button:hover {
+    -fx-background-color: #7986CB;
+}
+
+.profile-gear-button .arrow {
+    -fx-padding: 0;
+    -fx-shape: "";
+}
+
+.profile-gear-button .arrow {
+    -fx-opacity: 0;
+}
+
+.toolbar-separator {
+    -fx-background-color: #3A3A3A;
+    -fx-padding: 0 2;
 }
