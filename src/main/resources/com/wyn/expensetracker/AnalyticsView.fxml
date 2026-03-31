@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.chart.*?>
+<?import javafx.scene.layout.*?>
+
+<ScrollPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="com.wyn.expensetracker.AnalyticsController"
+            fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane"
+            visible="false" managed="false">
+    <VBox spacing="12" styleClass="content-view">
+        <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
+
+        <HBox spacing="10" alignment="CENTER_LEFT">
+            <Label text="Analytics" styleClass="view-title"/>
+            <Region HBox.hgrow="ALWAYS"/>
+            <Label text="View by:" styleClass="form-label"/>
+            <ComboBox fx:id="chartPeriodCombo" styleClass="combo-box"/>
+        </HBox>
+
+        <TabPane fx:id="analyticsTabPane" styleClass="analytics-tab-pane" tabClosingPolicy="UNAVAILABLE">
+            <tabs>
+                <!-- Overview Tab -->
+                <Tab text="Overview">
+                    <VBox spacing="8">
+                        <padding><Insets top="12" right="8" bottom="8" left="8"/></padding>
+                        <PieChart fx:id="categoryChart" title="Expenses by Category" legendVisible="false" prefHeight="300" styleClass="chart"/>
+                        <StackedBarChart fx:id="monthlyTrendChart" title="Monthly Trend" legendVisible="false" prefHeight="350" styleClass="chart">
+                            <xAxis><CategoryAxis/></xAxis>
+                            <yAxis><NumberAxis/></yAxis>
+                        </StackedBarChart>
+                        <FlowPane fx:id="trendChartLegend" hgap="12" vgap="6" alignment="CENTER" styleClass="custom-chart-legend">
+                            <padding><Insets top="4" right="8" bottom="4" left="8"/></padding>
+                        </FlowPane>
+                    </VBox>
+                </Tab>
+
+                <!-- Income &amp; Budget Tab -->
+                <Tab text="Income &amp; Budget">
+                    <VBox spacing="8">
+                        <padding><Insets top="12" right="8" bottom="8" left="8"/></padding>
+                        <BarChart fx:id="incomeVsExpensesChart" title="Income vs Expenses" legendVisible="true" prefHeight="320" styleClass="chart">
+                            <xAxis><CategoryAxis/></xAxis>
+                            <yAxis><NumberAxis/></yAxis>
+                        </BarChart>
+                        <Label fx:id="budgetVsActualSubtitle" styleClass="chart-subtitle"/>
+                        <StackPane>
+                            <BarChart fx:id="budgetVsActualChart" title="Budget vs Actual" legendVisible="true" prefHeight="320" styleClass="chart">
+                                <xAxis><CategoryAxis/></xAxis>
+                                <yAxis><NumberAxis/></yAxis>
+                            </BarChart>
+                            <VBox fx:id="budgetEmptyOverlay" alignment="CENTER" spacing="8" visible="false" managed="false" mouseTransparent="true">
+                                <Label text="No Budgets Set" styleClass="chart-empty-title"/>
+                                <Label text="Right-click a category in the Dashboard table to set a budget" styleClass="chart-empty-hint"/>
+                            </VBox>
+                        </StackPane>
+                    </VBox>
+                </Tab>
+
+                <!-- Spending Trends Tab -->
+                <Tab text="Spending Trends">
+                    <VBox spacing="8">
+                        <padding><Insets top="12" right="8" bottom="8" left="8"/></padding>
+                        <Label fx:id="cumulativeSubtitle" styleClass="chart-subtitle"/>
+                        <LineChart fx:id="cumulativeSpendingChart" title="Cumulative Spending" legendVisible="true" prefHeight="320" createSymbols="false" styleClass="chart">
+                            <xAxis><NumberAxis label="Day of Month"/></xAxis>
+                            <yAxis><NumberAxis label="Amount"/></yAxis>
+                        </LineChart>
+                        <StackedAreaChart fx:id="categoryTrendChart" title="Category Trends" legendVisible="true" prefHeight="320" createSymbols="false" styleClass="chart">
+                            <xAxis><CategoryAxis/></xAxis>
+                            <yAxis><NumberAxis/></yAxis>
+                        </StackedAreaChart>
+                    </VBox>
+                </Tab>
+
+                <!-- Comparisons Tab -->
+                <Tab text="Comparisons">
+                    <VBox spacing="8">
+                        <padding><Insets top="12" right="8" bottom="8" left="8"/></padding>
+                        <LineChart fx:id="yearOverYearChart" title="Year-over-Year" legendVisible="true" prefHeight="320" createSymbols="true" styleClass="chart">
+                            <xAxis><CategoryAxis/></xAxis>
+                            <yAxis><NumberAxis/></yAxis>
+                        </LineChart>
+                        <PieChart fx:id="recurringVsOneTimeChart" title="Recurring vs One-Time" legendVisible="true" prefHeight="320" styleClass="chart"/>
+                    </VBox>
+                </Tab>
+
+                <!-- Projections Tab -->
+                <Tab text="Projections" fx:id="projectionsTab">
+                    <VBox spacing="10" fx:id="projectionsContent">
+                        <padding><Insets top="12" right="8" bottom="12" left="8"/></padding>
+
+                        <VBox spacing="4" styleClass="projection-header">
+                            <Label fx:id="projPeriodLabel" text="" styleClass="projection-period-label"/>
+                            <Label fx:id="projMethodLabel" text="" styleClass="projection-method-label" wrapText="true"/>
+                        </VBox>
+
+                        <HBox spacing="12" alignment="CENTER_LEFT">
+                            <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                                <Label text="Projected Expenses" styleClass="dashboard-card-title"/>
+                                <Label fx:id="projExpenses" text="-" styleClass="dashboard-card-value"/>
+                                <Label fx:id="projExpensesSubtitle" text="" styleClass="dashboard-card-subtitle"/>
+                            </VBox>
+                            <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                                <Label text="Projected Income" styleClass="dashboard-card-title"/>
+                                <Label fx:id="projIncome" text="-" styleClass="dashboard-card-value"/>
+                                <Label fx:id="projIncomeSubtitle" text="" styleClass="dashboard-card-subtitle"/>
+                            </VBox>
+                            <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                                <Label text="Net Savings" styleClass="dashboard-card-title"/>
+                                <Label fx:id="projNetSavings" text="-" styleClass="dashboard-card-value"/>
+                                <Label fx:id="projNetSavingsSubtitle" text="" styleClass="dashboard-card-subtitle"/>
+                            </VBox>
+                            <VBox styleClass="dashboard-card" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                                <Label text="6-Month Savings" styleClass="dashboard-card-title"/>
+                                <Label fx:id="projCumulativeSavings" text="-" styleClass="dashboard-card-value"/>
+                            </VBox>
+                        </HBox>
+
+                        <Label fx:id="projTrendIndicator" text="" styleClass="projection-trend-label"/>
+                        <Label fx:id="projNoDataLabel" text="" styleClass="chart-subtitle" managed="false" visible="false"/>
+
+                        <LineChart fx:id="projOutlookChart" title="6-Month Financial Outlook" legendVisible="true" prefHeight="300" createSymbols="true" styleClass="chart">
+                            <xAxis><CategoryAxis/></xAxis>
+                            <yAxis><NumberAxis/></yAxis>
+                        </LineChart>
+
+                        <AreaChart fx:id="projBalanceChart" title="Balance Trajectory" legendVisible="true" prefHeight="300" createSymbols="false" styleClass="chart projection-area-chart">
+                            <xAxis><CategoryAxis/></xAxis>
+                            <yAxis><NumberAxis/></yAxis>
+                        </AreaChart>
+
+                        <StackedBarChart fx:id="projCategoryChart" title="Projected Category Breakdown" legendVisible="false" prefHeight="300" styleClass="chart">
+                            <xAxis><CategoryAxis/></xAxis>
+                            <yAxis><NumberAxis/></yAxis>
+                        </StackedBarChart>
+                    </VBox>
+                </Tab>
+            </tabs>
+        </TabPane>
+    </VBox>
+</ScrollPane>
