@@ -23,7 +23,10 @@
                 <HBox spacing="16">
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="Amount:" styleClass="form-label"/>
-                        <TextField fx:id="amountField" promptText="e.g., 10.99" styleClass="text-field"/>
+                        <HBox spacing="6">
+                            <ComboBox fx:id="currencyCodeCombo" styleClass="combo-box" prefWidth="90"/>
+                            <TextField fx:id="amountField" promptText="e.g., 10.99" styleClass="text-field" HBox.hgrow="ALWAYS"/>
+                        </HBox>
                     </VBox>
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="Category:" styleClass="form-label"/>
@@ -89,8 +92,14 @@
                 <TableColumn fx:id="descriptionColumn" text="Description" prefWidth="220">
                     <cellValueFactory><PropertyValueFactory property="description"/></cellValueFactory>
                 </TableColumn>
-                <TableColumn fx:id="tagsColumn" text="Tags" prefWidth="150">
+                <TableColumn fx:id="currencyColumn" text="Cur" prefWidth="55">
+                    <cellValueFactory><PropertyValueFactory property="currency"/></cellValueFactory>
+                </TableColumn>
+                <TableColumn fx:id="tagsColumn" text="Tags" prefWidth="120">
                     <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                </TableColumn>
+                <TableColumn fx:id="receiptColumn" text="" prefWidth="30">
+                    <cellValueFactory><PropertyValueFactory property="receiptPath"/></cellValueFactory>
                 </TableColumn>
             </columns>
         </TableView>

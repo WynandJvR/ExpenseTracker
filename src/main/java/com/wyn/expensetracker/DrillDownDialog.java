@@ -19,7 +19,13 @@ public class DrillDownDialog {
 
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("dd MMM yyyy");
 
-    public static void show(Stage owner, String title, List<Expense> expenses, String currencySymbol) {
+    public static void show(Stage owner, String title, List<Expense> expenses,
+                               String currencySymbol) {
+        show(owner, title, expenses, currencySymbol, null);
+    }
+
+    public static void show(Stage owner, String title, List<Expense> expenses,
+                               String currencySymbol, CurrencyManager cm) {
         if (expenses == null || expenses.isEmpty()) return;
 
         Stage dialog = new Stage();
@@ -64,7 +70,9 @@ public class DrillDownDialog {
         table.getColumns().addAll(amountCol, categoryCol, dateCol, descCol);
         table.setPrefHeight(400);
 
-        double total = expenses.stream().mapToDouble(Expense::getAmount).sum();
+        double total = expenses.stream()
+            .mapToDouble(e -> cm != null ? cm.toBase(e.getAmount(), e.getCurrency()) : e.getAmount())
+            .sum();
         Label summary = new Label(String.format("%d transactions  |  Total: %s",
             expenses.size(), UIUtils.fmt(total, currencySymbol)));
         summary.getStyleClass().add("form-label");

@@ -21,6 +21,7 @@ public class SharedState {
     private CategorizationRules categorizationRules;
     private ReceiptScanner receiptScanner;
     private final ProjectionEngine projectionEngine = new ProjectionEngine();
+    private final CurrencyManager currencyManager = new CurrencyManager();
 
     // Observable collections
     private final ObservableList<String> categories;
@@ -32,6 +33,8 @@ public class SharedState {
     private final ObservableList<String> tags = FXCollections.observableArrayList();
     private final ObservableList<SavingsGoal> savingsGoals = FXCollections.observableArrayList();
     private final ObservableList<GoalContribution> goalContributions = FXCollections.observableArrayList();
+    private final ObservableList<Debt> debts = FXCollections.observableArrayList();
+    private final ObservableList<DebtPayment> debtPayments = FXCollections.observableArrayList();
     private final Set<String> dismissedAnomalyKeys = new HashSet<>();
     private final FilteredList<Expense> filteredData;
 
@@ -101,6 +104,9 @@ public class SharedState {
     public ObservableList<String> getTags() { return tags; }
     public ObservableList<SavingsGoal> getSavingsGoals() { return savingsGoals; }
     public ObservableList<GoalContribution> getGoalContributions() { return goalContributions; }
+    public ObservableList<Debt> getDebts() { return debts; }
+    public ObservableList<DebtPayment> getDebtPayments() { return debtPayments; }
+    public CurrencyManager getCurrencyManager() { return currencyManager; }
     public Set<String> getDismissedAnomalyKeys() { return dismissedAnomalyKeys; }
     public FilteredList<Expense> getFilteredData() { return filteredData; }
     public ObservableList<Integer> getYearList() { return yearList; }

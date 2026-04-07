@@ -72,6 +72,8 @@ public class FileStorage {
                     String incomeFlag = expense.isIncome() ? ",INCOME" : "";
                     String refundFlag = expense.isRefund() ? ",REFUND" : "";
                     String tagsFlag = expense.getTags().isEmpty() ? "" : ",TAGS:" + String.join("|", expense.getTags());
+                    String currencyFlag = expense.getCurrency() != null ? ",CUR:" + expense.getCurrency() : "";
+                    String receiptFlag = expense.getReceiptPath() != null ? ",RCPT:" + escapeCsv(expense.getReceiptPath()) : "";
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
@@ -79,18 +81,20 @@ public class FileStorage {
                             "RECURRING," +
                             recurringExpense.getFrequency() + "," +
                             (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : "") +
-                            excludedFlag + incomeFlag + refundFlag + tagsFlag);
+                            excludedFlag + incomeFlag + refundFlag + tagsFlag + currencyFlag + receiptFlag);
                 } else {
                     String importId = expense.getImportId() != null ? expense.getImportId() : "";
                     String excludedFlag = expense.isExcluded() ? ",EXCLUDED" : "";
                     String incomeFlag = expense.isIncome() ? ",INCOME" : "";
                     String refundFlag = expense.isRefund() ? ",REFUND" : "";
                     String tagsFlag = expense.getTags().isEmpty() ? "" : ",TAGS:" + String.join("|", expense.getTags());
+                    String currencyFlag = expense.getCurrency() != null ? ",CUR:" + expense.getCurrency() : "";
+                    String receiptFlag = expense.getReceiptPath() != null ? ",RCPT:" + escapeCsv(expense.getReceiptPath()) : "";
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
                             escapeCsv(expense.getDescription()) + "," +
-                            "REGULAR," + importId + excludedFlag + incomeFlag + refundFlag + tagsFlag);
+                            "REGULAR," + importId + excludedFlag + incomeFlag + refundFlag + tagsFlag + currencyFlag + receiptFlag);
                 }
             }
         });
@@ -133,6 +137,8 @@ public class FileStorage {
                                 else if ("INCOME".equals(parts[i])) rec.setIncome(true);
                                 else if ("REFUND".equals(parts[i])) rec.setRefund(true);
                                 else if (parts[i].startsWith("TAGS:")) parseTags(rec, parts[i]);
+                                else if (parts[i].startsWith("CUR:")) rec.setCurrency(parts[i].substring(4));
+                                else if (parts[i].startsWith("RCPT:")) rec.setReceiptPath(parts[i].substring(5));
                             }
                             expenses.add(rec);
                         } else if ("REGULAR".equals(type)) {
@@ -145,6 +151,8 @@ public class FileStorage {
                                 else if ("INCOME".equals(parts[i])) exp.setIncome(true);
                                 else if ("REFUND".equals(parts[i])) exp.setRefund(true);
                                 else if (parts[i].startsWith("TAGS:")) parseTags(exp, parts[i]);
+                                else if (parts[i].startsWith("CUR:")) exp.setCurrency(parts[i].substring(4));
+                                else if (parts[i].startsWith("RCPT:")) exp.setReceiptPath(parts[i].substring(5));
                             }
                             expenses.add(exp);
                         } else {
@@ -647,5 +655,140 @@ public class FileStorage {
             }
         }
         return logs;
+    }
+
+    // ======================== Exchange Rates ========================
+
+    public void saveExchangeRates(String baseCurrency, Map<String, Double> rates) throws IOException {
+        atomicWrite(Path.of(baseDir + File.separator + "exchange_rates.txt"), out -> {
+            out.println("BASE=" + baseCurrency);
+            for (Map.Entry<String, Double> entry : rates.entrySet()) {
+                out.println(entry.getKey() + "," + entry.getValue());
+            }
+        });
+    }
+
+    public String loadBaseCurrency() {
+        return loadSettings().getOrDefault("baseCurrency", "ZAR");
+    }
+
+    public void saveBaseCurrency(String code) throws IOException {
+        saveSetting("baseCurrency", code);
+    }
+
+    public Map<String, Double> loadExchangeRates() throws IOException {
+        Map<String, Double> rates = new LinkedHashMap<>();
+        File file = new File(baseDir + File.separator + "exchange_rates.txt");
+        if (!file.exists()) return rates;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.startsWith("BASE=")) continue;
+                String[] parts = splitCsv(line);
+                if (parts.length == 2) {
+                    try {
+                        rates.put(parts[0], Double.parseDouble(parts[1]));
+                    } catch (NumberFormatException e) {
+                        addParseWarning("Invalid exchange rate: " + line);
+                    }
+                }
+            }
+        }
+        return rates;
+    }
+
+    // ======================== Receipts ========================
+
+    public String getReceiptsDir() {
+        String dir = baseDir + File.separator + "receipts";
+        new File(dir).mkdirs();
+        return dir;
+    }
+
+    // ======================== Debts ========================
+
+    public void saveDebts(List<Debt> debts) throws IOException {
+        atomicWrite(Path.of(baseDir + File.separator + "debts.txt"), out -> {
+            for (Debt d : debts) {
+                out.println(escapeCsv(d.getId()) + "," +
+                    escapeCsv(d.getName()) + "," +
+                    d.getPrincipal() + "," +
+                    d.getAnnualRate() + "," +
+                    d.getTermMonths() + "," +
+                    d.getStartDate() + "," +
+                    d.getPaymentFrequency() + "," +
+                    d.getMonthlyPayment() + "," +
+                    (d.getCurrency() != null ? d.getCurrency() : ""));
+            }
+        });
+    }
+
+    public List<Debt> loadDebts() throws IOException {
+        List<Debt> debts = new ArrayList<>();
+        File file = new File(baseDir + File.separator + "debts.txt");
+        if (!file.exists()) return debts;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            int lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (line.trim().isEmpty()) continue;
+                try {
+                    String[] parts = splitCsv(line);
+                    if (parts.length >= 8) {
+                        String id = parts[0];
+                        String name = parts[1];
+                        double principal = Double.parseDouble(parts[2]);
+                        double annualRate = Double.parseDouble(parts[3]);
+                        int termMonths = Integer.parseInt(parts[4]);
+                        LocalDate startDate = LocalDate.parse(parts[5]);
+                        String paymentFrequency = parts[6];
+                        double monthlyPayment = Double.parseDouble(parts[7]);
+                        String currency = parts.length >= 9 && !parts[8].isEmpty() ? parts[8] : null;
+                        debts.add(new Debt(id, name, principal, annualRate, termMonths, startDate,
+                            paymentFrequency, monthlyPayment, currency));
+                    }
+                } catch (Exception e) {
+                    addParseWarning("Error parsing debt line " + lineNumber + ": " + e.getMessage());
+                }
+            }
+        }
+        return debts;
+    }
+
+    public void saveDebtPayments(List<DebtPayment> payments) throws IOException {
+        atomicWrite(Path.of(baseDir + File.separator + "debt_payments.txt"), out -> {
+            for (DebtPayment p : payments) {
+                out.println(escapeCsv(p.getDebtId()) + "," +
+                    p.getAmount() + "," +
+                    p.getDate() + "," +
+                    escapeCsv(p.getNote() != null ? p.getNote() : ""));
+            }
+        });
+    }
+
+    public List<DebtPayment> loadDebtPayments() throws IOException {
+        List<DebtPayment> payments = new ArrayList<>();
+        File file = new File(baseDir + File.separator + "debt_payments.txt");
+        if (!file.exists()) return payments;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.trim().isEmpty()) continue;
+                try {
+                    String[] parts = splitCsv(line);
+                    if (parts.length >= 3) {
+                        String debtId = parts[0];
+                        double amount = Double.parseDouble(parts[1]);
+                        LocalDate date = LocalDate.parse(parts[2]);
+                        String note = parts.length >= 4 ? parts[3] : "";
+                        payments.add(new DebtPayment(debtId, amount, date, note));
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error parsing debt payment: " + e.getMessage());
+                }
+            }
+        }
+        return payments;
     }
 }

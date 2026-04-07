@@ -7,7 +7,12 @@ import java.util.stream.Collectors;
 
 public class AnomalyDetector {
 
-    public static List<Anomaly> detect(List<Expense> expenses, YearMonth selectedMonth, String currencySymbol) {
+    private static double toBase(Expense e, CurrencyManager cm) {
+        return cm.toBase(e.getAmount(), e.getCurrency());
+    }
+
+    public static List<Anomaly> detect(List<Expense> expenses, YearMonth selectedMonth,
+                                        String currencySymbol, CurrencyManager cm) {
         List<Anomaly> anomalies = new ArrayList<>();
 
         List<Expense> activeExpenses = expenses.stream()
@@ -20,9 +25,9 @@ public class AnomalyDetector {
 
         if (monthExpenses.isEmpty()) return anomalies;
 
-        detectAmountOutliers(anomalies, activeExpenses, monthExpenses, currencySymbol);
-        detectLargeTransactions(anomalies, activeExpenses, monthExpenses, currencySymbol);
-        detectSpendingSpikes(anomalies, activeExpenses, monthExpenses, selectedMonth, currencySymbol);
+        detectAmountOutliers(anomalies, activeExpenses, monthExpenses, currencySymbol, cm);
+        detectLargeTransactions(anomalies, activeExpenses, monthExpenses, currencySymbol, cm);
+        detectSpendingSpikes(anomalies, activeExpenses, monthExpenses, selectedMonth, currencySymbol, cm);
         detectNewCategories(anomalies, activeExpenses, monthExpenses, selectedMonth);
 
         anomalies.sort(Comparator.comparingDouble(Anomaly::getSeverity).reversed());
@@ -30,11 +35,11 @@ public class AnomalyDetector {
     }
 
     private static void detectAmountOutliers(List<Anomaly> anomalies, List<Expense> all,
-                                              List<Expense> month, String cs) {
+                                              List<Expense> month, String cs, CurrencyManager cm) {
         // IQR method per category
         Map<String, List<Double>> categoryAmounts = all.stream()
             .collect(Collectors.groupingBy(Expense::getCategory,
-                Collectors.mapping(Expense::getAmount, Collectors.toList())));
+                Collectors.mapping(e -> toBase(e, cm), Collectors.toList())));
 
         for (Expense e : month) {
             List<Double> amounts = categoryAmounts.get(e.getCategory());
@@ -46,12 +51,13 @@ public class AnomalyDetector {
             double iqr = q3 - q1;
             double upperBound = q3 + 1.5 * iqr;
 
-            if (e.getAmount() > upperBound && iqr > 0) {
-                double severity = Math.min((e.getAmount() - upperBound) / iqr, 1.0);
+            double baseAmount = toBase(e, cm);
+            if (baseAmount > upperBound && iqr > 0) {
+                double severity = Math.min((baseAmount - upperBound) / iqr, 1.0);
                 anomalies.add(new Anomaly(
                     Anomaly.AnomalyType.AMOUNT_OUTLIER,
                     String.format("%s: %s is unusually high for %s (typical range: %s - %s)",
-                        e.getCategory(), UIUtils.fmt(e.getAmount(), cs), e.getCategory(),
+                        e.getCategory(), UIUtils.fmt(baseAmount, cs), e.getCategory(),
                         UIUtils.fmt(q1, cs), UIUtils.fmt(q3, cs)),
                     e, e.getDate(), severity));
             }
@@ -59,17 +65,18 @@ public class AnomalyDetector {
     }
 
     private static void detectLargeTransactions(List<Anomaly> anomalies, List<Expense> all,
-                                                 List<Expense> month, String cs) {
-        double avgAmount = all.stream().mapToDouble(Expense::getAmount).average().orElse(0);
+                                                 List<Expense> month, String cs, CurrencyManager cm) {
+        double avgAmount = all.stream().mapToDouble(e -> toBase(e, cm)).average().orElse(0);
         if (avgAmount <= 0) return;
 
         for (Expense e : month) {
-            if (e.getAmount() > avgAmount * 3) {
-                double severity = Math.min(e.getAmount() / (avgAmount * 5), 1.0);
+            double baseAmount = toBase(e, cm);
+            if (baseAmount > avgAmount * 3) {
+                double severity = Math.min(baseAmount / (avgAmount * 5), 1.0);
                 anomalies.add(new Anomaly(
                     Anomaly.AnomalyType.LARGE_TRANSACTION,
                     String.format("Large transaction: %s at \"%s\" (avg transaction: %s)",
-                        UIUtils.fmt(e.getAmount(), cs),
+                        UIUtils.fmt(baseAmount, cs),
                         e.getDescription() != null ? e.getDescription() : e.getCategory(),
                         UIUtils.fmt(avgAmount, cs)),
                     e, e.getDate(), severity));
@@ -78,11 +85,12 @@ public class AnomalyDetector {
     }
 
     private static void detectSpendingSpikes(List<Anomaly> anomalies, List<Expense> all,
-                                              List<Expense> month, YearMonth selectedMonth, String cs) {
+                                              List<Expense> month, YearMonth selectedMonth,
+                                              String cs, CurrencyManager cm) {
         // Compare daily spending to historical average
         Map<LocalDate, Double> dailyTotals = month.stream()
             .collect(Collectors.groupingBy(Expense::getDate,
-                Collectors.summingDouble(Expense::getAmount)));
+                Collectors.summingDouble(e -> toBase(e, cm))));
 
         // Historical daily averages (last 3 months)
         List<Double> historicalDailyTotals = new ArrayList<>();
@@ -91,7 +99,7 @@ public class AnomalyDetector {
             Map<LocalDate, Double> histDaily = all.stream()
                 .filter(e -> YearMonth.from(e.getDate()).equals(histMonth))
                 .collect(Collectors.groupingBy(Expense::getDate,
-                    Collectors.summingDouble(Expense::getAmount)));
+                    Collectors.summingDouble(e -> toBase(e, cm))));
             historicalDailyTotals.addAll(histDaily.values());
         }
 

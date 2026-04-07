@@ -15,6 +15,8 @@ public class Expense {
     private boolean excluded;
     private boolean income;
     private boolean refund;
+    private String currency; // ISO currency code (e.g., "ZAR", "USD"); null = base currency
+    private String receiptPath; // path to attached receipt image
     private final Set<String> tags = new LinkedHashSet<>();
 
     public Expense(double amount, String category, LocalDate date, String description) {
@@ -88,6 +90,22 @@ public class Expense {
 
     public void setRefund(boolean refund) {
         this.refund = refund;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public String getReceiptPath() {
+        return receiptPath;
+    }
+
+    public void setReceiptPath(String receiptPath) {
+        this.receiptPath = receiptPath;
     }
 
     public Set<String> getTags() {

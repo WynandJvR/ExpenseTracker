@@ -64,6 +64,10 @@ public class AnalyticsController {
     private boolean initialized = false;
     private List<Expense> lastChartExpenses = Collections.emptyList();
 
+    private double toBase(Expense e) {
+        return state.getCurrencyManager().toBase(e.getAmount(), e.getCurrency());
+    }
+
     @FXML
     public void initialize() {
         // Empty — real setup in init(SharedState)
@@ -159,7 +163,7 @@ public class AnalyticsController {
         Map<String, Double> categoryMap = chartExpenses.stream()
             .collect(Collectors.groupingBy(
                 Expense::getCategory,
-                Collectors.summingDouble(Expense::getAmount)));
+                Collectors.summingDouble(this::toBase)));
 
         double pieTotal = categoryMap.values().stream().mapToDouble(Double::doubleValue).sum();
 
@@ -200,7 +204,7 @@ public class AnalyticsController {
                         List<Expense> filtered = lastChartExpenses.stream()
                             .filter(e -> e.getCategory().equals(category))
                             .collect(Collectors.toList());
-                        DrillDownDialog.show(state.getStage(), "Category: " + category, filtered, state.getCurrencySymbol());
+                        DrillDownDialog.show(state.getStage(), "Category: " + category, filtered, state.getCurrencySymbol(), state.getCurrencyManager());
                     });
                 }
             });
@@ -227,7 +231,7 @@ public class AnalyticsController {
                         List<Expense> filtered = lastChartExpenses.stream()
                             .filter(e -> !topCategories.contains(e.getCategory()))
                             .collect(Collectors.toList());
-                        DrillDownDialog.show(state.getStage(), "Other Categories", filtered, state.getCurrencySymbol());
+                        DrillDownDialog.show(state.getStage(), "Other Categories", filtered, state.getCurrencySymbol(), state.getCurrencyManager());
                     });
                 }
             });
@@ -278,7 +282,7 @@ public class AnalyticsController {
                 for (Expense e : chartExpenses) {
                     int day = e.getDate().getDayOfMonth();
                     if (day >= ws && day <= we) {
-                        catTotals.merge(e.getCategory(), e.getAmount(), Double::sum);
+                        catTotals.merge(e.getCategory(), toBase(e), Double::sum);
                         allCategories.add(e.getCategory());
                     }
                 }
@@ -297,7 +301,7 @@ public class AnalyticsController {
                         && state.shouldExcludeRecurring(expense, YearMonth.from(expense.getDate()))))
                 .collect(Collectors.groupingBy(
                     expense -> YearMonth.from(expense.getDate()),
-                    Collectors.summingDouble(Expense::getAmount)));
+                    Collectors.summingDouble(this::toBase)));
 
             YearMonth[] range = new YearMonth[2];
             state.getMonthRange(chartPeriod, selectedYear, selectedYearMonth, now, monthlyTotals, range);
@@ -319,7 +323,7 @@ public class AnalyticsController {
                 for (Expense e : expenseList) {
                     if (!e.isExcluded() && !e.isIncome() && YearMonth.from(e.getDate()).equals(ym)
                         && !(ymHasImports && e.getRecurringId() != null)) {
-                        catTotals.merge(e.getCategory(), e.getAmount(), Double::sum);
+                        catTotals.merge(e.getCategory(), toBase(e), Double::sum);
                         allCategories.add(e.getCategory());
                     }
                 }
@@ -353,7 +357,7 @@ public class AnalyticsController {
                                     .filter(e -> e.getCategory().equals(category))
                                     .collect(Collectors.toList());
                                 DrillDownDialog.show(state.getStage(),
-                                    category + " (" + barLabel + ")", filtered, state.getCurrencySymbol());
+                                    category + " (" + barLabel + ")", filtered, state.getCurrencySymbol(), state.getCurrencyManager());
                             });
                         }
                     }
@@ -408,13 +412,13 @@ public class AnalyticsController {
                     && state.shouldExcludeRecurring(expense, YearMonth.from(expense.getDate()))))
             .collect(Collectors.groupingBy(
                 expense -> YearMonth.from(expense.getDate()),
-                Collectors.summingDouble(Expense::getAmount)));
+                Collectors.summingDouble(this::toBase)));
 
         Map<YearMonth, Double> monthlyItemIncome = expenseList.stream()
             .filter(expense -> !expense.isExcluded() && expense.isIncome())
             .collect(Collectors.groupingBy(
                 expense -> YearMonth.from(expense.getDate()),
-                Collectors.summingDouble(Expense::getAmount)));
+                Collectors.summingDouble(this::toBase)));
 
         YearMonth[] range = new YearMonth[2];
         state.getMonthRange(chartPeriod, selectedYear, selectedYearMonth, now, monthlyExpenses, range);
@@ -503,7 +507,7 @@ public class AnalyticsController {
             .filter(e -> !e.isExcluded() && !e.isIncome())
             .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
             .filter(e -> !(budgetMonthHasImports && e.getRecurringId() != null))
-            .collect(Collectors.groupingBy(Expense::getCategory, Collectors.summingDouble(Expense::getAmount)));
+            .collect(Collectors.groupingBy(Expense::getCategory, Collectors.summingDouble(this::toBase)));
 
         List<String> budgetedCategories = budgets.entrySet().stream()
             .filter(e -> e.getValue() > 0)
@@ -596,7 +600,7 @@ public class AnalyticsController {
             .filter(e -> !(cumMonthHasImports && e.getRecurringId() != null))
             .collect(Collectors.groupingBy(
                 e -> e.getDate().getDayOfMonth(),
-                Collectors.summingDouble(Expense::getAmount)));
+                Collectors.summingDouble(this::toBase)));
 
         // Actual cumulative line
         XYChart.Series<Number, Number> actualSeries = new XYChart.Series<>();
@@ -681,7 +685,7 @@ public class AnalyticsController {
                 && !(e.getRecurringId() != null && catTrendImportedMonths.contains(YearMonth.from(e.getDate()))))
             .collect(Collectors.groupingBy(
                 e -> YearMonth.from(e.getDate()),
-                Collectors.summingDouble(Expense::getAmount)));
+                Collectors.summingDouble(this::toBase)));
 
         YearMonth[] range = new YearMonth[2];
         state.getMonthRange(chartPeriod, selectedYear, selectedYearMonth, now, monthlyTotals, range);
@@ -703,7 +707,7 @@ public class AnalyticsController {
         // Get top categories by total spend in the range
         List<Expense> rangeExpenses = state.filterExpensesByPeriod(chartPeriod, selectedYear, selectedYearMonth, now);
         Map<String, Double> categoryTotalMap = rangeExpenses.stream()
-            .collect(Collectors.groupingBy(Expense::getCategory, Collectors.summingDouble(Expense::getAmount)));
+            .collect(Collectors.groupingBy(Expense::getCategory, Collectors.summingDouble(this::toBase)));
 
         List<String> topCategories = categoryTotalMap.entrySet().stream()
             .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
@@ -720,7 +724,7 @@ public class AnalyticsController {
                 e -> YearMonth.from(e.getDate()),
                 Collectors.groupingBy(
                     e -> topCategories.contains(e.getCategory()) ? e.getCategory() : "Other",
-                    Collectors.summingDouble(Expense::getAmount))));
+                    Collectors.summingDouble(this::toBase))));
 
         List<String> allCategories = new ArrayList<>(topCategories);
         if (hasOther) allCategories.add("Other");
@@ -792,7 +796,7 @@ public class AnalyticsController {
             .filter(e -> e.getDate().getYear() == selectedYear || e.getDate().getYear() == prevYear)
             .collect(Collectors.groupingBy(
                 e -> YearMonth.from(e.getDate()),
-                Collectors.summingDouble(Expense::getAmount)));
+                Collectors.summingDouble(this::toBase)));
 
         XYChart.Series<String, Number> currentSeries = new XYChart.Series<>();
         currentSeries.setName(String.valueOf(selectedYear));
@@ -899,20 +903,20 @@ public class AnalyticsController {
                             && recurringDescs.contains(
                                 (imp.getDescription() != null ? imp.getDescription().toLowerCase().trim() : "")
                                 + "|" + imp.getCategory().toLowerCase())
-                            && Math.abs(imp.getAmount() - e.getAmount()) <= e.getAmount() * 0.15);
+                            && Math.abs(toBase(imp) - toBase(e)) <= toBase(e) * 0.15);
                     if (!hasImportedMatch) {
-                        recurringTotal += e.getAmount();
+                        recurringTotal += toBase(e);
                     }
                 } else {
-                    recurringTotal += e.getAmount();
+                    recurringTotal += toBase(e);
                 }
             } else {
                 // Real expense — check if it matches a recurring template
                 String key = (e.getDescription() != null ? e.getDescription().toLowerCase().trim() : "") + "|" + e.getCategory().toLowerCase();
                 if (recurringDescs.contains(key)) {
-                    recurringTotal += e.getAmount();
+                    recurringTotal += toBase(e);
                 } else {
-                    oneTimeTotal += e.getAmount();
+                    oneTimeTotal += toBase(e);
                 }
             }
         }
@@ -942,7 +946,7 @@ public class AnalyticsController {
                         List<Expense> filtered = allPeriodExpenses.stream()
                             .filter(e -> e.getRecurringId() != null)
                             .collect(Collectors.toList());
-                        DrillDownDialog.show(state.getStage(), "Recurring Expenses", filtered, state.getCurrencySymbol());
+                        DrillDownDialog.show(state.getStage(), "Recurring Expenses", filtered, state.getCurrencySymbol(), state.getCurrencyManager());
                     });
                 }
             });
@@ -961,7 +965,7 @@ public class AnalyticsController {
                         List<Expense> filtered = allPeriodExpenses.stream()
                             .filter(e -> e.getRecurringId() == null)
                             .collect(Collectors.toList());
-                        DrillDownDialog.show(state.getStage(), "One-Time Expenses", filtered, state.getCurrencySymbol());
+                        DrillDownDialog.show(state.getStage(), "One-Time Expenses", filtered, state.getCurrencySymbol(), state.getCurrencyManager());
                     });
                 }
             });
@@ -1001,7 +1005,8 @@ public class AnalyticsController {
                 new ArrayList<>(manager.getBaseRecurringExpenses()),
                 new HashMap<>(incomes),
                 recurringIncome,
-                new HashMap<>(budgets)
+                new HashMap<>(budgets),
+                state.getCurrencyManager()
         );
 
         ProjectionEngine.ProjectionResult result = projectionEngine.project(input);
