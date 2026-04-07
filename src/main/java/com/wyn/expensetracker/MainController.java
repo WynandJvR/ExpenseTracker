@@ -34,6 +34,7 @@ public class MainController {
     @FXML private ToggleButton navRecurring;
     @FXML private ToggleButton navImport;
     @FXML private ToggleButton navAnalytics;
+    @FXML private ToggleButton navDebts;
 
     // --- Sub-views (fx:include root nodes) ---
     @FXML private Node dashboard;
@@ -41,6 +42,7 @@ public class MainController {
     @FXML private Node recurring;
     @FXML private Node importTab;
     @FXML private Node analytics;
+    @FXML private Node debtsTab;
 
     // --- Sub-controllers (fx:include convention: <fx:id>Controller) ---
     @FXML private DashboardController dashboardController;
@@ -48,6 +50,7 @@ public class MainController {
     @FXML private RecurringController recurringController;
     @FXML private ImportController importTabController;
     @FXML private AnalyticsController analyticsController;
+    @FXML private DebtController debtsTabController;
 
     // --- Toolbar ---
     @FXML private Button undoButton;
@@ -113,6 +116,23 @@ public class MainController {
             System.err.println("Failed to load dismissed anomalies: " + e.getMessage());
         }
 
+        // Load exchange rates and base currency
+        try {
+            String baseCurrency = storage.loadBaseCurrency();
+            state.getCurrencyManager().setBaseCurrency(baseCurrency);
+            state.getCurrencyManager().setExchangeRates(storage.loadExchangeRates());
+        } catch (IOException e) {
+            System.err.println("Failed to load exchange rates: " + e.getMessage());
+        }
+
+        // Load debts
+        try {
+            state.getDebts().setAll(storage.loadDebts());
+            state.getDebtPayments().setAll(storage.loadDebtPayments());
+        } catch (IOException e) {
+            System.err.println("Failed to load debts: " + e.getMessage());
+        }
+
         // Set refresh callback
         state.setRefreshCallback(this::refreshTable);
 
@@ -128,6 +148,7 @@ public class MainController {
         recurringController.init(state);
         importTabController.init(state);
         analyticsController.init(state);
+        debtsTabController.init(state);
 
         // Select default view
         navDashboard.setSelected(true);
@@ -176,15 +197,33 @@ public class MainController {
             }
         });
 
-        // Currency combo
-        String currencySymbol = state.getStorage().loadCurrencySymbol();
-        state.setCurrencySymbol(currencySymbol);
-        currencyCombo.setItems(FXCollections.observableArrayList("R", "$", "\u20AC", "\u00A3", "\u00A5", "CHF", "kr", "Rs"));
-        currencyCombo.setValue(currencySymbol);
+        // Currency combo — now shows ISO codes, sets base currency
+        String baseCurrency = state.getCurrencyManager().getBaseCurrency();
+        state.setCurrencySymbol(CurrencyManager.getSymbol(baseCurrency));
+        currencyCombo.setItems(FXCollections.observableArrayList(CurrencyManager.getCurrencyCodes()));
+        currencyCombo.setValue(baseCurrency);
+        currencyCombo.setCellFactory(lv -> new ListCell<String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : CurrencyManager.getDisplayName(item));
+            }
+        });
+        currencyCombo.setButtonCell(new ListCell<String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : CurrencyManager.getDisplayName(item));
+            }
+        });
         currencyCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
             if (newVal != null) {
-                state.setCurrencySymbol(newVal);
-                try { state.getStorage().saveCurrencySymbol(newVal); } catch (IOException ex) { /* ignore */ }
+                state.getCurrencyManager().setBaseCurrency(newVal);
+                state.setCurrencySymbol(CurrencyManager.getSymbol(newVal));
+                try {
+                    state.getStorage().saveBaseCurrency(newVal);
+                    state.getStorage().saveCurrencySymbol(CurrencyManager.getSymbol(newVal));
+                } catch (IOException ex) { /* ignore */ }
                 refreshTable();
             }
         });
@@ -202,6 +241,7 @@ public class MainController {
         navRecurring.setToggleGroup(navGroup);
         navImport.setToggleGroup(navGroup);
         navAnalytics.setToggleGroup(navGroup);
+        navDebts.setToggleGroup(navGroup);
 
         navGroup.selectedToggleProperty().addListener((obs, oldToggle, newToggle) -> {
             if (newToggle == null) {
@@ -213,6 +253,7 @@ public class MainController {
             else if (newToggle == navRecurring) switchView("recurring");
             else if (newToggle == navImport) switchView("import");
             else if (newToggle == navAnalytics) switchView("analytics");
+            else if (newToggle == navDebts) switchView("debts");
         });
     }
 
@@ -222,12 +263,14 @@ public class MainController {
         recurring.setVisible(false); recurring.setManaged(false);
         importTab.setVisible(false); importTab.setManaged(false);
         analytics.setVisible(false); analytics.setManaged(false);
+        debtsTab.setVisible(false); debtsTab.setManaged(false);
 
         Node target = switch (viewName) {
             case "expenses" -> expenses;
             case "recurring" -> recurring;
             case "import" -> importTab;
             case "analytics" -> analytics;
+            case "debts" -> debtsTab;
             default -> dashboard;
         };
         target.setVisible(true);
@@ -269,6 +312,7 @@ public class MainController {
         analyticsController.refresh();
         recurringController.refresh();
         importTabController.refresh();
+        debtsTabController.refresh();
     }
 
     private void updateYearList() {
@@ -311,7 +355,7 @@ public class MainController {
         long thisMonth = state.getFilteredData().size();
         double monthTotal = state.getFilteredData().stream()
             .filter(e -> !e.isExcluded() && !e.isIncome() && !e.isRefund())
-            .mapToDouble(Expense::getAmount).sum();
+            .mapToDouble(e -> state.getCurrencyManager().toBase(e.getAmount(), e.getCurrency())).sum();
 
         String monthLabel = "this month";
         if (yearCombo.getValue() != null && monthCombo.getValue() != null) {
@@ -483,6 +527,7 @@ public class MainController {
                 case "recurring" -> navRecurring.setSelected(true);
                 case "import" -> navImport.setSelected(true);
                 case "analytics" -> navAnalytics.setSelected(true);
+                case "debts" -> navDebts.setSelected(true);
                 default -> navDashboard.setSelected(true);
             }
         }
@@ -572,8 +617,27 @@ public class MainController {
             state.getDismissedAnomalyKeys().clear();
         }
 
-        state.setCurrencySymbol(state.getStorage().loadCurrencySymbol());
-        currencyCombo.setValue(state.getCurrencySymbol());
+        // Load exchange rates
+        try {
+            String baseCurr = state.getStorage().loadBaseCurrency();
+            state.getCurrencyManager().setBaseCurrency(baseCurr);
+            state.getCurrencyManager().setExchangeRates(state.getStorage().loadExchangeRates());
+        } catch (Exception e) {
+            System.err.println("Error loading exchange rates: " + e.getMessage());
+        }
+
+        // Load debts
+        try {
+            state.getDebts().setAll(state.getStorage().loadDebts());
+            state.getDebtPayments().setAll(state.getStorage().loadDebtPayments());
+        } catch (Exception e) {
+            state.getDebts().clear();
+            state.getDebtPayments().clear();
+        }
+
+        String baseCurr = state.getCurrencyManager().getBaseCurrency();
+        state.setCurrencySymbol(CurrencyManager.getSymbol(baseCurr));
+        currencyCombo.setValue(baseCurr);
         state.setRecurringIncome(state.getStorage().loadRecurringIncome());
 
         // Re-init sub-controllers with updated state
@@ -582,6 +646,7 @@ public class MainController {
         recurringController.init(state);
         importTabController.init(state);
         analyticsController.init(state);
+        debtsTabController.init(state);
 
         try {
             state.getProfileManager().setActiveProfile(profileName);

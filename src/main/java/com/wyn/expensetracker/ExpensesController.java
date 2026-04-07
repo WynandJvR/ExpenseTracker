@@ -51,6 +51,9 @@ public class ExpensesController {
     @FXML private TableColumn<Expense, LocalDate> dateColumn;
     @FXML private TableColumn<Expense, String> descriptionColumn;
     @FXML private TableColumn<Expense, String> tagsColumn;
+    @FXML private TableColumn<Expense, String> currencyColumn;
+    @FXML private TableColumn<Expense, String> receiptColumn;
+    @FXML private ComboBox<String> currencyCodeCombo;
     @FXML private HBox detailBar;
     @FXML private TextField detailText;
     @FXML private Label expenseErrorLabel;
@@ -80,6 +83,17 @@ public class ExpensesController {
         // Date picker default to today
         datePicker.setValue(LocalDate.now());
 
+        // Currency combo for new expenses
+        currencyCodeCombo.setItems(FXCollections.observableArrayList(CurrencyManager.getCurrencyCodes()));
+        currencyCodeCombo.setValue(state.getCurrencyManager().getBaseCurrency());
+        currencyCodeCombo.setCellFactory(lv -> new ListCell<String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item);
+            }
+        });
+
         // Expense table setup
         expenseTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         expenseTable.setTooltip(new Tooltip("Double-click a cell to edit  |  Right-click for more options  |  Press F1 for shortcuts"));
@@ -87,7 +101,9 @@ public class ExpensesController {
         setupEditableCategoryColumn();
         setupEditableDateColumn();
         setupEditableDescriptionColumn();
+        setupCurrencyColumn();
         setupTagsColumn();
+        setupReceiptColumn();
 
         // Table items bound to SortedList wrapping filteredData
         SortedList<Expense> sortedData = new SortedList<>(state.getFilteredData());
@@ -220,6 +236,33 @@ public class ExpensesController {
                 }
             });
 
+            MenuItem attachReceiptItem = new MenuItem("Attach Receipt...");
+            attachReceiptItem.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null) attachReceipt(item);
+            });
+
+            MenuItem viewReceiptItem = new MenuItem("View Receipt");
+            viewReceiptItem.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null) viewReceipt(item);
+            });
+
+            MenuItem removeReceiptItem = new MenuItem("Remove Receipt");
+            removeReceiptItem.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null && item.getReceiptPath() != null) {
+                    item.setReceiptPath(null);
+                    try {
+                        state.saveExpenses();
+                        state.requestRefresh();
+                        showMsg("Receipt removed", false);
+                    } catch (IOException ex) {
+                        showMsg("Failed to save: " + ex.getMessage(), true);
+                    }
+                }
+            });
+
             menu.setOnShowing(e -> {
                 Expense item = row.getItem();
                 if (item != null && item.isExcluded()) {
@@ -239,11 +282,16 @@ public class ExpensesController {
                 }
                 makeRecurring.setVisible(item != null && item.getRecurringId() == null
                         && !(item instanceof RecurringExpense));
+                boolean hasReceipt = item != null && item.getReceiptPath() != null && !item.getReceiptPath().isEmpty();
+                viewReceiptItem.setVisible(hasReceipt);
+                removeReceiptItem.setVisible(hasReceipt);
+                attachReceiptItem.setText(hasReceipt ? "Replace Receipt..." : "Attach Receipt...");
             });
 
             menu.getItems().addAll(copyItem, new SeparatorMenuItem(),
                     toggleExclude, toggleIncome, toggleRefund,
                     new SeparatorMenuItem(), manageTags,
+                    new SeparatorMenuItem(), attachReceiptItem, viewReceiptItem, removeReceiptItem,
                     new SeparatorMenuItem(), makeRecurring);
             row.setContextMenu(menu);
             return row;
@@ -462,6 +510,10 @@ public class ExpensesController {
             String description = descriptionField.getText().trim();
 
             Expense expense = new Expense(amount, category, date, description.isEmpty() ? "" : description);
+            String selectedCurrency = currencyCodeCombo.getValue();
+            if (selectedCurrency != null && !selectedCurrency.equals(state.getCurrencyManager().getBaseCurrency())) {
+                expense.setCurrency(selectedCurrency);
+            }
             state.getManager().executeCommand(new AddExpenseCommand(state.getManager(), expense));
             try {
                 state.saveExpenses();
@@ -498,9 +550,15 @@ public class ExpensesController {
 
         Optional<ButtonType> result = confirmation.showAndWait();
         if (result.isPresent() && result.get() == ButtonType.OK) {
+            // Clean up receipt file if present
+            String receiptPath = selectedExpense.getReceiptPath();
             state.getManager().executeCommand(new DeleteExpenseCommand(state.getManager(), selectedExpense));
             try {
                 state.saveExpenses();
+                if (receiptPath != null && !receiptPath.isEmpty()) {
+                    java.io.File receiptFile = resolveReceiptFile(receiptPath);
+                    if (receiptFile.exists()) receiptFile.delete();
+                }
                 state.requestRefresh();
                 showMsg("Expense deleted successfully!", false);
             } catch (Exception ex) {
@@ -555,7 +613,9 @@ public class ExpensesController {
                 filePath = defaultFile.getAbsolutePath();
             }
 
-            ExcelExporter.exportExpenses(state.getManager().getExpensesForSave(), filePath);
+            ExcelExporter.exportExpenses(state.getManager().getExpensesForSave(),
+                new java.util.ArrayList<>(state.getDebts()),
+                new java.util.ArrayList<>(state.getDebtPayments()), filePath);
             showMsg("Expenses exported to Excel successfully at: " + filePath, false);
         } catch (IOException ex) {
             showMsg("Failed to export to Excel: " + ex.getMessage(), true);
@@ -590,7 +650,10 @@ public class ExpensesController {
             }
 
             List<Expense> toExport = new ArrayList<>(filteredData);
-            ExcelExporter.exportExpenses(toExport, selectedFile.getAbsolutePath());
+            ExcelExporter.exportExpenses(toExport,
+                new java.util.ArrayList<>(state.getDebts()),
+                new java.util.ArrayList<>(state.getDebtPayments()),
+                selectedFile.getAbsolutePath());
             showMsg(String.format("Exported %d expenses to %s", toExport.size(), selectedFile.getName()), false);
         } catch (IOException ex) {
             showMsg("Failed to export: " + ex.getMessage(), true);
@@ -722,6 +785,8 @@ public class ExpensesController {
                     updated.setIncome(old.isIncome());
                     updated.setRefund(old.isRefund());
                     updated.setTags(old.getTags());
+                    updated.setCurrency(old.getCurrency());
+                    updated.setReceiptPath(old.getReceiptPath());
                     handleInlineEdit(old, updated);
                 } catch (NumberFormatException ex) {
                     showMsg("Invalid amount", true);
@@ -740,7 +805,17 @@ public class ExpensesController {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && textField != null) { setGraphic(textField); setText(null); }
-                else { setText(fmt(item)); setGraphic(null); setAlignment(Pos.CENTER_RIGHT); }
+                else {
+                    Expense expense = getTableRow() != null ? getTableRow().getItem() : null;
+                    if (expense != null && expense.getCurrency() != null
+                            && !expense.getCurrency().equals(state.getCurrencyManager().getBaseCurrency())) {
+                        setText(CurrencyManager.fmt(item, expense.getCurrency()));
+                    } else {
+                        setText(fmt(item));
+                    }
+                    setGraphic(null);
+                    setAlignment(Pos.CENTER_RIGHT);
+                }
             }
         });
     }
@@ -804,6 +879,8 @@ public class ExpensesController {
                     updated.setIncome(old.isIncome());
                     updated.setRefund(old.isRefund());
                     updated.setTags(old.getTags());
+                    updated.setCurrency(old.getCurrency());
+                    updated.setReceiptPath(old.getReceiptPath());
                     handleInlineEdit(old, updated);
                 } catch (Exception ex) {
                     System.err.println("Error in category commitInlineEdit: " + ex.getMessage());
@@ -865,6 +942,9 @@ public class ExpensesController {
                 updated.setExcluded(old.isExcluded());
                 updated.setIncome(old.isIncome());
                 updated.setRefund(old.isRefund());
+                updated.setTags(old.getTags());
+                updated.setCurrency(old.getCurrency());
+                updated.setReceiptPath(old.getReceiptPath());
                 handleInlineEdit(old, updated);
             }
 
@@ -924,6 +1004,9 @@ public class ExpensesController {
                 updated.setExcluded(old.isExcluded());
                 updated.setIncome(old.isIncome());
                 updated.setRefund(old.isRefund());
+                updated.setTags(old.getTags());
+                updated.setCurrency(old.getCurrency());
+                updated.setReceiptPath(old.getReceiptPath());
                 handleInlineEdit(old, updated);
             }
 
@@ -989,6 +1072,158 @@ public class ExpensesController {
                 }
             }
         });
+    }
+
+    // ======================== CURRENCY COLUMN ========================
+
+    private void setupCurrencyColumn() {
+        currencyColumn.setCellValueFactory(cellData -> {
+            Expense expense = cellData.getValue();
+            String cur = state.getCurrencyManager().resolveExpenseCurrency(expense);
+            return new javafx.beans.property.SimpleStringProperty(cur);
+        });
+        currencyColumn.setCellFactory(col -> new TableCell<Expense, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setStyle("");
+                } else {
+                    setText(item);
+                    setAlignment(Pos.CENTER);
+                    boolean isForeign = !item.equals(state.getCurrencyManager().getBaseCurrency());
+                    setStyle(isForeign ? "-fx-text-fill: #F7B731; -fx-font-weight: bold;" : "");
+                    if (isForeign) {
+                        Expense expense = getTableRow() != null ? getTableRow().getItem() : null;
+                        if (expense != null) {
+                            if (state.getCurrencyManager().hasRate(item)) {
+                                double converted = state.getCurrencyManager().toBase(expense.getAmount(), item);
+                                setTooltip(new Tooltip(String.format("%s (= %s)",
+                                    CurrencyManager.fmt(expense.getAmount(), item),
+                                    UIUtils.fmt(converted, state.getCurrencySymbol()))));
+                            } else {
+                                setStyle("-fx-text-fill: #FC5C65; -fx-font-weight: bold;");
+                                setTooltip(new Tooltip("No exchange rate set for " + item + " — using 1:1"));
+                            }
+                        }
+                    } else {
+                        setTooltip(null);
+                    }
+                }
+            }
+        });
+    }
+
+    // ======================== RECEIPT COLUMN ========================
+
+    private void setupReceiptColumn() {
+        receiptColumn.setCellValueFactory(cellData -> {
+            Expense expense = cellData.getValue();
+            return new javafx.beans.property.SimpleStringProperty(expense.getReceiptPath());
+        });
+        receiptColumn.setCellFactory(col -> new TableCell<Expense, String>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || getTableRow() == null || getTableRow().getItem() == null) {
+                    setGraphic(null);
+                    setText(null);
+                } else {
+                    Expense expense = getTableRow().getItem();
+                    if (expense.getReceiptPath() != null && !expense.getReceiptPath().isEmpty()) {
+                        Label icon = new Label("\uD83D\uDCCE"); // paperclip
+                        icon.setStyle("-fx-cursor: hand; -fx-font-size: 14px;");
+                        icon.setOnMouseClicked(e -> viewReceipt(expense));
+                        icon.setTooltip(new Tooltip("View receipt"));
+                        setGraphic(icon);
+                    } else {
+                        setGraphic(null);
+                    }
+                    setText(null);
+                    setAlignment(Pos.CENTER);
+                }
+            }
+        });
+    }
+
+    private java.io.File resolveReceiptFile(String receiptPath) {
+        java.io.File file = new java.io.File(receiptPath);
+        if (file.isAbsolute()) return file;
+        return new java.io.File(state.getStorage().getReceiptsDir(), receiptPath);
+    }
+
+    private static final Set<String> IMAGE_EXTENSIONS = Set.of(
+        ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif");
+
+    private void viewReceipt(Expense expense) {
+        if (expense.getReceiptPath() == null) return;
+        java.io.File file = resolveReceiptFile(expense.getReceiptPath());
+        if (!file.exists()) {
+            showMsg("Receipt file not found: " + expense.getReceiptPath(), true);
+            return;
+        }
+        String name = file.getName().toLowerCase();
+        String ext = name.contains(".") ? name.substring(name.lastIndexOf('.')) : "";
+        if (!IMAGE_EXTENSIONS.contains(ext)) {
+            // Non-image file — open with system default application
+            try {
+                java.awt.Desktop.getDesktop().open(file);
+            } catch (Exception ex) {
+                showMsg("Cannot open file: " + ex.getMessage(), true);
+            }
+            return;
+        }
+        try {
+            javafx.scene.image.Image image = new javafx.scene.image.Image(file.toURI().toString(), 600, 800, true, true);
+            javafx.scene.image.ImageView imageView = new javafx.scene.image.ImageView(image);
+            imageView.setPreserveRatio(true);
+            imageView.setFitWidth(600);
+
+            ScrollPane scrollPane = new ScrollPane(imageView);
+            scrollPane.setFitToWidth(true);
+            scrollPane.setPrefSize(640, 700);
+            scrollPane.setStyle("-fx-background-color: #2A2A2A;");
+
+            Alert dialog = new Alert(Alert.AlertType.NONE);
+            dialog.initOwner(state.getStage());
+            dialog.setTitle("Receipt - " + (expense.getDescription() != null ? expense.getDescription() : expense.getCategory()));
+            dialog.getDialogPane().setContent(scrollPane);
+            dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+            dialog.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+            dialog.getDialogPane().setPrefSize(660, 740);
+            dialog.showAndWait();
+        } catch (Exception ex) {
+            showMsg("Error viewing receipt: " + ex.getMessage(), true);
+        }
+    }
+
+    private void attachReceipt(Expense expense) {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Attach Receipt Image");
+        fileChooser.getExtensionFilters().addAll(
+            new FileChooser.ExtensionFilter("Image Files", "*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.gif"),
+            new FileChooser.ExtensionFilter("All Files", "*.*")
+        );
+        java.io.File selected = fileChooser.showOpenDialog(state.getStage());
+        if (selected == null) return;
+
+        try {
+            String receiptsDir = state.getStorage().getReceiptsDir();
+            String ext = "";
+            int dot = selected.getName().lastIndexOf('.');
+            if (dot >= 0) ext = selected.getName().substring(dot);
+            String destName = System.currentTimeMillis() + "_" + expense.getCategory().replaceAll("[^a-zA-Z0-9]", "") + ext;
+            java.io.File dest = new java.io.File(receiptsDir, destName);
+            java.nio.file.Files.copy(selected.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+            expense.setReceiptPath(dest.getName());
+            state.saveExpenses();
+            state.requestRefresh();
+            showMsg("Receipt attached", false);
+        } catch (Exception ex) {
+            showMsg("Error attaching receipt: " + ex.getMessage(), true);
+        }
     }
 
     // ======================== MAKE RECURRING DIALOG ========================

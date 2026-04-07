@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.control.cell.PropertyValueFactory?>
+<?import javafx.scene.layout.*?>
+
+<ScrollPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="com.wyn.expensetracker.DebtController"
+            fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane"
+            visible="false" managed="false">
+    <VBox spacing="18" styleClass="content-view">
+        <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
+
+        <Label text="Debts &amp; Loans" styleClass="view-title"/>
+
+        <!-- Summary Cards -->
+        <HBox fx:id="debtSummaryCards" spacing="12" alignment="CENTER_LEFT">
+            <VBox styleClass="dashboard-card dashboard-card-spent" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                <Label text="Total Debt" styleClass="dashboard-card-title"/>
+                <TextField fx:id="totalDebtField" text="0.00" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+            </VBox>
+            <VBox styleClass="dashboard-card dashboard-card-budget" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                <Label text="Monthly Payments" styleClass="dashboard-card-title"/>
+                <TextField fx:id="monthlyPaymentsField" text="0.00" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+            </VBox>
+            <VBox styleClass="dashboard-card dashboard-card-top" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                <Label text="Total Interest" styleClass="dashboard-card-title"/>
+                <TextField fx:id="totalInterestField" text="0.00" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+            </VBox>
+            <VBox styleClass="dashboard-card dashboard-card-trend" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
+                <Label text="Total Paid" styleClass="dashboard-card-title"/>
+                <TextField fx:id="totalPaidField" text="0.00" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+            </VBox>
+        </HBox>
+
+        <!-- Add Debt Form -->
+        <TitledPane fx:id="addDebtPane" text="Add New Debt / Loan" expanded="false" styleClass="form-titled-pane">
+            <VBox spacing="8" styleClass="panel-box">
+                <padding><Insets top="12" right="12" bottom="12" left="12"/></padding>
+
+                <HBox spacing="16">
+                    <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <Label text="Name:" styleClass="form-label"/>
+                        <TextField fx:id="debtNameField" promptText="e.g., Car Loan, Mortgage" styleClass="text-field"/>
+                    </VBox>
+                    <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <Label text="Principal Amount:" styleClass="form-label"/>
+                        <TextField fx:id="debtPrincipalField" promptText="e.g., 100000" styleClass="text-field"/>
+                    </VBox>
+                    <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <Label text="Annual Interest Rate (%):" styleClass="form-label"/>
+                        <TextField fx:id="debtRateField" promptText="e.g., 8.5" styleClass="text-field"/>
+                    </VBox>
+                </HBox>
+
+                <HBox spacing="16">
+                    <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <Label text="Term (months):" styleClass="form-label"/>
+                        <TextField fx:id="debtTermField" promptText="e.g., 60" styleClass="text-field"/>
+                    </VBox>
+                    <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <Label text="Start Date:" styleClass="form-label"/>
+                        <DatePicker fx:id="debtStartDate" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+                    </VBox>
+                    <VBox spacing="5" HBox.hgrow="ALWAYS">
+                        <Label text="Monthly Payment (optional):" styleClass="form-label"/>
+                        <TextField fx:id="debtPaymentField" promptText="Auto-calculated if blank" styleClass="text-field"/>
+                    </VBox>
+                </HBox>
+
+                <HBox spacing="10" alignment="CENTER_LEFT">
+                    <Button fx:id="addDebtButton" text="Add Debt" styleClass="success-button" onAction="#handleAddDebt"/>
+                    <Label fx:id="calculatedPaymentLabel" text="" styleClass="form-label" style="-fx-text-fill: #4ECDC4;"/>
+                </HBox>
+                <Label fx:id="debtErrorLabel" styleClass="error-label"/>
+            </VBox>
+        </TitledPane>
+
+        <!-- Debts Table -->
+        <VBox spacing="8" styleClass="panel-box">
+            <Label text="Active Debts" styleClass="section-title"/>
+            <TableView fx:id="debtTable" styleClass="table-view" prefHeight="250">
+                <columns>
+                    <TableColumn fx:id="debtNameColumn" text="Name" prefWidth="150">
+                        <cellValueFactory><PropertyValueFactory property="name"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="debtPrincipalColumn" text="Principal" prefWidth="110">
+                        <cellValueFactory><PropertyValueFactory property="principal"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="debtRateColumn" text="Rate %" prefWidth="70">
+                        <cellValueFactory><PropertyValueFactory property="annualRate"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="debtTermColumn" text="Term" prefWidth="70">
+                        <cellValueFactory><PropertyValueFactory property="termMonths"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="debtPaymentColumn" text="Payment" prefWidth="110">
+                        <cellValueFactory><PropertyValueFactory property="monthlyPayment"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="debtBalanceColumn" text="Balance" prefWidth="110">
+                        <cellValueFactory><PropertyValueFactory property="principal"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="debtProgressColumn" text="Progress" prefWidth="150">
+                        <cellValueFactory><PropertyValueFactory property="principal"/></cellValueFactory>
+                    </TableColumn>
+                </columns>
+            </TableView>
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Button text="Edit" styleClass="primary-button" onAction="#handleEditDebt"/>
+                <Button text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteDebt"/>
+                <Button text="View Schedule" styleClass="primary-button" onAction="#handleViewSchedule"/>
+                <Button text="Record Payment" styleClass="success-button" onAction="#handleRecordPayment"/>
+            </HBox>
+        </VBox>
+
+        <!-- Payment History -->
+        <VBox spacing="8" styleClass="panel-box">
+            <Label text="Payment History" styleClass="section-title"/>
+            <TableView fx:id="paymentTable" styleClass="table-view" prefHeight="200">
+                <columns>
+                    <TableColumn fx:id="paymentDebtColumn" text="Debt" prefWidth="150">
+                        <cellValueFactory><PropertyValueFactory property="debtId"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="paymentAmountColumn" text="Amount" prefWidth="110">
+                        <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="paymentDateColumn" text="Date" prefWidth="120">
+                        <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="paymentNoteColumn" text="Note" prefWidth="200">
+                        <cellValueFactory><PropertyValueFactory property="note"/></cellValueFactory>
+                    </TableColumn>
+                </columns>
+            </TableView>
+        </VBox>
+
+        <Label fx:id="debtViewErrorLabel" styleClass="error-label"/>
+    </VBox>
+</ScrollPane>

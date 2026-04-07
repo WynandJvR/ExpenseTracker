@@ -15,15 +15,17 @@ public class ProjectionEngine {
         public final Map<YearMonth, Double> incomes;
         public final double recurringIncome;
         public final Map<String, Double> budgets;
+        public final CurrencyManager currencyManager;
 
         public ProjectionInput(List<Expense> allExpenses, List<RecurringExpense> recurringExpenses,
                                Map<YearMonth, Double> incomes, double recurringIncome,
-                               Map<String, Double> budgets) {
+                               Map<String, Double> budgets, CurrencyManager currencyManager) {
             this.allExpenses = new ArrayList<>(allExpenses);
             this.recurringExpenses = new ArrayList<>(recurringExpenses);
             this.incomes = new HashMap<>(incomes);
             this.recurringIncome = recurringIncome;
             this.budgets = new HashMap<>(budgets);
+            this.currencyManager = currencyManager;
         }
     }
 
@@ -64,8 +66,13 @@ public class ProjectionEngine {
 
     // ======================== MAIN PROJECTION ========================
 
+    private static double toBase(Expense e, CurrencyManager cm) {
+        return cm.toBase(e.getAmount(), e.getCurrency());
+    }
+
     public ProjectionResult project(ProjectionInput input) {
         YearMonth now = YearMonth.now();
+        CurrencyManager cm = input.currencyManager;
 
         // Separate actual (non-excluded, non-income, non-refund) expenses
         List<Expense> actualExpenses = input.allExpenses.stream()
@@ -81,7 +88,7 @@ public class ProjectionEngine {
         Map<YearMonth, Double> monthlyVariableTotals = variableExpenses.stream()
                 .collect(Collectors.groupingBy(
                         e -> YearMonth.from(e.getDate()),
-                        Collectors.summingDouble(Expense::getAmount)));
+                        Collectors.summingDouble(e -> toBase(e, cm))));
 
         // Per-category monthly variable totals
         Map<String, Map<YearMonth, Double>> categoryMonthlyVariable = variableExpenses.stream()
@@ -89,7 +96,7 @@ public class ProjectionEngine {
                         Expense::getCategory,
                         Collectors.groupingBy(
                                 e -> YearMonth.from(e.getDate()),
-                                Collectors.summingDouble(Expense::getAmount))));
+                                Collectors.summingDouble(e -> toBase(e, cm)))));
 
         // Sorted months with data
         List<YearMonth> dataMonths = monthlyVariableTotals.keySet().stream()
@@ -100,10 +107,10 @@ public class ProjectionEngine {
         int dataMonthsAvailable = dataMonths.size();
 
         // Compute current balance (historical income - historical expenses)
-        double totalHistoricalIncome = computeHistoricalIncome(input, now);
+        double totalHistoricalIncome = computeHistoricalIncome(input, now, cm);
         double totalHistoricalExpenses = actualExpenses.stream()
                 .filter(e -> !YearMonth.from(e.getDate()).isAfter(now))
-                .mapToDouble(Expense::getAmount)
+                .mapToDouble(e -> toBase(e, cm))
                 .sum();
         double currentBalance = totalHistoricalIncome - totalHistoricalExpenses;
 
@@ -130,7 +137,7 @@ public class ProjectionEngine {
             MonthProjection mp = new MonthProjection(targetMonth);
 
             // Algorithm 1: Deterministic recurring per category
-            Map<String, Double> recurringByCategory = computeRecurringForMonth(input.recurringExpenses, targetMonth);
+            Map<String, Double> recurringByCategory = computeRecurringForMonth(input.recurringExpenses, targetMonth, cm);
             double totalRecurring = recurringByCategory.values().stream().mapToDouble(Double::doubleValue).sum();
 
             // Algorithm 2: WMA per category + seasonal + trend
@@ -203,7 +210,8 @@ public class ProjectionEngine {
 
     // ======================== ALGORITHM 1: DETERMINISTIC RECURRING ========================
 
-    private Map<String, Double> computeRecurringForMonth(List<RecurringExpense> recurringExpenses, YearMonth targetMonth) {
+    private Map<String, Double> computeRecurringForMonth(List<RecurringExpense> recurringExpenses,
+                                                            YearMonth targetMonth, CurrencyManager cm) {
         Map<String, Double> result = new LinkedHashMap<>();
         LocalDate monthStart = targetMonth.atDay(1);
         LocalDate monthEnd = targetMonth.atEndOfMonth();
@@ -213,13 +221,14 @@ public class ProjectionEngine {
             if (re.getDate().isAfter(monthEnd)) continue;
             if (re.getEndDate() != null && re.getEndDate().isBefore(monthStart)) continue;
 
+            double baseAmount = toBase(re, cm);
             double monthlyEquivalent = switch (re.getFrequency()) {
-                case DAILY -> re.getAmount() * targetMonth.lengthOfMonth();
-                case WEEKLY -> re.getAmount() * targetMonth.lengthOfMonth() / 7.0;
-                case BIWEEKLY -> re.getAmount() * targetMonth.lengthOfMonth() / 14.0;
-                case MONTHLY -> re.getAmount();
-                case QUARTERLY -> re.getAmount() / 3.0;
-                case YEARLY -> re.getAmount() / 12.0;
+                case DAILY -> baseAmount * targetMonth.lengthOfMonth();
+                case WEEKLY -> baseAmount * targetMonth.lengthOfMonth() / 7.0;
+                case BIWEEKLY -> baseAmount * targetMonth.lengthOfMonth() / 14.0;
+                case MONTHLY -> baseAmount;
+                case QUARTERLY -> baseAmount / 3.0;
+                case YEARLY -> baseAmount / 12.0;
             };
 
             result.merge(re.getCategory(), monthlyEquivalent, Double::sum);
@@ -331,7 +340,7 @@ public class ProjectionEngine {
 
     // ======================== HELPER ========================
 
-    private double computeHistoricalIncome(ProjectionInput input, YearMonth upTo) {
+    private double computeHistoricalIncome(ProjectionInput input, YearMonth upTo, CurrencyManager cm) {
         double total = 0;
 
         // Sum up explicit income entries
@@ -366,7 +375,7 @@ public class ProjectionEngine {
         total += input.allExpenses.stream()
                 .filter(e -> (e.isIncome() || e.isRefund()) && !e.isExcluded())
                 .filter(e -> !YearMonth.from(e.getDate()).isAfter(upTo))
-                .mapToDouble(Expense::getAmount)
+                .mapToDouble(e -> toBase(e, cm))
                 .sum();
 
         return total;

@@ -100,8 +100,9 @@ public class CashFlowCalendarView extends VBox {
             double dayIncome = 0;
             double dayExpense = 0;
             for (RecurringExpense r : dayRecurring) {
-                if (r.isIncome()) dayIncome += r.getAmount();
-                else dayExpense += r.getAmount();
+                double baseAmt = state.getCurrencyManager().toBase(r.getAmount(), r.getCurrency());
+                if (r.isIncome()) dayIncome += baseAmt;
+                else dayExpense += baseAmt;
             }
             runningBalance += dayIncome - dayExpense;
 
@@ -224,7 +225,7 @@ public class CashFlowCalendarView extends VBox {
         double oneTimeExpenses = state.getExpenseList().stream()
             .filter(e -> !e.isExcluded() && !e.isIncome() && e.getRecurringId() == null
                 && YearMonth.from(e.getDate()).equals(displayedMonth))
-            .mapToDouble(Expense::getAmount).sum();
+            .mapToDouble(e -> state.getCurrencyManager().toBase(e.getAmount(), e.getCurrency())).sum();
 
         return income - oneTimeExpenses;
     }

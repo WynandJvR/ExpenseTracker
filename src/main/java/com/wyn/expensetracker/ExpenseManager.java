@@ -142,6 +142,7 @@ public class ExpenseManager {
                     if (recurringExpense.isIncome()) generated.setIncome(true);
                     if (recurringExpense.isRefund()) generated.setRefund(true);
                     if (recurringExpense.isExcluded()) generated.setExcluded(true);
+                    if (recurringExpense.getCurrency() != null) generated.setCurrency(recurringExpense.getCurrency());
                     generatedExpenses.add(generated);
                     generatedRecurringIds.add(recurringId);
                 }

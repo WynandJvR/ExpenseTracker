@@ -57,6 +57,14 @@ public class DashboardController {
     @FXML private VBox goalsBox;
     @FXML private VBox goalsProgressBox;
 
+    // --- Debt summary ---
+    @FXML private VBox debtSummaryBox;
+    @FXML private VBox debtSummaryContent;
+
+    // --- Exchange rates ---
+    @FXML private VBox exchangeRatesBox;
+    @FXML private VBox exchangeRatesContent;
+
     // --- Error label ---
     @FXML private Label errorLabel;
 
@@ -92,6 +100,8 @@ public class DashboardController {
         updateIncomeField();
         updateGoalsPanel();
         updateAnomalyAlerts();
+        updateDebtSummary();
+        updateExchangeRatesPanel();
     }
 
     // ======================== CATEGORY TABLE SETUP ========================
@@ -352,19 +362,19 @@ public class DashboardController {
             // Actual month: only count real expenses (exclude recurring projections)
             total = monthExpenses.stream()
                     .filter(e -> !e.isExcluded() && !e.isIncome() && e.getRecurringId() == null)
-                    .mapToDouble(Expense::getAmount)
+                    .mapToDouble(this::toBase)
                     .sum();
         } else {
             // Projected month: use recurring expenses as forecast
             total = monthExpenses.stream()
                     .filter(e -> !e.isExcluded() && !e.isIncome())
-                    .mapToDouble(Expense::getAmount)
+                    .mapToDouble(this::toBase)
                     .sum();
         }
 
         double actualIncome = monthExpenses.stream()
                 .filter(e -> !e.isExcluded() && e.isIncome())
-                .mapToDouble(Expense::getAmount)
+                .mapToDouble(this::toBase)
                 .sum();
         double projectedIncome = state.getIncomes().getOrDefault(selectedYearMonth, state.getRecurringIncome());
 
@@ -378,14 +388,17 @@ public class DashboardController {
         totalLabel.setText(String.format("%sExpenses for %s %d: %s", prefix,
                 selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, fmt(total)));
 
-        double moneySaved = income - total;
+        double monthlyDebtPayments = computeMonthlyDebtObligations();
+        double moneySaved = income - total - monthlyDebtPayments;
+        String debtSuffix = monthlyDebtPayments > 0
+                ? String.format(" (incl. %s debt)", fmt(monthlyDebtPayments)) : "";
         if (moneySaved >= 0) {
             String label = isProjected ? "Projected Savings: " : "Money Saved: ";
-            moneySavedLabel.setText(label + fmt(moneySaved));
+            moneySavedLabel.setText(label + fmt(moneySaved) + debtSuffix);
             moneySavedLabel.getStyleClass().setAll("saved-label");
         } else {
             String label = isProjected ? "Projected Overspend: " : "Overspent: ";
-            moneySavedLabel.setText(label + fmt(Math.abs(moneySaved)));
+            moneySavedLabel.setText(label + fmt(Math.abs(moneySaved)) + debtSuffix);
             moneySavedLabel.getStyleClass().setAll("saved-label", "overspent-label");
         }
 
@@ -394,7 +407,7 @@ public class DashboardController {
                         && (!hasImportedData || e.getRecurringId() == null))
                 .collect(Collectors.groupingBy(
                         Expense::getCategory,
-                        Collectors.summingDouble(Expense::getAmount))
+                        Collectors.summingDouble(this::toBase))
                 );
 
         state.getCategoryTotals().setAll(categoryMap.entrySet().stream()
@@ -412,7 +425,7 @@ public class DashboardController {
                     if (prevMonthHasImports && expense.getRecurringId() != null) return false;
                     return YearMonth.from(expense.getDate()).equals(prevYearMonth);
                 })
-                .mapToDouble(Expense::getAmount)
+                .mapToDouble(this::toBase)
                 .sum();
 
         updateDashboardCards(total, categoryMap, prevTotal);
@@ -488,7 +501,8 @@ public class DashboardController {
         if (ym == null) return;
 
         List<Anomaly> anomalies = AnomalyDetector.detect(
-            new ArrayList<>(state.getExpenseList()), ym, state.getCurrencySymbol());
+            new ArrayList<>(state.getExpenseList()), ym, state.getCurrencySymbol(),
+            state.getCurrencyManager());
 
         // Filter out dismissed
         anomalies.removeIf(a -> state.getDismissedAnomalyKeys().contains(a.getDismissKey()));
@@ -785,7 +799,7 @@ public class DashboardController {
         if (monthIncome.isEmpty()) {
             incomeTabSummary.setText("No income this month.");
         } else {
-            double total = monthIncome.stream().mapToDouble(Expense::getAmount).sum();
+            double total = monthIncome.stream().mapToDouble(this::toBase).sum();
             incomeTabSummary.setText(String.format("%d transaction(s) \u2014 Total: %s", monthIncome.size(), fmt(total)));
         }
     }
@@ -830,6 +844,238 @@ public class DashboardController {
 
     private String fmt(double amount) {
         return UIUtils.fmt(amount, state.getCurrencySymbol());
+    }
+
+    private double toBase(Expense e) {
+        return state.getCurrencyManager().toBase(e.getAmount(), e.getCurrency());
+    }
+
+    private double computeMonthlyDebtObligations() {
+        double total = 0;
+        for (Debt debt : state.getDebts()) {
+            double paid = state.getDebtPayments().stream()
+                .filter(p -> p.getDebtId().equals(debt.getId()))
+                .mapToDouble(DebtPayment::getAmount).sum();
+            double balance = debt.getRemainingBalance(paid);
+            if (balance > 0.01) {
+                double payment = debt.getMonthlyPayment() > 0 ? debt.getMonthlyPayment() : debt.calculateMonthlyPayment();
+                total += state.getCurrencyManager().toBase(payment, debt.getCurrency());
+            }
+        }
+        return total;
+    }
+
+    // ======================== DEBT SUMMARY ========================
+
+    private void updateDebtSummary() {
+        debtSummaryContent.getChildren().clear();
+        if (state.getDebts().isEmpty()) {
+            debtSummaryBox.setVisible(false);
+            debtSummaryBox.setManaged(false);
+            return;
+        }
+        debtSummaryBox.setVisible(true);
+        debtSummaryBox.setManaged(true);
+
+        double totalBalance = 0;
+        double totalMonthly = 0;
+
+        for (Debt debt : state.getDebts()) {
+            double paid = state.getDebtPayments().stream()
+                .filter(p -> p.getDebtId().equals(debt.getId()))
+                .mapToDouble(DebtPayment::getAmount).sum();
+            double balance = debt.getRemainingBalance(paid);
+            double payment = debt.getMonthlyPayment() > 0 ? debt.getMonthlyPayment() : debt.calculateMonthlyPayment();
+            double totalCost = debt.getTotalCost();
+            double progress = totalCost > 0 ? Math.min(paid / totalCost, 1.0) : 0;
+
+            totalBalance += balance;
+            if (balance > 0.01) totalMonthly += payment;
+
+            javafx.scene.layout.HBox row = new javafx.scene.layout.HBox(10);
+            row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
+            Label nameLabel = new Label(debt.getName());
+            nameLabel.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 13px; -fx-min-width: 120;");
+
+            javafx.scene.control.ProgressBar bar = new javafx.scene.control.ProgressBar(progress);
+            bar.setPrefWidth(120);
+            bar.setPrefHeight(14);
+            bar.setStyle(balance <= 0.01 ? "-fx-accent: #26DE81;" : "-fx-accent: #5C6BC0;");
+
+            Label balLabel = new Label(UIUtils.fmt(balance, state.getCurrencySymbol()) + " remaining");
+            balLabel.setStyle("-fx-text-fill: #B0B0B0; -fx-font-size: 12px;");
+
+            row.getChildren().addAll(nameLabel, bar, balLabel);
+            debtSummaryContent.getChildren().add(row);
+        }
+
+        Label totalLine = new Label(String.format("Total: %s debt  |  %s/month in payments",
+            UIUtils.fmt(totalBalance, state.getCurrencySymbol()),
+            UIUtils.fmt(totalMonthly, state.getCurrencySymbol())));
+        totalLine.setStyle("-fx-text-fill: #FF6F61; -fx-font-size: 13px; -fx-font-weight: bold; -fx-padding: 6 0 0 0;");
+        debtSummaryContent.getChildren().add(totalLine);
+    }
+
+    // ======================== EXCHANGE RATES ========================
+
+    private void updateExchangeRatesPanel() {
+        exchangeRatesContent.getChildren().clear();
+        Map<String, Double> rates = state.getCurrencyManager().getExchangeRates();
+        String baseCurrency = state.getCurrencyManager().getBaseCurrency();
+
+        // Check if any expenses use foreign currencies
+        boolean hasForeignExpenses = state.getExpenseList().stream()
+            .anyMatch(e -> e.getCurrency() != null && !e.getCurrency().equals(baseCurrency));
+
+        if (rates.isEmpty() && !hasForeignExpenses) {
+            exchangeRatesBox.setVisible(false);
+            exchangeRatesBox.setManaged(false);
+            return;
+        }
+        exchangeRatesBox.setVisible(true);
+        exchangeRatesBox.setManaged(true);
+
+        Label baseLabel = new Label("Base: " + CurrencyManager.getDisplayName(baseCurrency));
+        baseLabel.setStyle("-fx-text-fill: #B0B0B0; -fx-font-size: 12px;");
+        exchangeRatesContent.getChildren().add(baseLabel);
+
+        for (Map.Entry<String, Double> entry : rates.entrySet()) {
+            Label rateLabel = new Label(String.format("1 %s = %.4f %s", entry.getKey(), entry.getValue(), baseCurrency));
+            rateLabel.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 13px;");
+            exchangeRatesContent.getChildren().add(rateLabel);
+        }
+
+        if (rates.isEmpty()) {
+            Label hint = new Label("No rates configured. Click 'Edit Rates' to add exchange rates.");
+            hint.setStyle("-fx-text-fill: #888888; -fx-font-size: 12px; -fx-font-style: italic;");
+            exchangeRatesContent.getChildren().add(hint);
+        }
+    }
+
+    @FXML
+    private void handleEditExchangeRates() {
+        String baseCurrency = state.getCurrencyManager().getBaseCurrency();
+        Map<String, Double> currentRates = new LinkedHashMap<>(state.getCurrencyManager().getExchangeRates());
+
+        javafx.scene.layout.VBox content = new javafx.scene.layout.VBox(10);
+        content.setPadding(new javafx.geometry.Insets(15));
+        content.getStyleClass().add("root-pane");
+
+        Label header = new Label("Exchange rates relative to " + baseCurrency);
+        header.getStyleClass().add("section-title");
+        header.setWrapText(true);
+
+        Label helpText = new Label("Enter how many " + baseCurrency + " one unit of each foreign currency is worth.");
+        helpText.setStyle("-fx-text-fill: #B0B0B0; -fx-font-size: 12px;");
+        helpText.setWrapText(true);
+
+        javafx.scene.layout.VBox ratesBox = new javafx.scene.layout.VBox(8);
+        Map<String, javafx.scene.control.TextField> rateFields = new LinkedHashMap<>();
+
+        // Collect currencies used in expenses
+        Set<String> usedCurrencies = new LinkedHashSet<>();
+        for (Expense e : state.getExpenseList()) {
+            if (e.getCurrency() != null && !e.getCurrency().equals(baseCurrency)) {
+                usedCurrencies.add(e.getCurrency());
+            }
+        }
+        // Also include existing rate keys
+        usedCurrencies.addAll(currentRates.keySet());
+
+        // Common currencies to offer
+        for (String code : CurrencyManager.getCurrencyCodes()) {
+            if (!code.equals(baseCurrency) && (usedCurrencies.contains(code) || currentRates.containsKey(code))) {
+                addRateField(ratesBox, rateFields, code, baseCurrency, currentRates);
+            }
+        }
+
+        // Add button for additional currencies
+        javafx.scene.control.ComboBox<String> addCurrencyCombo = new javafx.scene.control.ComboBox<>();
+        addCurrencyCombo.setPromptText("Add currency...");
+        addCurrencyCombo.getStyleClass().add("combo-box");
+        java.util.List<String> available = new java.util.ArrayList<>();
+        for (String code : CurrencyManager.getCurrencyCodes()) {
+            if (!code.equals(baseCurrency) && !rateFields.containsKey(code)) {
+                available.add(code);
+            }
+        }
+        addCurrencyCombo.setItems(javafx.collections.FXCollections.observableArrayList(available));
+        addCurrencyCombo.setOnAction(e -> {
+            String selected = addCurrencyCombo.getValue();
+            if (selected != null && !rateFields.containsKey(selected)) {
+                addRateField(ratesBox, rateFields, selected, baseCurrency, currentRates);
+                addCurrencyCombo.getItems().remove(selected);
+                addCurrencyCombo.setValue(null);
+            }
+        });
+
+        javafx.scene.layout.HBox addRow = new javafx.scene.layout.HBox(8, new Label("Add:"), addCurrencyCombo);
+        addRow.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        ((Label) addRow.getChildren().get(0)).setStyle("-fx-text-fill: #E0E0E0;");
+
+        content.getChildren().addAll(header, helpText, ratesBox, addRow);
+
+        javafx.scene.control.ScrollPane scrollPane = new javafx.scene.control.ScrollPane(content);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setPrefSize(450, 400);
+        scrollPane.setStyle("-fx-background-color: #1E1E1E;");
+
+        javafx.scene.control.Alert dialog = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.NONE);
+        dialog.initOwner(state.getStage());
+        dialog.setTitle("Exchange Rates");
+        dialog.getDialogPane().setContent(scrollPane);
+        dialog.getDialogPane().getButtonTypes().addAll(
+            javafx.scene.control.ButtonType.OK, javafx.scene.control.ButtonType.CANCEL);
+        dialog.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+
+        dialog.showAndWait().ifPresent(result -> {
+            if (result == javafx.scene.control.ButtonType.OK) {
+                Map<String, Double> newRates = new LinkedHashMap<>();
+                for (Map.Entry<String, javafx.scene.control.TextField> entry : rateFields.entrySet()) {
+                    String text = entry.getValue().getText().trim();
+                    if (!text.isEmpty()) {
+                        try {
+                            double rate = Double.parseDouble(text);
+                            if (rate > 0) newRates.put(entry.getKey(), rate);
+                        } catch (NumberFormatException ignored) {}
+                    }
+                }
+                state.getCurrencyManager().setExchangeRates(newRates);
+                try {
+                    state.getStorage().saveExchangeRates(baseCurrency, newRates);
+                } catch (java.io.IOException ex) {
+                    System.err.println("Error saving exchange rates: " + ex.getMessage());
+                }
+                state.requestRefresh();
+            }
+        });
+    }
+
+    private void addRateField(javafx.scene.layout.VBox ratesBox,
+                              Map<String, javafx.scene.control.TextField> rateFields,
+                              String code, String baseCurrency,
+                              Map<String, Double> currentRates) {
+        javafx.scene.layout.HBox row = new javafx.scene.layout.HBox(8);
+        row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+
+        Label label = new Label(String.format("1 %s =", CurrencyManager.getDisplayName(code)));
+        label.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 13px; -fx-min-width: 140;");
+
+        javafx.scene.control.TextField field = new javafx.scene.control.TextField();
+        field.setPromptText("Rate in " + baseCurrency);
+        field.getStyleClass().add("text-field");
+        field.setPrefWidth(120);
+        if (currentRates.containsKey(code)) {
+            field.setText(String.valueOf(currentRates.get(code)));
+        }
+
+        Label unitLabel = new Label(baseCurrency);
+        unitLabel.setStyle("-fx-text-fill: #B0B0B0; -fx-font-size: 13px;");
+
+        row.getChildren().addAll(label, field, unitLabel);
+        ratesBox.getChildren().add(row);
+        rateFields.put(code, field);
     }
 
     // --- Public accessors for MainController's copyable view content ---
