@@ -659,6 +659,31 @@ public class MainController {
 
         refreshTable();
         restoreUIState();
+
+        showLoadWarningsIfAny();
+    }
+
+    private void showLoadWarningsIfAny() {
+        List<String> warnings = state.getStorage().drainParseWarnings();
+        if (warnings.isEmpty()) return;
+        FileStorage.LoadStats stats = state.getStorage().getLastExpenseLoadStats();
+        boolean severe = stats.isSevere();
+        Alert alert = new Alert(severe ? Alert.AlertType.ERROR : Alert.AlertType.WARNING);
+        alert.initOwner(state.getStage());
+        alert.setTitle(severe ? "Data Corruption Detected" : "Data Warnings");
+        if (severe) {
+            alert.setHeaderText(stats.failedLines + " of " + stats.totalLines
+                + " expense lines failed to parse — this profile's data may be corrupted.");
+            alert.setContentText("Review the details before saving over the file.");
+        } else {
+            alert.setHeaderText(warnings.size() + " issue(s) found while loading data.");
+            alert.setContentText("Some entries were skipped. Expand for details.");
+        }
+        TextArea details = new TextArea(String.join("\n", warnings));
+        details.setEditable(false);
+        details.setWrapText(true);
+        alert.getDialogPane().setExpandableContent(details);
+        alert.showAndWait();
     }
 
     @FXML

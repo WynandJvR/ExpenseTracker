@@ -518,7 +518,7 @@ public class ExpensesController {
             try {
                 state.saveExpenses();
             } catch (Exception ex) {
-                state.getManager().undo();
+                state.getManager().rollbackLastCommand();
                 showMsg("Failed to save expense: " + ex.getMessage(), true);
                 return;
             }
@@ -562,7 +562,7 @@ public class ExpensesController {
                 state.requestRefresh();
                 showMsg("Expense deleted successfully!", false);
             } catch (Exception ex) {
-                state.getManager().undo();
+                state.getManager().rollbackLastCommand();
                 showMsg("Error deleting expense: " + ex.getMessage(), true);
             }
         }
@@ -736,7 +736,7 @@ public class ExpensesController {
         try {
             state.saveExpenses();
         } catch (Exception ex) {
-            state.getManager().undo();
+            state.getManager().rollbackLastCommand();
             showMsg("Error saving edit: " + ex.getMessage(), true);
             refresh();
             return;
@@ -1281,7 +1281,7 @@ public class ExpensesController {
                 state.saveExpenses();
                 state.syncRecurringList();
             } catch (IOException ex) {
-                state.getManager().undo();
+                state.getManager().rollbackLastCommand();
                 showMsg("Failed to save: " + ex.getMessage(), true);
                 dialog.close();
                 return;

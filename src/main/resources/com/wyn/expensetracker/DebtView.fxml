@@ -10,7 +10,7 @@
             fx:controller="com.wyn.expensetracker.DebtController"
             fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane"
             visible="false" managed="false">
-    <VBox spacing="18" styleClass="content-view">
+    <VBox spacing="16" styleClass="content-view">
         <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
 
         <Label text="Debts &amp; Loans" styleClass="view-title"/>
@@ -72,7 +72,7 @@
 
                 <HBox spacing="10" alignment="CENTER_LEFT">
                     <Button fx:id="addDebtButton" text="Add Debt" styleClass="success-button" onAction="#handleAddDebt"/>
-                    <Label fx:id="calculatedPaymentLabel" text="" styleClass="form-label" style="-fx-text-fill: #4ECDC4;"/>
+                    <Label fx:id="calculatedPaymentLabel" text="" styleClass="calc-hint"/>
                 </HBox>
                 <Label fx:id="debtErrorLabel" styleClass="error-label"/>
             </VBox>

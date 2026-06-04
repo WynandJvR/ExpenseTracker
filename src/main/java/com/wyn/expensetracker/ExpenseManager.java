@@ -8,11 +8,11 @@ import java.util.Set;
 import java.util.Stack;
 
 public class ExpenseManager {
-    private List<Expense> expenses;
-    private List<RecurringExpense> baseRecurringExpenses;
-    private Set<String> generatedRecurringIds;
-    private Stack<Command> undoStack;
-    private Stack<Command> redoStack;
+    private final List<Expense> expenses;
+    private final List<RecurringExpense> baseRecurringExpenses;
+    private final Set<String> generatedRecurringIds;
+    private final Stack<Command> undoStack;
+    private final Stack<Command> redoStack;
 
     public ExpenseManager() {
         expenses = new ArrayList<>();
@@ -33,6 +33,19 @@ public class ExpenseManager {
             Command command = undoStack.pop();
             command.undo();
             redoStack.push(command);
+        }
+    }
+
+    /**
+     * Undo the last command without enabling redo. Use after error recovery
+     * (e.g. save-to-disk failed) where re-applying the command would re-introduce
+     * the failure or, worse, succeed silently in memory after the user has been
+     * told the operation failed.
+     */
+    public void rollbackLastCommand() {
+        if (!undoStack.isEmpty()) {
+            Command command = undoStack.pop();
+            command.undo();
         }
     }
 
@@ -71,6 +84,23 @@ public class ExpenseManager {
     }
 
     public void replaceExpense(Expense oldExpense, Expense newExpense) {
+        if (oldExpense == null || newExpense == null) {
+            throw new IllegalArgumentException("Expenses cannot be null");
+        }
+        // Editing a generated recurring instance would be wiped on the next
+        // regenerateExpenses() pass — route the user to the Recurring tab instead.
+        if (oldExpense.getRecurringId() != null) {
+            throw new IllegalArgumentException(
+                "Cannot edit a generated recurring instance — edit the base recurring expense instead");
+        }
+        if (oldExpense instanceof RecurringExpense oldRec) {
+            if (!(newExpense instanceof RecurringExpense newRec)) {
+                throw new IllegalArgumentException(
+                    "Replacement for a RecurringExpense must also be a RecurringExpense");
+            }
+            updateRecurringExpense(oldRec, newRec);
+            return;
+        }
         int index = expenses.indexOf(oldExpense);
         if (index != -1) {
             expenses.set(index, newExpense);
@@ -197,15 +227,24 @@ public class ExpenseManager {
     }
 
     public void loadExpenses(List<Expense> loadedExpenses) {
-        expenses.clear();
-        baseRecurringExpenses.clear();
+        if (loadedExpenses == null) {
+            return;
+        }
+        // Partition into temp lists first so a parsing failure mid-iteration
+        // doesn't leave the manager with cleared but unrepopulated state.
+        List<Expense> newExpenses = new ArrayList<>();
+        List<RecurringExpense> newRecurring = new ArrayList<>();
         for (Expense expense : loadedExpenses) {
-            if (expense instanceof RecurringExpense) {
-                baseRecurringExpenses.add((RecurringExpense) expense);
+            if (expense instanceof RecurringExpense recurring) {
+                newRecurring.add(recurring);
             } else {
-                expenses.add(expense);
+                newExpenses.add(expense);
             }
         }
+        expenses.clear();
+        baseRecurringExpenses.clear();
+        expenses.addAll(newExpenses);
+        baseRecurringExpenses.addAll(newRecurring);
         regenerateExpenses();
     }
 }

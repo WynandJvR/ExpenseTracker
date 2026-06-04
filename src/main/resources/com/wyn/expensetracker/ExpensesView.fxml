@@ -10,7 +10,7 @@
             fx:controller="com.wyn.expensetracker.ExpensesController"
             fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane"
             visible="false" managed="false">
-    <VBox spacing="12" styleClass="content-view">
+    <VBox spacing="16" styleClass="content-view">
         <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
 
         <Label text="Expenses" styleClass="view-title"/>
@@ -47,8 +47,8 @@
 
                 <HBox spacing="10" alignment="CENTER_LEFT">
                     <Button fx:id="addButton" text="Add Expense" styleClass="success-button" onAction="#handleAddExpense"/>
-                    <Button text="+ Category" styleClass="secondary-button" onAction="#handleAddCategory"/>
-                    <Button text="- Category" styleClass="secondary-button" onAction="#handleRemoveCategory"/>
+                    <Button text="Add Category" styleClass="secondary-button" onAction="#handleAddCategory"/>
+                    <Button text="Remove Category" styleClass="secondary-button" onAction="#handleRemoveCategory"/>
                 </HBox>
                 <Label fx:id="expenseErrorLabel" styleClass="error-label"/>
             </VBox>

@@ -167,7 +167,7 @@ public class RecurringController {
                 state.saveExpenses();
                 state.syncRecurringList();
             } catch (Exception ex) {
-                state.getManager().undo();
+                state.getManager().rollbackLastCommand();
                 showMsg("Failed to save recurring expense: " + ex.getMessage(), true);
                 return;
             }
@@ -455,7 +455,7 @@ public class RecurringController {
                 state.requestRefresh();
             } catch (IOException ex) {
                 for (int i = 0; i < commandCount; i++) {
-                    if (state.getManager().canUndo()) state.getManager().undo();
+                    state.getManager().rollbackLastCommand();
                 }
                 showMsg("Failed to save: " + ex.getMessage(), true);
                 return;

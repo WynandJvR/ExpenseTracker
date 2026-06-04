@@ -9,7 +9,7 @@
             xmlns:fx="http://javafx.com/fxml"
             fx:controller="com.wyn.expensetracker.DashboardController"
             fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane">
-    <VBox spacing="18" styleClass="content-view">
+    <VBox spacing="16" styleClass="content-view">
         <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
 
         <Label text="Dashboard" styleClass="view-title"/>
@@ -87,7 +87,7 @@
 
         <!-- Category Table (for budget overview) -->
         <VBox spacing="8" styleClass="panel-box">
-            <Label text="Expenses by Category" styleClass="table-title"/>
+            <Label text="Expenses by Category" styleClass="section-title"/>
             <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="200">
                 <columns>
                     <TableColumn fx:id="categoryNameColumn" text="Category" prefWidth="120">
