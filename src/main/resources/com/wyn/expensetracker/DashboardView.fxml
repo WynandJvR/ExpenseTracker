@@ -116,21 +116,24 @@
             <VBox fx:id="goalsProgressBox" spacing="8"/>
         </VBox>
 
-        <!-- Debt Summary -->
-        <VBox fx:id="debtSummaryBox" spacing="8" styleClass="panel-box">
-            <Label text="Debt Overview" styleClass="section-title"/>
-            <VBox fx:id="debtSummaryContent" spacing="6"/>
-        </VBox>
+        <!-- Debt Summary + Exchange Rates: two columns on wide screens; a lone visible panel fills the row -->
+        <HBox spacing="16" alignment="TOP_LEFT">
+            <!-- Debt Summary -->
+            <VBox fx:id="debtSummaryBox" spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS" maxWidth="Infinity">
+                <Label text="Debt Overview" styleClass="section-title"/>
+                <VBox fx:id="debtSummaryContent" spacing="6"/>
+            </VBox>
 
-        <!-- Exchange Rates -->
-        <VBox fx:id="exchangeRatesBox" spacing="8" styleClass="panel-box">
-            <HBox spacing="10" alignment="CENTER_LEFT">
-                <Label text="Exchange Rates" styleClass="section-title"/>
-                <Region HBox.hgrow="ALWAYS"/>
-                <Button text="Edit Rates" styleClass="secondary-button" onAction="#handleEditExchangeRates"/>
-            </HBox>
-            <VBox fx:id="exchangeRatesContent" spacing="4"/>
-        </VBox>
+            <!-- Exchange Rates -->
+            <VBox fx:id="exchangeRatesBox" spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS" maxWidth="Infinity">
+                <HBox spacing="10" alignment="CENTER_LEFT">
+                    <Label text="Exchange Rates" styleClass="section-title"/>
+                    <Region HBox.hgrow="ALWAYS"/>
+                    <Button text="Edit Rates" styleClass="secondary-button" onAction="#handleEditExchangeRates"/>
+                </HBox>
+                <VBox fx:id="exchangeRatesContent" spacing="4"/>
+            </VBox>
+        </HBox>
 
         <Label fx:id="errorLabel" styleClass="error-label"/>
     </VBox>

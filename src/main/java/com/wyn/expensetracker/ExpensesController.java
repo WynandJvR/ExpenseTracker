@@ -1326,6 +1326,41 @@ public class ExpensesController {
         return expenseTable.getItems();
     }
 
+    /**
+     * Captures the current sort as "columnKey\tSortType" (empty string if unsorted), for persistence.
+     * Keys on a stable column identifier (fx:id, falling back to header text) so it survives column reordering.
+     */
+    public String getSortState() {
+        if (expenseTable.getSortOrder().isEmpty()) return "";
+        TableColumn<Expense, ?> col = expenseTable.getSortOrder().get(0);
+        String key = columnKey(col);
+        return key.isEmpty() ? "" : key + "\t" + col.getSortType();
+    }
+
+    /** Restores a sort previously captured by {@link #getSortState()}; ignores malformed/stale input. */
+    public void applySortState(String state) {
+        if (state == null || state.isBlank()) return;
+        try {
+            int sep = state.lastIndexOf('\t');
+            if (sep < 0) return; // unrecognised (e.g. older index-based) format — keep default order
+            String key = state.substring(0, sep);
+            TableColumn.SortType type = TableColumn.SortType.valueOf(state.substring(sep + 1));
+            for (TableColumn<Expense, ?> col : expenseTable.getColumns()) {
+                if (key.equals(columnKey(col))) {
+                    col.setSortType(type);
+                    expenseTable.getSortOrder().setAll(col);
+                    return;
+                }
+            }
+        } catch (Exception ignored) { /* stale/invalid state — keep default order */ }
+    }
+
+    /** Stable identifier for a column: its fx:id if set, otherwise its header text. */
+    private static String columnKey(TableColumn<Expense, ?> col) {
+        if (col.getId() != null && !col.getId().isEmpty()) return col.getId();
+        return col.getText() == null ? "" : col.getText();
+    }
+
     // ======================== PRIVATE HELPERS ========================
 
     private void resetExpenseForm() {

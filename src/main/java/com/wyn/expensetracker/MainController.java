@@ -142,6 +142,9 @@ public class MainController {
         // Setup navigation
         setupNavigation();
 
+        // Install the global toast overlay for transient confirmations
+        Toast.init(contentArea);
+
         // Initialize sub-controllers
         dashboardController.init(state);
         expensesController.init(state);
@@ -511,6 +514,7 @@ public class MainController {
             uiState.put("activeView", state.getCurrentViewName());
             uiState.put("analyticsTab", String.valueOf(analyticsController.getSelectedTabIndex()));
             uiState.put("chartPeriod", state.getChartPeriod());
+            uiState.put("expenseSort", expensesController.getSortState());
             state.getStorage().saveUIState(uiState);
         } catch (IOException e) {
             System.err.println("Error saving UI state: " + e.getMessage());
@@ -540,6 +544,10 @@ public class MainController {
 
         if (uiState.containsKey("chartPeriod")) {
             state.setChartPeriod(uiState.get("chartPeriod"));
+        }
+
+        if (uiState.containsKey("expenseSort")) {
+            expensesController.applySortState(uiState.get("expenseSort"));
         }
     }
 
