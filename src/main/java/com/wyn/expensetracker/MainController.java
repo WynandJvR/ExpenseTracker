@@ -35,6 +35,7 @@ public class MainController {
     @FXML private ToggleButton navImport;
     @FXML private ToggleButton navAnalytics;
     @FXML private ToggleButton navDebts;
+    @FXML private ToggleButton navSettings;
 
     // --- Sub-views (fx:include root nodes) ---
     @FXML private Node dashboard;
@@ -43,6 +44,7 @@ public class MainController {
     @FXML private Node importTab;
     @FXML private Node analytics;
     @FXML private Node debtsTab;
+    @FXML private Node settings;
 
     // --- Sub-controllers (fx:include convention: <fx:id>Controller) ---
     @FXML private DashboardController dashboardController;
@@ -51,13 +53,13 @@ public class MainController {
     @FXML private ImportController importTabController;
     @FXML private AnalyticsController analyticsController;
     @FXML private DebtController debtsTabController;
+    @FXML private SettingsController settingsController;
 
     // --- Toolbar ---
     @FXML private Button undoButton;
     @FXML private Button redoButton;
     @FXML private ComboBox<Integer> yearCombo;
     @FXML private ComboBox<Month> monthCombo;
-    @FXML private ComboBox<String> currencyCombo;
     @FXML private ComboBox<String> profileCombo;
 
     // --- Status bar ---
@@ -120,6 +122,7 @@ public class MainController {
         try {
             String baseCurrency = storage.loadBaseCurrency();
             state.getCurrencyManager().setBaseCurrency(baseCurrency);
+            state.setCurrencySymbol(CurrencyManager.getSymbol(baseCurrency));
             state.getCurrencyManager().setExchangeRates(storage.loadExchangeRates());
         } catch (IOException e) {
             System.err.println("Failed to load exchange rates: " + e.getMessage());
@@ -152,6 +155,7 @@ public class MainController {
         importTabController.init(state);
         analyticsController.init(state);
         debtsTabController.init(state);
+        settingsController.init(state);
 
         // Select default view
         navDashboard.setSelected(true);
@@ -200,38 +204,7 @@ public class MainController {
             }
         });
 
-        // Currency combo — now shows ISO codes, sets base currency
-        String baseCurrency = state.getCurrencyManager().getBaseCurrency();
-        state.setCurrencySymbol(CurrencyManager.getSymbol(baseCurrency));
-        currencyCombo.setItems(FXCollections.observableArrayList(CurrencyManager.getCurrencyCodes()));
-        currencyCombo.setValue(baseCurrency);
-        currencyCombo.setCellFactory(lv -> new ListCell<String>() {
-            @Override
-            protected void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? null : CurrencyManager.getDisplayName(item));
-            }
-        });
-        currencyCombo.setButtonCell(new ListCell<String>() {
-            @Override
-            protected void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? null : CurrencyManager.getDisplayName(item));
-            }
-        });
-        currencyCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
-            if (newVal != null) {
-                state.getCurrencyManager().setBaseCurrency(newVal);
-                state.setCurrencySymbol(CurrencyManager.getSymbol(newVal));
-                try {
-                    state.getStorage().saveBaseCurrency(newVal);
-                    state.getStorage().saveCurrencySymbol(CurrencyManager.getSymbol(newVal));
-                } catch (IOException ex) { /* ignore */ }
-                refreshTable();
-            }
-        });
-
-        // Recurring income from storage
+        // Recurring income from storage (base currency is now managed in the Settings view)
         state.setRecurringIncome(state.getStorage().loadRecurringIncome());
     }
 
@@ -245,6 +218,7 @@ public class MainController {
         navImport.setToggleGroup(navGroup);
         navAnalytics.setToggleGroup(navGroup);
         navDebts.setToggleGroup(navGroup);
+        navSettings.setToggleGroup(navGroup);
 
         navGroup.selectedToggleProperty().addListener((obs, oldToggle, newToggle) -> {
             if (newToggle == null) {
@@ -257,6 +231,7 @@ public class MainController {
             else if (newToggle == navImport) switchView("import");
             else if (newToggle == navAnalytics) switchView("analytics");
             else if (newToggle == navDebts) switchView("debts");
+            else if (newToggle == navSettings) switchView("settings");
         });
     }
 
@@ -267,6 +242,7 @@ public class MainController {
         importTab.setVisible(false); importTab.setManaged(false);
         analytics.setVisible(false); analytics.setManaged(false);
         debtsTab.setVisible(false); debtsTab.setManaged(false);
+        settings.setVisible(false); settings.setManaged(false);
 
         Node target = switch (viewName) {
             case "expenses" -> expenses;
@@ -274,11 +250,14 @@ public class MainController {
             case "import" -> importTab;
             case "analytics" -> analytics;
             case "debts" -> debtsTab;
+            case "settings" -> settings;
             default -> dashboard;
         };
         target.setVisible(true);
         target.setManaged(true);
         state.setCurrentViewName(viewName);
+
+        if ("settings".equals(viewName)) settingsController.refresh();
 
         UIUtils.animateViewFadeIn(target);
     }
@@ -316,6 +295,7 @@ public class MainController {
         recurringController.refresh();
         importTabController.refresh();
         debtsTabController.refresh();
+        settingsController.refresh();
     }
 
     private void updateYearList() {
@@ -532,6 +512,7 @@ public class MainController {
                 case "import" -> navImport.setSelected(true);
                 case "analytics" -> navAnalytics.setSelected(true);
                 case "debts" -> navDebts.setSelected(true);
+                case "settings" -> navSettings.setSelected(true);
                 default -> navDashboard.setSelected(true);
             }
         }
@@ -645,7 +626,6 @@ public class MainController {
 
         String baseCurr = state.getCurrencyManager().getBaseCurrency();
         state.setCurrencySymbol(CurrencyManager.getSymbol(baseCurr));
-        currencyCombo.setValue(baseCurr);
         state.setRecurringIncome(state.getStorage().loadRecurringIncome());
 
         // Re-init sub-controllers with updated state
@@ -655,6 +635,8 @@ public class MainController {
         importTabController.init(state);
         analyticsController.init(state);
         debtsTabController.init(state);
+        settingsController.init(state);
+        settingsController.refresh();
 
         try {
             state.getProfileManager().setActiveProfile(profileName);
