@@ -45,6 +45,7 @@ public class RecurringController {
     @FXML private ComboBox<RecurrenceType> editRecurringFreqCombo;
     @FXML private DatePicker editRecurringEndDatePicker;
     @FXML private Button updateRecurringButton;
+    @FXML private Button addRecurringButton;
 
     // --- Labels ---
     @FXML private Label addRecurringErrorLabel;
@@ -91,6 +92,12 @@ public class RecurringController {
         recurringHint.getStyleClass().add("empty-state-hint");
         recurringEmptyState.getChildren().addAll(recurringMsg, recurringHint);
         recurringTable.setPlaceholder(recurringEmptyState);
+
+        // Disable "Add Recurring Expense" until the amount is a valid positive number
+        UIUtils.bindPositiveAmountValidation(addRecurringAmountField, addRecurringButton);
+
+        // Enter in the amount or description field submits the form
+        UIUtils.submitOnEnter(addRecurringButton, addRecurringAmountField, addRecurringDescField);
 
         // Selection listener: populate edit form when recurring expense selected
         recurringTable.getSelectionModel().selectedItemProperty().addListener((obs, oldSelection, newSelection) -> {

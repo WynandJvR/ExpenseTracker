@@ -48,7 +48,7 @@
                 </columns>
             </TableView>
             <HBox spacing="10">
-                <Button text="Add Rule" styleClass="primary-button" onAction="#handleAddRule"/>
+                <Button text="Add Rule" styleClass="success-button" onAction="#handleAddRule"/>
                 <Button text="Remove Rule" styleClass="danger-button" onAction="#handleRemoveRule"/>
                 <Region HBox.hgrow="ALWAYS"/>
                 <Button text="Re-categorize" styleClass="primary-button" onAction="#handleRecategorize">

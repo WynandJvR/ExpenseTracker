@@ -42,6 +42,15 @@ public class ImportController {
         this.state = state;
         rulesTable.setItems(state.getCategorizationRules().getRuleEntries());
 
+        VBox rulesEmptyState = new VBox(6);
+        rulesEmptyState.setAlignment(Pos.CENTER);
+        Label rulesMsg = new Label("No auto-categorization rules yet.");
+        rulesMsg.getStyleClass().add("empty-state-label");
+        Label rulesHint = new Label("Use 'Add Rule' to map a keyword to a category.");
+        rulesHint.getStyleClass().add("empty-state-hint");
+        rulesEmptyState.getChildren().addAll(rulesMsg, rulesHint);
+        rulesTable.setPlaceholder(rulesEmptyState);
+
         // Load import logs from storage
         try {
             List<ImportLog> logs = state.getStorage().loadImportLogs();
