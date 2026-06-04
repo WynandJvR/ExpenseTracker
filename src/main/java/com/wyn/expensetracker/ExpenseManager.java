@@ -3,7 +3,9 @@ package com.wyn.expensetracker;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
 
@@ -135,6 +137,43 @@ public class ExpenseManager {
 
     public List<RecurringExpense> getBaseRecurringExpenses() {
         return baseRecurringExpenses;
+    }
+
+    /**
+     * Reassigns every expense and recurring template using {@code oldCategory} to {@code newCategory}.
+     * Covers live expenses (including generated recurring instances) and the base recurring templates
+     * that get persisted. Returns the number of expenses updated.
+     */
+    public int renameCategory(String oldCategory, String newCategory) {
+        if (oldCategory == null || newCategory == null) return 0;
+        int updated = 0;
+        for (Expense e : expenses) {
+            if (oldCategory.equals(e.getCategory())) {
+                e.setCategory(newCategory);
+                updated++;
+            }
+        }
+        for (RecurringExpense r : baseRecurringExpenses) {
+            if (oldCategory.equals(r.getCategory())) {
+                r.setCategory(newCategory);
+            }
+        }
+        return updated;
+    }
+
+    /** Snapshots every expense/template's current category (by object identity), for rollback. */
+    public Map<Expense, String> snapshotCategories() {
+        Map<Expense, String> snapshot = new IdentityHashMap<>();
+        for (Expense e : expenses) snapshot.put(e, e.getCategory());
+        for (RecurringExpense r : baseRecurringExpenses) snapshot.put(r, r.getCategory());
+        return snapshot;
+    }
+
+    /** Restores category assignments captured by {@link #snapshotCategories()}. */
+    public void restoreCategories(Map<Expense, String> snapshot) {
+        for (Map.Entry<Expense, String> entry : snapshot.entrySet()) {
+            entry.getKey().setCategory(entry.getValue());
+        }
     }
 
     public List<Expense> getExpensesForSave() {

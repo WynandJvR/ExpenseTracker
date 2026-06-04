@@ -46,8 +46,6 @@
             </Button>
             <Button text="Today" styleClass="today-button" onAction="#handleThisMonth"/>
             <Region HBox.hgrow="ALWAYS"/>
-            <Label text="Currency:" styleClass="form-label"/>
-            <ComboBox fx:id="currencyCombo" styleClass="combo-box"/>
         </HBox>
     </top>
 
@@ -72,6 +70,10 @@
             <ToggleButton fx:id="navDebts" text="Debts" styleClass="sidebar-nav-button" maxWidth="Infinity">
                 <graphic><Region styleClass="nav-icon nav-icon-debts"/></graphic>
             </ToggleButton>
+            <Region VBox.vgrow="ALWAYS"/>
+            <ToggleButton fx:id="navSettings" text="Settings" styleClass="sidebar-nav-button" maxWidth="Infinity">
+                <graphic><Region styleClass="nav-icon nav-icon-settings"/></graphic>
+            </ToggleButton>
         </VBox>
     </left>
 
@@ -83,6 +85,7 @@
             <fx:include fx:id="importTab" source="ImportView.fxml"/>
             <fx:include fx:id="analytics" source="AnalyticsView.fxml"/>
             <fx:include fx:id="debtsTab" source="DebtView.fxml"/>
+            <fx:include fx:id="settings" source="SettingsView.fxml"/>
         </StackPane>
     </center>
 

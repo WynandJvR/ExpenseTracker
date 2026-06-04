@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<ScrollPane xmlns="http://javafx.com/javafx"
+            xmlns:fx="http://javafx.com/fxml"
+            fx:controller="com.wyn.expensetracker.SettingsController"
+            fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane"
+            visible="false" managed="false">
+    <VBox spacing="16" styleClass="content-view">
+        <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
+
+        <Label text="Settings" styleClass="view-title"/>
+
+        <!-- Currency -->
+        <VBox spacing="8" styleClass="panel-box">
+            <Label text="Currency" styleClass="section-title"/>
+            <Label text="Base currency for all amounts. Existing values are re-displayed in this currency using your exchange rates." styleClass="form-label" wrapText="true"/>
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Label text="Base currency:" styleClass="form-label"/>
+                <ComboBox fx:id="currencyCombo" styleClass="combo-box" prefWidth="240"/>
+            </HBox>
+        </VBox>
+
+        <!-- Categories -->
+        <VBox spacing="8" styleClass="panel-box">
+            <Label text="Categories" styleClass="section-title"/>
+            <Label text="Rename, add, or remove categories. Renaming updates every expense, budget, and import rule that uses it. Deleting a category in use lets you move its expenses to another." styleClass="form-label" wrapText="true"/>
+            <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="320">
+                <columns>
+                    <TableColumn fx:id="catNameColumn" text="Category" prefWidth="260"/>
+                    <TableColumn fx:id="catCountColumn" text="Used by" prefWidth="160"/>
+                </columns>
+            </TableView>
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Button text="Add Category" styleClass="primary-button" onAction="#handleAddCategory"/>
+                <Button fx:id="renameCategoryButton" text="Rename" styleClass="secondary-button" onAction="#handleRenameCategory" disable="true"/>
+                <Button fx:id="deleteCategoryButton" text="Delete" styleClass="danger-button" onAction="#handleDeleteCategory" disable="true"/>
+            </HBox>
+            <Label fx:id="categoryErrorLabel" styleClass="error-label"/>
+        </VBox>
+    </VBox>
+</ScrollPane>
