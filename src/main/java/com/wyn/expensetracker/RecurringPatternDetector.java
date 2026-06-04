@@ -316,10 +316,14 @@ public class RecurringPatternDetector {
     }
 
     private double calculateStdDev(List<Long> values, double mean) {
+        if (values.size() < 2) return 0;
         double sumSquaredDiffs = values.stream()
             .mapToDouble(v -> Math.pow(v - mean, 2))
             .sum();
-        return Math.sqrt(sumSquaredDiffs / values.size());
+        // Sample stddev (Bessel's correction): denominator is N-1.
+        // Recurring pattern samples are typically tiny (2-5 intervals) where
+        // the bias from using N is large enough to loosen the consistency check.
+        return Math.sqrt(sumSquaredDiffs / (values.size() - 1));
     }
 
     private boolean alreadyExists(Expense representative, RecurrenceType freq,

@@ -16,7 +16,7 @@ public class AnomalyDetector {
         List<Anomaly> anomalies = new ArrayList<>();
 
         List<Expense> activeExpenses = expenses.stream()
-            .filter(e -> !e.isExcluded() && !e.isIncome())
+            .filter(e -> !e.isExcluded() && !e.isIncome() && !e.isRefund())
             .collect(Collectors.toList());
 
         List<Expense> monthExpenses = activeExpenses.stream()

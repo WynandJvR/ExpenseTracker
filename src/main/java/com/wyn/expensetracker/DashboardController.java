@@ -775,7 +775,7 @@ public class DashboardController {
                 incomeErrorLabel.setText("Income deleted.");
                 incomeErrorLabel.getStyleClass().setAll("error-label", "success-message");
             } catch (Exception ex) {
-                state.getManager().undo();
+                state.getManager().rollbackLastCommand();
                 incomeErrorLabel.setText("Error: " + ex.getMessage());
                 incomeErrorLabel.getStyleClass().setAll("error-label", "error-message");
             }

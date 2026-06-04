@@ -680,7 +680,7 @@ public class ImportController {
             try {
                 state.saveExpenses();
             } catch (IOException ex) {
-                manager.undo();
+                manager.rollbackLastCommand();
                 showMsg("Failed to save imported expenses: " + ex.getMessage(), true);
                 return;
             }

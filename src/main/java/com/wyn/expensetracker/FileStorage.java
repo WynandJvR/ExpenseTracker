@@ -17,6 +17,20 @@ public class FileStorage {
     private final String categoriesFile;
     private final String incomeFile;
     private final List<String> parseWarnings = new ArrayList<>();
+    private int lastLoadTotalLines = 0;
+    private int lastLoadFailedLines = 0;
+
+    public static final class LoadStats {
+        public final int totalLines;
+        public final int failedLines;
+        public LoadStats(int totalLines, int failedLines) {
+            this.totalLines = totalLines;
+            this.failedLines = failedLines;
+        }
+        public boolean isSevere() {
+            return failedLines > 0 && totalLines > 0 && failedLines * 20 >= totalLines; // >=5%
+        }
+    }
 
     @FunctionalInterface
     interface IOConsumer<T> {
@@ -43,6 +57,11 @@ public class FileStorage {
         List<String> warnings = new ArrayList<>(parseWarnings);
         parseWarnings.clear();
         return warnings;
+    }
+
+    /** Stats for the most recent loadExpenses() call. Used to detect severe corruption. */
+    public LoadStats getLastExpenseLoadStats() {
+        return new LoadStats(lastLoadTotalLines, lastLoadFailedLines);
     }
 
     private void addParseWarning(String message) {
@@ -106,6 +125,8 @@ public class FileStorage {
 
     public List<Expense> loadExpenses() throws IOException {
         List<Expense> expenses = new ArrayList<>();
+        lastLoadTotalLines = 0;
+        lastLoadFailedLines = 0;
         File file = new File(expensesFile);
         if (!file.exists()) {
             return expenses;
@@ -115,11 +136,14 @@ public class FileStorage {
             int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
                 lineNumber++;
+                if (line.trim().isEmpty()) continue;
+                lastLoadTotalLines++;
                 try {
                     String[] parts = splitCsv(line);
                     if (parts.length >= 5) {
                         double amount = Double.parseDouble(parts[0]);
                         if (amount <= 0) {
+                            lastLoadFailedLines++;
                             addParseWarning("Invalid amount at line " + lineNumber + ": " + line);
                             continue;
                         }
@@ -156,12 +180,15 @@ public class FileStorage {
                             }
                             expenses.add(exp);
                         } else {
+                            lastLoadFailedLines++;
                             addParseWarning("Unknown expense type at line " + lineNumber + ": " + line);
                         }
                     } else {
+                        lastLoadFailedLines++;
                         addParseWarning("Malformed line at " + lineNumber + ": " + line);
                     }
                 } catch (Exception e) {
+                    lastLoadFailedLines++;
                     addParseWarning("Error parsing expense line " + lineNumber + ": " + e.getMessage());
                 }
             }

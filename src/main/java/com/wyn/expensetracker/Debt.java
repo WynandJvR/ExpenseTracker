@@ -17,6 +17,15 @@ public class Debt {
 
     public Debt(String id, String name, double principal, double annualRate, int termMonths,
                 LocalDate startDate, String paymentFrequency, double monthlyPayment, String currency) {
+        if (termMonths <= 0) {
+            throw new IllegalArgumentException("Term months must be positive");
+        }
+        if (principal <= 0) {
+            throw new IllegalArgumentException("Principal must be positive");
+        }
+        if (annualRate < 0) {
+            throw new IllegalArgumentException("Annual rate cannot be negative");
+        }
         this.id = id;
         this.name = name;
         this.principal = principal;
@@ -74,10 +83,17 @@ public class Debt {
         return schedule;
     }
 
-    /** Calculate total paid over the life of the loan. */
+    /**
+     * Total paid over the life of the loan, summed from the actual amortization
+     * schedule. This matches what the user sees in the schedule (which terminates
+     * once the balance is paid off, possibly early or late vs. termMonths).
+     */
     public double getTotalCost() {
-        double payment = monthlyPayment > 0 ? monthlyPayment : calculateMonthlyPayment();
-        return payment * termMonths;
+        double total = 0;
+        for (AmortizationEntry entry : getAmortizationSchedule()) {
+            total += entry.principal + entry.interest;
+        }
+        return total;
     }
 
     /** Calculate total interest over the life of the loan. */

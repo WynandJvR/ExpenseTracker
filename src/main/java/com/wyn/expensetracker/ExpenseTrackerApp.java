@@ -94,10 +94,19 @@ public class ExpenseTrackerApp extends Application {
         // Show parse warnings if any data was malformed
         List<String> warnings = storage.drainParseWarnings();
         if (!warnings.isEmpty()) {
-            Alert alert = new Alert(Alert.AlertType.WARNING);
-            alert.setTitle("Data Warnings");
-            alert.setHeaderText(warnings.size() + " issue(s) found while loading data.");
-            alert.setContentText("Some entries were skipped. Expand for details.");
+            FileStorage.LoadStats stats = storage.getLastExpenseLoadStats();
+            boolean severe = stats.isSevere();
+            Alert alert = new Alert(severe ? Alert.AlertType.ERROR : Alert.AlertType.WARNING);
+            alert.setTitle(severe ? "Data Corruption Detected" : "Data Warnings");
+            if (severe) {
+                alert.setHeaderText(stats.failedLines + " of " + stats.totalLines
+                    + " expense lines failed to parse — your expense file may be corrupted.");
+                alert.setContentText("A backup is kept under .expenseTracker. Review the details before continuing; "
+                    + "saving over the file now will overwrite the bad rows with the data that did load.");
+            } else {
+                alert.setHeaderText(warnings.size() + " issue(s) found while loading data.");
+                alert.setContentText("Some entries were skipped. Expand for details.");
+            }
             TextArea details = new TextArea(String.join("\n", warnings));
             details.setEditable(false);
             details.setWrapText(true);

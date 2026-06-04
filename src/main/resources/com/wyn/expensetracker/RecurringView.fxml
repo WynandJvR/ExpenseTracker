@@ -10,7 +10,7 @@
             fx:controller="com.wyn.expensetracker.RecurringController"
             fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane"
             visible="false" managed="false">
-    <VBox spacing="12" styleClass="content-view">
+    <VBox spacing="16" styleClass="content-view">
         <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
 
         <Label text="Recurring Expenses" styleClass="view-title"/>

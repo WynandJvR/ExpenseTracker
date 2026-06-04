@@ -40,9 +40,9 @@ public class ExcelExporter {
                     row.createCell(4).setCellValue(false);
                     row.createCell(5).setCellValue("");
                     row.createCell(6).setCellValue("");
-                    row.createCell(7).setCellValue(expense.getImportId() != null ? expense.getImportId() : "");
-                    row.createCell(8).setCellValue(expense.isIncome());
                 }
+                row.createCell(7).setCellValue(expense.getImportId() != null ? expense.getImportId() : "");
+                row.createCell(8).setCellValue(expense.isIncome());
                 row.createCell(9).setCellValue(expense.getCurrency() != null ? expense.getCurrency() : "");
                 row.createCell(10).setCellValue(expense.getReceiptPath() != null ? expense.getReceiptPath() : "");
             }
