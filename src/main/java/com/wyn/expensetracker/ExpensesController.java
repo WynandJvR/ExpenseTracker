@@ -342,6 +342,9 @@ public class ExpensesController {
             if (e.getCode() == KeyCode.ENTER) addButton.fire();
         });
 
+        // Disable Add until the amount is a valid positive number; flag bad input inline
+        UIUtils.bindPositiveAmountValidation(amountField, addButton);
+
         // Delete and Copy key handlers on table
         expenseTable.setOnKeyPressed(e -> {
             if (e.getCode() == KeyCode.DELETE) deleteButton.fire();

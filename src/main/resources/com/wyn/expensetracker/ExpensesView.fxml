@@ -30,11 +30,11 @@
                     </VBox>
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="Category:" styleClass="form-label"/>
-                        <ComboBox fx:id="categoryCombo" promptText="Select or enter category" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+                        <ComboBox fx:id="categoryCombo" promptText="Select or enter category" styleClass="combo-box" maxWidth="Infinity"/>
                     </VBox>
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="Date:" styleClass="form-label"/>
-                        <DatePicker fx:id="datePicker" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+                        <DatePicker fx:id="datePicker" promptText="Select Date" styleClass="date-picker" maxWidth="Infinity"/>
                     </VBox>
                 </HBox>
 
@@ -61,8 +61,8 @@
                 <Button fx:id="filterToggleButton" text="Filters" styleClass="secondary-button" onAction="#handleToggleFilters"/>
                 <Region HBox.hgrow="SOMETIMES" minWidth="10"/>
                 <Button fx:id="deleteButton" text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteExpense"/>
-                <Button text="Export All" styleClass="success-button" onAction="#handleExport"/>
-                <Button text="Export View" styleClass="primary-button" onAction="#handleExportFiltered"/>
+                <Button text="Export All" styleClass="primary-button" onAction="#handleExport"/>
+                <Button text="Export View" styleClass="secondary-button" onAction="#handleExportFiltered"/>
             </HBox>
             <HBox fx:id="filterFieldsBox" spacing="10" alignment="CENTER_LEFT" visible="false" managed="false" styleClass="filter-fields-box">
                 <Label text="Category:" styleClass="form-label"/>

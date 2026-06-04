@@ -62,7 +62,7 @@
                     </VBox>
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="Start Date:" styleClass="form-label"/>
-                        <DatePicker fx:id="debtStartDate" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+                        <DatePicker fx:id="debtStartDate" promptText="Select Date" styleClass="date-picker" maxWidth="Infinity"/>
                     </VBox>
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="Monthly Payment (optional):" styleClass="form-label"/>

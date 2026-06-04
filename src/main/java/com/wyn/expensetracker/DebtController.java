@@ -32,6 +32,7 @@ public class DebtController {
     @FXML private TextField debtTermField;
     @FXML private DatePicker debtStartDate;
     @FXML private TextField debtPaymentField;
+    @FXML private Button addDebtButton;
     @FXML private Label calculatedPaymentLabel;
     @FXML private Label debtErrorLabel;
 
@@ -70,6 +71,10 @@ public class DebtController {
         setupDebtTable();
         setupPaymentTable();
         setupAutoCalculate();
+
+        // Enter in any add-form field submits (disabled button is ignored until valid)
+        UIUtils.submitOnEnter(addDebtButton, debtNameField, debtPrincipalField,
+            debtRateField, debtTermField, debtPaymentField);
     }
 
     public void refresh() {
@@ -83,6 +88,15 @@ public class DebtController {
 
     private void setupDebtTable() {
         debtTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        VBox debtEmptyState = new VBox(6);
+        debtEmptyState.setAlignment(Pos.CENTER);
+        Label debtMsg = new Label("No debts or loans yet.");
+        debtMsg.getStyleClass().add("empty-state-label");
+        Label debtHint = new Label("Use 'Add New Debt / Loan' above to track one.");
+        debtHint.getStyleClass().add("empty-state-hint");
+        debtEmptyState.getChildren().addAll(debtMsg, debtHint);
+        debtTable.setPlaceholder(debtEmptyState);
 
         debtPrincipalColumn.setCellFactory(col -> new TableCell<Debt, Double>() {
             @Override
@@ -194,6 +208,15 @@ public class DebtController {
     private void setupPaymentTable() {
         paymentTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
+        VBox paymentEmptyState = new VBox(6);
+        paymentEmptyState.setAlignment(Pos.CENTER);
+        Label paymentMsg = new Label("No payments recorded yet.");
+        paymentMsg.getStyleClass().add("empty-state-label");
+        Label paymentHint = new Label("Select a debt above and use 'Record Payment'.");
+        paymentHint.getStyleClass().add("empty-state-hint");
+        paymentEmptyState.getChildren().addAll(paymentMsg, paymentHint);
+        paymentTable.setPlaceholder(paymentEmptyState);
+
         paymentDebtColumn.setCellFactory(col -> new TableCell<DebtPayment, String>() {
             @Override
             protected void updateItem(String item, boolean empty) {
@@ -238,10 +261,23 @@ public class DebtController {
     // ======================== AUTO-CALCULATE PREVIEW ========================
 
     private void setupAutoCalculate() {
-        javafx.beans.value.ChangeListener<String> calcListener = (obs, o, n) -> updateCalculatedPayment();
+        javafx.beans.value.ChangeListener<String> calcListener = (obs, o, n) -> {
+            updateCalculatedPayment();
+            validateAddForm();
+        };
         debtPrincipalField.textProperty().addListener(calcListener);
         debtRateField.textProperty().addListener(calcListener);
         debtTermField.textProperty().addListener(calcListener);
+        validateAddForm();
+    }
+
+    /** Disables "Add Debt" until principal and term are valid positive numbers; flags bad input inline. */
+    private void validateAddForm() {
+        boolean principalOk = UIUtils.isPositiveDouble(debtPrincipalField.getText());
+        boolean termOk = UIUtils.isPositiveInt(debtTermField.getText());
+        addDebtButton.setDisable(!(principalOk && termOk));
+        UIUtils.markValidity(debtPrincipalField, principalOk);
+        UIUtils.markValidity(debtTermField, termOk);
     }
 
     private void updateCalculatedPayment() {

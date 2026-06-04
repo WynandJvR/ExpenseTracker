@@ -133,6 +133,14 @@ public class AnalyticsController {
         updateYearOverYearChart(selectedYear);
         updateRecurringVsOneTimeChart(chartPeriod, selectedYear, selectedYearMonth, now);
 
+        // Flag charts that ended up with no renderable data (categoryChart/budgetVsActual handle their own empty state)
+        applyEmptyTitle(monthlyTrendChart, xyEmpty(monthlyTrendChart));
+        applyEmptyTitle(incomeVsExpensesChart, xyEmpty(incomeVsExpensesChart));
+        applyEmptyTitle(cumulativeSpendingChart, xyEmpty(cumulativeSpendingChart));
+        applyEmptyTitle(categoryTrendChart, xyEmpty(categoryTrendChart));
+        applyEmptyTitle(yearOverYearChart, xyEmpty(yearOverYearChart));
+        applyEmptyTitle(recurringVsOneTimeChart, recurringVsOneTimeChart.getData().isEmpty());
+
         // Mark projections as needing update; compute immediately if tab is active
         state.setProjectionsNeedUpdate(true);
         if (analyticsTabPane.getSelectionModel().getSelectedItem() == projectionsTab) {
@@ -148,6 +156,24 @@ public class AnalyticsController {
         UIUtils.animateChartFadeIn(categoryTrendChart);
         UIUtils.animateChartFadeIn(yearOverYearChart);
         UIUtils.animateChartFadeIn(recurringVsOneTimeChart);
+    }
+
+    private static final String NO_DATA_SUFFIX = " — No data for this period";
+
+    /** True when an XY chart has no series, or every series is empty. */
+    private static boolean xyEmpty(XYChart<?, ?> chart) {
+        return chart.getData().stream().allMatch(s -> s.getData().isEmpty());
+    }
+
+    /** Appends/removes the "No data" suffix on a chart title without stacking it across refreshes. */
+    private static void applyEmptyTitle(Chart chart, boolean empty) {
+        String title = chart.getTitle() == null ? "" : chart.getTitle();
+        boolean hasSuffix = title.endsWith(NO_DATA_SUFFIX);
+        if (empty && !hasSuffix) {
+            chart.setTitle(title + NO_DATA_SUFFIX);
+        } else if (!empty && hasSuffix) {
+            chart.setTitle(title.substring(0, title.length() - NO_DATA_SUFFIX.length()));
+        }
     }
 
     // ======================== CATEGORY PIE CHART ========================

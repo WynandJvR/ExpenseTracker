@@ -29,6 +29,7 @@ public class ExpenseTrackerApp extends Application {
             e.printStackTrace();
             Platform.runLater(() -> {
                 Alert alert = new Alert(Alert.AlertType.ERROR);
+                UIUtils.applyStylesheet(alert.getDialogPane());
                 alert.setTitle("Unexpected Error");
                 alert.setHeaderText("An unexpected error occurred.");
                 alert.setContentText(e.getMessage());
@@ -97,6 +98,7 @@ public class ExpenseTrackerApp extends Application {
             FileStorage.LoadStats stats = storage.getLastExpenseLoadStats();
             boolean severe = stats.isSevere();
             Alert alert = new Alert(severe ? Alert.AlertType.ERROR : Alert.AlertType.WARNING);
+            UIUtils.applyStylesheet(alert.getDialogPane());
             alert.setTitle(severe ? "Data Corruption Detected" : "Data Warnings");
             if (severe) {
                 alert.setHeaderText(stats.failedLines + " of " + stats.totalLines

@@ -53,6 +53,17 @@
     -fx-faint-focus-color: transparent;
 }
 
+/* Invalid input — red border wins over the focus border (declared later) */
+.text-field:invalid {
+    -fx-border-color: #FF5252;
+    -fx-border-width: 1;
+}
+
+.text-field:focused:invalid {
+    -fx-border-color: #FF5252;
+    -fx-border-width: 1;
+}
+
 /* Combo boxes */
 .combo-box {
     -fx-background-color: #424242;
@@ -366,7 +377,7 @@
 }
 
 .table-view .placeholder .label {
-    -fx-text-fill: #757575;
+    -fx-text-fill: #909090;
 }
 
 /* Separator */
@@ -668,7 +679,7 @@
 }
 
 .empty-state-label {
-    -fx-text-fill: #757575;
+    -fx-text-fill: #909090;
     -fx-font-size: 14px;
     -fx-font-style: italic;
     -fx-padding: 20 20 0 20;
@@ -777,7 +788,7 @@
 /* Help button */
 .help-button {
     -fx-background-color: transparent;
-    -fx-text-fill: #808080;
+    -fx-text-fill: #9E9E9E;
     -fx-font-size: 12px;
     -fx-font-weight: bold;
     -fx-padding: 2 7;
@@ -806,12 +817,12 @@
 }
 
 .status-text {
-    -fx-text-fill: #808080;
+    -fx-text-fill: #9E9E9E;
     -fx-font-size: 11px;
 }
 
 .status-hint {
-    -fx-text-fill: #555555;
+    -fx-text-fill: #7A7A7A;
     -fx-font-size: 10px;
     -fx-font-style: italic;
 }
@@ -975,7 +986,7 @@
 }
 
 .import-history-list .placeholder .label {
-    -fx-text-fill: #757575;
+    -fx-text-fill: #909090;
 }
 
 /* Compact danger button */
@@ -1177,7 +1188,7 @@
 
 .sidebar-nav-button {
     -fx-background-color: transparent;
-    -fx-text-fill: #808080;
+    -fx-text-fill: #9E9E9E;
     -fx-font-size: 14px;
     -fx-font-weight: bold;
     -fx-padding: 12 16;

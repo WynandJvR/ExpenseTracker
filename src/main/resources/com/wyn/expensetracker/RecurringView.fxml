@@ -27,18 +27,18 @@
                     </VBox>
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="Category:" styleClass="form-label"/>
-                        <ComboBox fx:id="addRecurringCategoryCombo" promptText="Select or enter category" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+                        <ComboBox fx:id="addRecurringCategoryCombo" promptText="Select or enter category" styleClass="combo-box" maxWidth="Infinity"/>
                     </VBox>
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="Start Date:" styleClass="form-label"/>
-                        <DatePicker fx:id="addRecurringDatePicker" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+                        <DatePicker fx:id="addRecurringDatePicker" promptText="Select Date" styleClass="date-picker" maxWidth="Infinity"/>
                     </VBox>
                 </HBox>
 
                 <HBox spacing="16">
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="Frequency:" styleClass="form-label"/>
-                        <ComboBox fx:id="addRecurringFreqCombo" promptText="Select frequency" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+                        <ComboBox fx:id="addRecurringFreqCombo" promptText="Select frequency" styleClass="combo-box" maxWidth="Infinity"/>
                     </VBox>
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="Description (optional):" styleClass="form-label"/>
@@ -46,12 +46,12 @@
                     </VBox>
                     <VBox spacing="5" HBox.hgrow="ALWAYS">
                         <Label text="End Date (optional):" styleClass="form-label"/>
-                        <DatePicker fx:id="addRecurringEndDatePicker" promptText="Select end date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+                        <DatePicker fx:id="addRecurringEndDatePicker" promptText="Select end date" styleClass="date-picker" maxWidth="Infinity"/>
                     </VBox>
                 </HBox>
 
                 <HBox spacing="10">
-                    <Button text="Add Recurring Expense" styleClass="success-button" onAction="#handleAddRecurring"/>
+                    <Button fx:id="addRecurringButton" text="Add Recurring Expense" styleClass="success-button" onAction="#handleAddRecurring"/>
                     <Button text="Add Category" styleClass="secondary-button" onAction="#handleAddCategory"/>
                     <Button text="Remove Category" styleClass="secondary-button" onAction="#handleRemoveCategory"/>
                 </HBox>
@@ -60,7 +60,7 @@
         </TitledPane>
 
         <!-- Detect Recurring Patterns -->
-        <Button text="Detect Recurring Patterns" styleClass="primary-button" onAction="#handleDetectRecurring" maxWidth="1.7976931348623157E308"/>
+        <Button text="Detect Recurring Patterns" styleClass="primary-button" onAction="#handleDetectRecurring" maxWidth="Infinity"/>
 
         <!-- Manage Recurring Expenses -->
         <VBox spacing="8" styleClass="panel-box">
@@ -103,18 +103,18 @@
                 </VBox>
                 <VBox spacing="5" HBox.hgrow="ALWAYS">
                     <Label text="Category:" styleClass="form-label"/>
-                    <ComboBox fx:id="editRecurringCategoryCombo" promptText="Select category" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+                    <ComboBox fx:id="editRecurringCategoryCombo" promptText="Select category" styleClass="combo-box" maxWidth="Infinity"/>
                 </VBox>
                 <VBox spacing="5" HBox.hgrow="ALWAYS">
                     <Label text="Start Date:" styleClass="form-label"/>
-                    <DatePicker fx:id="editRecurringDatePicker" promptText="Select Date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+                    <DatePicker fx:id="editRecurringDatePicker" promptText="Select Date" styleClass="date-picker" maxWidth="Infinity"/>
                 </VBox>
             </HBox>
 
             <HBox spacing="16">
                 <VBox spacing="5" HBox.hgrow="ALWAYS">
                     <Label text="Frequency:" styleClass="form-label"/>
-                    <ComboBox fx:id="editRecurringFreqCombo" promptText="Select frequency" styleClass="combo-box" maxWidth="1.7976931348623157E308"/>
+                    <ComboBox fx:id="editRecurringFreqCombo" promptText="Select frequency" styleClass="combo-box" maxWidth="Infinity"/>
                 </VBox>
                 <VBox spacing="5" HBox.hgrow="ALWAYS">
                     <Label text="Description (optional):" styleClass="form-label"/>
@@ -122,7 +122,7 @@
                 </VBox>
                 <VBox spacing="5" HBox.hgrow="ALWAYS">
                     <Label text="End Date (optional):" styleClass="form-label"/>
-                    <DatePicker fx:id="editRecurringEndDatePicker" promptText="Select end date" styleClass="date-picker" maxWidth="1.7976931348623157E308"/>
+                    <DatePicker fx:id="editRecurringEndDatePicker" promptText="Select end date" styleClass="date-picker" maxWidth="Infinity"/>
                 </VBox>
             </HBox>
 

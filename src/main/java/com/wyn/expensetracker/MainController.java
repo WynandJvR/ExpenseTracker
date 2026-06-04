@@ -670,6 +670,7 @@ public class MainController {
         boolean severe = stats.isSevere();
         Alert alert = new Alert(severe ? Alert.AlertType.ERROR : Alert.AlertType.WARNING);
         alert.initOwner(state.getStage());
+        UIUtils.applyStylesheet(alert.getDialogPane());
         alert.setTitle(severe ? "Data Corruption Detected" : "Data Warnings");
         if (severe) {
             alert.setHeaderText(stats.failedLines + " of " + stats.totalLines
@@ -693,6 +694,7 @@ public class MainController {
         dialog.setHeaderText("Create a new profile");
         dialog.setContentText("Profile name:");
         dialog.initOwner(state.getStage());
+        UIUtils.applyStylesheet(dialog.getDialogPane());
         dialog.showAndWait().ifPresent(name -> {
             String trimmed = name.trim();
             if (trimmed.isEmpty()) return;
@@ -713,6 +715,7 @@ public class MainController {
         dialog.setHeaderText("Rename profile: " + current);
         dialog.setContentText("New name:");
         dialog.initOwner(state.getStage());
+        UIUtils.applyStylesheet(dialog.getDialogPane());
         dialog.showAndWait().ifPresent(name -> {
             String trimmed = name.trim();
             if (trimmed.isEmpty() || trimmed.equals(current)) return;
@@ -735,6 +738,7 @@ public class MainController {
         confirm.setHeaderText("Delete profile: " + current + "?");
         confirm.setContentText("All data in this profile will be permanently deleted.");
         confirm.initOwner(state.getStage());
+        UIUtils.applyStylesheet(confirm.getDialogPane());
         confirm.showAndWait().ifPresent(result -> {
             if (result == ButtonType.OK) {
                 String switchTo = state.getProfileManager().listProfiles().stream()
