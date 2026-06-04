@@ -131,6 +131,14 @@ public final class UIUtils {
     private static PauseTransition messageFade;
 
     public static void showMessage(String message, boolean isError, Label target) {
+        // Transient confirmations go to the global toast; the inline label is reserved for errors.
+        if (!isError && !message.isEmpty() && Toast.show(message)) {
+            target.setText("");
+            target.setOpacity(1.0);
+            target.getStyleClass().setAll("error-label");
+            return;
+        }
+        // Errors, clears, and successes when no toast overlay is installed fall back to inline.
         target.setText(message);
         target.setOpacity(1.0);
         if (message.isEmpty()) {
@@ -139,8 +147,6 @@ public final class UIUtils {
             target.getStyleClass().setAll("error-label", "error-message");
         } else {
             target.getStyleClass().setAll("error-label", "success-message");
-        }
-        if (!isError && !message.isEmpty()) {
             if (messageFade != null) messageFade.stop();
             messageFade = new PauseTransition(Duration.seconds(3));
             messageFade.setOnFinished(e -> {

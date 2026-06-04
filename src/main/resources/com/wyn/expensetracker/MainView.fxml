@@ -54,12 +54,24 @@
     <left>
         <VBox styleClass="sidebar-nav">
             <padding><Insets top="12" bottom="12" left="4" right="4"/></padding>
-            <ToggleButton fx:id="navDashboard" text="Dashboard" styleClass="sidebar-nav-button" maxWidth="Infinity"/>
-            <ToggleButton fx:id="navExpenses" text="Expenses" styleClass="sidebar-nav-button" maxWidth="Infinity"/>
-            <ToggleButton fx:id="navRecurring" text="Recurring" styleClass="sidebar-nav-button" maxWidth="Infinity"/>
-            <ToggleButton fx:id="navImport" text="Import" styleClass="sidebar-nav-button" maxWidth="Infinity"/>
-            <ToggleButton fx:id="navAnalytics" text="Analytics" styleClass="sidebar-nav-button" maxWidth="Infinity"/>
-            <ToggleButton fx:id="navDebts" text="Debts" styleClass="sidebar-nav-button" maxWidth="Infinity"/>
+            <ToggleButton fx:id="navDashboard" text="Dashboard" styleClass="sidebar-nav-button" maxWidth="Infinity">
+                <graphic><Region styleClass="nav-icon nav-icon-dashboard"/></graphic>
+            </ToggleButton>
+            <ToggleButton fx:id="navExpenses" text="Expenses" styleClass="sidebar-nav-button" maxWidth="Infinity">
+                <graphic><Region styleClass="nav-icon nav-icon-expenses"/></graphic>
+            </ToggleButton>
+            <ToggleButton fx:id="navRecurring" text="Recurring" styleClass="sidebar-nav-button" maxWidth="Infinity">
+                <graphic><Region styleClass="nav-icon nav-icon-recurring"/></graphic>
+            </ToggleButton>
+            <ToggleButton fx:id="navImport" text="Import" styleClass="sidebar-nav-button" maxWidth="Infinity">
+                <graphic><Region styleClass="nav-icon nav-icon-import"/></graphic>
+            </ToggleButton>
+            <ToggleButton fx:id="navAnalytics" text="Analytics" styleClass="sidebar-nav-button" maxWidth="Infinity">
+                <graphic><Region styleClass="nav-icon nav-icon-analytics"/></graphic>
+            </ToggleButton>
+            <ToggleButton fx:id="navDebts" text="Debts" styleClass="sidebar-nav-button" maxWidth="Infinity">
+                <graphic><Region styleClass="nav-icon nav-icon-debts"/></graphic>
+            </ToggleButton>
         </VBox>
     </left>
 

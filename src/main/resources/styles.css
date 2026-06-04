@@ -827,6 +827,20 @@
     -fx-font-style: italic;
 }
 
+/* Toast — transient bottom-center confirmation */
+.toast {
+    -fx-background-color: rgba(38, 38, 38, 0.96);
+    -fx-text-fill: #FFFFFF;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-padding: 10 18;
+    -fx-background-radius: 6;
+    -fx-border-color: #5C6BC0;
+    -fx-border-width: 1;
+    -fx-border-radius: 6;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.5), 14, 0, 0, 4);
+}
+
 /* Tooltip */
 .tooltip {
     -fx-background-color: #424242;
@@ -1195,8 +1209,50 @@
     -fx-background-radius: 8;
     -fx-cursor: hand;
     -fx-alignment: CENTER-LEFT;
+    -fx-graphic-text-gap: 11;
     -fx-border-color: transparent transparent transparent transparent;
     -fx-border-width: 0 0 0 3;
+}
+
+/* Sidebar nav icons (vector shapes, recolored by nav state) */
+.nav-icon {
+    -fx-min-width: 16; -fx-min-height: 16;
+    -fx-pref-width: 16; -fx-pref-height: 16;
+    -fx-max-width: 16; -fx-max-height: 16;
+    -fx-background-color: #9E9E9E;
+    -fx-scale-shape: false;
+}
+
+.sidebar-nav-button:hover .nav-icon {
+    -fx-background-color: #E0E0E0;
+}
+
+.sidebar-nav-button:selected .nav-icon {
+    -fx-background-color: #5C6BC0;
+}
+
+.nav-icon-dashboard {
+    -fx-shape: "M0,0 L7,0 L7,7 L0,7 Z M9,0 L16,0 L16,7 L9,7 Z M0,9 L7,9 L7,16 L0,16 Z M9,9 L16,9 L16,16 L9,16 Z";
+}
+
+.nav-icon-expenses {
+    -fx-shape: "M0,1 L16,1 L16,4 L0,4 Z M0,7 L16,7 L16,10 L0,10 Z M0,13 L16,13 L16,16 L0,16 Z";
+}
+
+.nav-icon-recurring {
+    -fx-shape: "M1,2 L9,2 L9,0 L14,3 L9,6 L9,4 L1,4 Z M15,12 L7,12 L7,10 L2,13 L7,16 L7,14 L15,14 Z";
+}
+
+.nav-icon-import {
+    -fx-shape: "M6,0 L10,0 L10,7 L13,7 L8,12 L3,7 L6,7 Z M1,14 L15,14 L15,16 L1,16 Z";
+}
+
+.nav-icon-analytics {
+    -fx-shape: "M0,9 L4,9 L4,16 L0,16 Z M6,4 L10,4 L10,16 L6,16 Z M12,0 L16,0 L16,16 L12,16 Z";
+}
+
+.nav-icon-debts {
+    -fx-shape: "M0,3 L16,3 L16,5 L0,5 Z M0,7 L16,7 L16,13 L0,13 Z";
 }
 
 .sidebar-nav-button:hover {
