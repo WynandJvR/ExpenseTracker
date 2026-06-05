@@ -206,34 +206,58 @@ public class SharedState {
                 && Math.abs(imp.getAmount() - recurring.getAmount()) <= recurring.getAmount() * 0.20);
     }
 
-    public List<Expense> filterExpensesByPeriod(String chartPeriod, int selectedYear,
-                                                 YearMonth selectedYearMonth, YearMonth now) {
-        Set<YearMonth> importedMonths = expenseList.stream()
+    /** Months that contain at least one imported (non-income) transaction. */
+    public Set<YearMonth> importedMonths() {
+        return expenseList.stream()
             .filter(e -> !e.isIncome() && e.getImportId() != null)
             .map(e -> YearMonth.from(e.getDate()))
             .collect(Collectors.toSet());
+    }
 
+    /**
+     * Single source of truth for whether an expense counts as "spend" in analytics.
+     * Excludes income, refunds and analytics-excluded items, and drops a recurring
+     * projection only when a matching imported transaction already covers it (so
+     * imports and projections are never double-counted). Every analytics chart sources
+     * spend through this, so totals reconcile across the analytics tab.
+     *
+     * @param importedMonths cached result of {@link #importedMonths()} (passed in so
+     *                       callers iterating many expenses compute it once).
+     */
+    public boolean countsAsSpend(Expense e, Set<YearMonth> importedMonths) {
+        if (e.isExcluded() || e.isIncome() || e.isRefund()) return false;
+        YearMonth ym = YearMonth.from(e.getDate());
+        if (e.getRecurringId() != null && importedMonths.contains(ym)
+            && shouldExcludeRecurring(e, ym)) {
+            return false;
+        }
+        return true;
+    }
+
+    /** Whether an expense's date falls within the selected chart period. */
+    public boolean matchesPeriod(Expense e, String chartPeriod, int selectedYear,
+                                 YearMonth selectedYearMonth, YearMonth now) {
+        YearMonth ym = YearMonth.from(e.getDate());
+        switch (chartPeriod) {
+            case "By Year":
+                return e.getDate().getYear() == selectedYear;
+            case "By Month":
+                return ym.equals(selectedYearMonth);
+            case "Last 6 Months":
+                return !ym.isBefore(now.minusMonths(5)) && !ym.isAfter(now);
+            case "Last 12 Months":
+                return !ym.isBefore(now.minusMonths(11)) && !ym.isAfter(now);
+            default:
+                return true;
+        }
+    }
+
+    public List<Expense> filterExpensesByPeriod(String chartPeriod, int selectedYear,
+                                                 YearMonth selectedYearMonth, YearMonth now) {
+        Set<YearMonth> imported = importedMonths();
         return expenseList.stream()
-            .filter(expense -> !expense.isExcluded() && !expense.isIncome())
-            .filter(expense -> {
-                YearMonth ym = YearMonth.from(expense.getDate());
-                if (expense.getRecurringId() != null && importedMonths.contains(ym)
-                    && shouldExcludeRecurring(expense, ym)) {
-                    return false;
-                }
-                switch (chartPeriod) {
-                    case "By Year":
-                        return expense.getDate().getYear() == selectedYear;
-                    case "By Month":
-                        return ym.equals(selectedYearMonth);
-                    case "Last 6 Months":
-                        return !ym.isBefore(now.minusMonths(5)) && !ym.isAfter(now);
-                    case "Last 12 Months":
-                        return !ym.isBefore(now.minusMonths(11)) && !ym.isAfter(now);
-                    default:
-                        return true;
-                }
-            })
+            .filter(e -> countsAsSpend(e, imported))
+            .filter(e -> matchesPeriod(e, chartPeriod, selectedYear, selectedYearMonth, now))
             .collect(Collectors.toList());
     }
 
