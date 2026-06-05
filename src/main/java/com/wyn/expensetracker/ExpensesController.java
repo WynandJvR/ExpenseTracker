@@ -236,6 +236,32 @@ public class ExpensesController {
                 }
             });
 
+            SeparatorMenuItem occurrenceSeparator = new SeparatorMenuItem();
+
+            MenuItem editOccurrenceItem = new MenuItem("Edit This Occurrence...");
+            editOccurrenceItem.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null && item.getRecurringId() != null) {
+                    showEditOccurrenceDialog(item);
+                }
+            });
+
+            MenuItem skipOccurrenceItem = new MenuItem("Skip This Occurrence");
+            skipOccurrenceItem.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null && item.getRecurringId() != null) {
+                    skipOccurrence(item);
+                }
+            });
+
+            MenuItem resetOccurrenceItem = new MenuItem("Reset Occurrence to Series");
+            resetOccurrenceItem.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null && item.getRecurringId() != null) {
+                    resetOccurrence(item);
+                }
+            });
+
             MenuItem attachReceiptItem = new MenuItem("Attach Receipt...");
             attachReceiptItem.setOnAction(e -> {
                 Expense item = row.getItem();
@@ -282,6 +308,11 @@ public class ExpensesController {
                 }
                 makeRecurring.setVisible(item != null && item.getRecurringId() == null
                         && !(item instanceof RecurringExpense));
+                boolean isOccurrence = item != null && item.getRecurringId() != null;
+                editOccurrenceItem.setVisible(isOccurrence);
+                skipOccurrenceItem.setVisible(isOccurrence);
+                resetOccurrenceItem.setVisible(isOccurrence && state.getManager().hasOverride(item));
+                occurrenceSeparator.setVisible(isOccurrence);
                 boolean hasReceipt = item != null && item.getReceiptPath() != null && !item.getReceiptPath().isEmpty();
                 viewReceiptItem.setVisible(hasReceipt);
                 removeReceiptItem.setVisible(hasReceipt);
@@ -291,6 +322,7 @@ public class ExpensesController {
             menu.getItems().addAll(copyItem, new SeparatorMenuItem(),
                     toggleExclude, toggleIncome, toggleRefund,
                     new SeparatorMenuItem(), manageTags,
+                    occurrenceSeparator, editOccurrenceItem, skipOccurrenceItem, resetOccurrenceItem,
                     new SeparatorMenuItem(), attachReceiptItem, viewReceiptItem, removeReceiptItem,
                     new SeparatorMenuItem(), makeRecurring);
             row.setContextMenu(menu);
@@ -674,6 +706,10 @@ public class ExpensesController {
 
         dialog.showAndWait().ifPresent(category -> {
             category = category.trim();
+            if (category.length() > ExpenseManager.MAX_CATEGORY_LENGTH) {
+                showMsg("Category name is too long (max " + ExpenseManager.MAX_CATEGORY_LENGTH + " characters)", true);
+                return;
+            }
             if (!category.isEmpty() && !state.getCategories().contains(category)) {
                 state.getCategories().add(category);
                 categoryCombo.setValue(category);
@@ -735,7 +771,14 @@ public class ExpensesController {
     }
 
     private void handleInlineEdit(Expense oldExpense, Expense newExpense) {
-        state.getManager().executeCommand(new EditExpenseCommand(state.getManager(), oldExpense, newExpense));
+        try {
+            state.getManager().executeCommand(new EditExpenseCommand(state.getManager(), oldExpense, newExpense));
+        } catch (IllegalArgumentException ex) {
+            // Rejected by validation — revert the edited cell to its previous value.
+            showMsg(ex.getMessage(), true);
+            refresh();
+            return;
+        }
         try {
             state.saveExpenses();
         } catch (Exception ex) {
@@ -1230,6 +1273,120 @@ public class ExpensesController {
     }
 
     // ======================== MAKE RECURRING DIALOG ========================
+
+    // ======================== RECURRING OCCURRENCE OVERRIDES ========================
+
+    private void skipOccurrence(Expense occurrence) {
+        LocalDate when = occurrence.getDate();
+        try {
+            state.getManager().skipOccurrence(occurrence);
+            state.saveRecurringOverrides();
+        } catch (Exception ex) {
+            showMsg("Failed to skip occurrence: " + ex.getMessage(), true);
+            return;
+        }
+        state.syncExpenseList();
+        state.requestRefresh();
+        showMsg("Skipped occurrence on " + when.format(DATE_FORMAT), false);
+    }
+
+    private void resetOccurrence(Expense occurrence) {
+        try {
+            state.getManager().resetOccurrence(occurrence);
+            state.saveRecurringOverrides();
+        } catch (Exception ex) {
+            showMsg("Failed to reset occurrence: " + ex.getMessage(), true);
+            return;
+        }
+        state.syncExpenseList();
+        state.requestRefresh();
+        showMsg("Occurrence restored to series default", false);
+    }
+
+    private void showEditOccurrenceDialog(Expense occurrence) {
+        Stage dialog = new Stage();
+        dialog.initModality(Modality.WINDOW_MODAL);
+        dialog.initOwner(state.getStage());
+        dialog.setTitle("Edit This Occurrence");
+
+        Label header = new Label(String.format("Edit only the %s occurrence of this recurring expense",
+                occurrence.getDate().format(DATE_FORMAT)));
+        header.getStyleClass().add("section-title");
+        header.setWrapText(true);
+
+        Label note = new Label("Other occurrences in the series are unaffected.");
+        note.getStyleClass().add("form-label");
+        note.setWrapText(true);
+
+        Label amountLabel = new Label("Amount:");
+        amountLabel.getStyleClass().add("form-label");
+        TextField amountField = new TextField(String.format("%.2f", occurrence.getAmount()));
+        amountField.getStyleClass().add("text-field");
+
+        Label categoryLabel = new Label("Category:");
+        categoryLabel.getStyleClass().add("form-label");
+        ComboBox<String> categoryBox = new ComboBox<>(state.getCategories());
+        categoryBox.setMaxWidth(Double.MAX_VALUE);
+        categoryBox.getStyleClass().add("combo-box");
+        categoryBox.setValue(occurrence.getCategory());
+
+        Label descLabel = new Label("Description:");
+        descLabel.getStyleClass().add("form-label");
+        TextField descField = new TextField(occurrence.getDescription() != null ? occurrence.getDescription() : "");
+        descField.getStyleClass().add("text-field");
+
+        Label errorLabel = new Label();
+        errorLabel.getStyleClass().add("error-label");
+
+        Button confirmBtn = new Button("Save Occurrence");
+        confirmBtn.getStyleClass().add("success-button");
+        confirmBtn.setOnAction(e -> {
+            double amount;
+            try {
+                amount = Double.parseDouble(amountField.getText().trim());
+            } catch (NumberFormatException ex) {
+                errorLabel.setText("Enter a valid amount");
+                return;
+            }
+            if (amount <= 0) {
+                errorLabel.setText("Amount must be positive");
+                return;
+            }
+            String category = categoryBox.getValue();
+            if (category == null || category.trim().isEmpty()) {
+                errorLabel.setText("Please select a category");
+                return;
+            }
+            try {
+                state.getManager().editOccurrence(occurrence, amount, category, descField.getText().trim());
+                state.saveRecurringOverrides();
+            } catch (Exception ex) {
+                errorLabel.setText("Failed to save: " + ex.getMessage());
+                return;
+            }
+            state.syncExpenseList();
+            state.requestRefresh();
+            showMsg("Occurrence updated", false);
+            dialog.close();
+        });
+
+        Button cancelBtn = new Button("Cancel");
+        cancelBtn.getStyleClass().add("danger-button");
+        cancelBtn.setOnAction(e -> dialog.close());
+
+        HBox buttons = new HBox(10, confirmBtn, cancelBtn);
+        buttons.setAlignment(Pos.CENTER_RIGHT);
+
+        VBox content = new VBox(12, header, note, amountLabel, amountField,
+                categoryLabel, categoryBox, descLabel, descField, errorLabel, buttons);
+        content.setPadding(new Insets(20));
+        content.getStyleClass().add("root-pane");
+
+        Scene scene = new Scene(content, 420, 440);
+        scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
+        dialog.setScene(scene);
+        dialog.showAndWait();
+    }
 
     private void showMakeRecurringDialog(Expense expense) {
         Stage dialog = new Stage();

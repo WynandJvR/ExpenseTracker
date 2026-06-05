@@ -2,6 +2,8 @@ package com.wyn.expensetracker;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -13,6 +15,8 @@ public class ExpenseManager {
     private final List<Expense> expenses;
     private final List<RecurringExpense> baseRecurringExpenses;
     private final Set<String> generatedRecurringIds;
+    // Per-occurrence overrides keyed by OccurrenceOverride.key(templateId, date).
+    private final Map<String, OccurrenceOverride> occurrenceOverrides;
     private final Stack<Command> undoStack;
     private final Stack<Command> redoStack;
 
@@ -20,6 +24,7 @@ public class ExpenseManager {
         expenses = new ArrayList<>();
         baseRecurringExpenses = new ArrayList<>();
         generatedRecurringIds = new HashSet<>();
+        occurrenceOverrides = new HashMap<>();
         undoStack = new Stack<>();
         redoStack = new Stack<>();
     }
@@ -67,16 +72,57 @@ public class ExpenseManager {
         return !redoStack.isEmpty();
     }
 
-    public void addExpense(Expense expense) {
-        if (expense == null) {
+    // Sane bounds for user-entered data. Loading from disk bypasses these so existing
+    // records are never rejected; they guard only fresh input from the UI.
+    static final LocalDate MIN_DATE = LocalDate.of(1900, 1, 1);
+    static final LocalDate MAX_DATE = LocalDate.of(2100, 12, 31);
+    public static final int MAX_CATEGORY_LENGTH = 60;
+    public static final int MAX_DESCRIPTION_LENGTH = 500;
+
+    /**
+     * Validates user-entered expense data. Throws IllegalArgumentException with a
+     * user-facing message on the first problem found. Centralised so every entry
+     * point (add form, inline table edit, recurring editor) enforces the same rules.
+     */
+    public static void validateExpense(Expense e) {
+        if (e == null) {
             throw new IllegalArgumentException("Expense cannot be null");
         }
-        if (expense.getAmount() <= 0) {
+        if (e.getAmount() <= 0) {
             throw new IllegalArgumentException("Expense amount must be positive");
         }
-        if (expense.getCategory() == null || expense.getCategory().trim().isEmpty()) {
+        if (e.getCategory() == null || e.getCategory().trim().isEmpty()) {
             throw new IllegalArgumentException("Category cannot be empty");
         }
+        if (e.getCategory().length() > MAX_CATEGORY_LENGTH) {
+            throw new IllegalArgumentException("Category name is too long (max " + MAX_CATEGORY_LENGTH + " characters)");
+        }
+        if (e.getDate() == null) {
+            throw new IllegalArgumentException("Date is required");
+        }
+        if (e.getDate().isBefore(MIN_DATE) || e.getDate().isAfter(MAX_DATE)) {
+            throw new IllegalArgumentException("Date must be between " + MIN_DATE + " and " + MAX_DATE);
+        }
+        if (e.getDescription() != null && e.getDescription().length() > MAX_DESCRIPTION_LENGTH) {
+            throw new IllegalArgumentException("Description is too long (max " + MAX_DESCRIPTION_LENGTH + " characters)");
+        }
+        if (e instanceof RecurringExpense rec) {
+            if (rec.getFrequency() == null) {
+                throw new IllegalArgumentException("Recurrence frequency is required");
+            }
+            if (rec.getEndDate() != null) {
+                if (rec.getEndDate().isBefore(e.getDate())) {
+                    throw new IllegalArgumentException("End date cannot be before the start date");
+                }
+                if (rec.getEndDate().isAfter(MAX_DATE)) {
+                    throw new IllegalArgumentException("End date must be on or before " + MAX_DATE);
+                }
+            }
+        }
+    }
+
+    public void addExpense(Expense expense) {
+        validateExpense(expense);
         if (expense instanceof RecurringExpense) {
             baseRecurringExpenses.add((RecurringExpense) expense);
             regenerateExpenses();
@@ -89,6 +135,7 @@ public class ExpenseManager {
         if (oldExpense == null || newExpense == null) {
             throw new IllegalArgumentException("Expenses cannot be null");
         }
+        validateExpense(newExpense);
         // Editing a generated recurring instance would be wiped on the next
         // regenerateExpenses() pass — route the user to the Recurring tab instead.
         if (oldExpense.getRecurringId() != null) {
@@ -119,8 +166,11 @@ public class ExpenseManager {
     }
 
     public void updateRecurringExpense(RecurringExpense oldExpense, RecurringExpense newExpense) {
+        validateExpense(newExpense);
         int index = baseRecurringExpenses.indexOf(oldExpense);
         if (index != -1) {
+            // Preserve the series identity so per-occurrence overrides stay attached.
+            newExpense.setId(oldExpense.getId());
             baseRecurringExpenses.set(index, newExpense);
             regenerateExpenses();
         }
@@ -198,13 +248,26 @@ public class ExpenseManager {
 
             while (!currentDate.isAfter(endDate) && !currentDate.isAfter(upToDate)) {
                 String recurringId = generateRecurringId(recurringExpense, currentDate);
+                OccurrenceOverride override = occurrenceOverrides.get(recurringId);
 
-                if (!generatedRecurringIds.contains(recurringId)) {
+                // A skipped occurrence produces no instance for that date.
+                if ((override == null || !override.isSkipped())
+                        && !generatedRecurringIds.contains(recurringId)) {
+                    // Null override fields inherit the template's current value, so an
+                    // occurrence that only changes (say) amount still tracks later edits
+                    // to the series description.
+                    double amount = override != null && override.getAmount() != null
+                        ? override.getAmount() : recurringExpense.getAmount();
+                    String category = override != null && override.getCategory() != null
+                        ? override.getCategory() : recurringExpense.getCategory();
+                    String description = override != null && override.getDescription() != null
+                        ? override.getDescription() : recurringExpense.getDescription();
+
                     Expense generated = new Expense(
-                        recurringExpense.getAmount(),
-                        recurringExpense.getCategory(),
+                        amount,
+                        category,
                         currentDate,
-                        recurringExpense.getDescription(),
+                        description,
                         recurringId,
                         recurringExpense
                     );
@@ -223,6 +286,131 @@ public class ExpenseManager {
         expenses.addAll(generatedExpenses);
     }
 
+    // ======================== Per-occurrence overrides ========================
+
+    /** Replaces all overrides (used when loading from disk). Empty overrides are dropped. */
+    public void setOverrides(Collection<OccurrenceOverride> overrides) {
+        occurrenceOverrides.clear();
+        if (overrides != null) {
+            for (OccurrenceOverride o : overrides) {
+                if (o != null && !o.isEmpty()) occurrenceOverrides.put(o.key(), o);
+            }
+        }
+    }
+
+    /** Live overrides, for persistence. */
+    public List<OccurrenceOverride> getOverrides() {
+        return new ArrayList<>(occurrenceOverrides.values());
+    }
+
+    private RecurringExpense sourceTemplateOf(Expense instance) {
+        if (instance == null || instance.getRecurringId() == null) return null;
+        return instance.getSourceRecurringExpense();
+    }
+
+    /** The override currently applied to a generated instance, or null. */
+    public OccurrenceOverride getOverrideFor(Expense instance) {
+        RecurringExpense src = sourceTemplateOf(instance);
+        if (src == null) return null;
+        return occurrenceOverrides.get(OccurrenceOverride.key(src.getId(), instance.getDate()));
+    }
+
+    public boolean hasOverride(Expense instance) {
+        return getOverrideFor(instance) != null;
+    }
+
+    /** Hides a single generated occurrence without touching the rest of the series. */
+    public void skipOccurrence(Expense instance) {
+        RecurringExpense src = sourceTemplateOf(instance);
+        if (src == null) {
+            throw new IllegalArgumentException("Not a generated recurring occurrence");
+        }
+        OccurrenceOverride o = new OccurrenceOverride(src.getId(), instance.getDate());
+        o.setSkipped(true);
+        occurrenceOverrides.put(o.key(), o);
+        regenerateExpenses();
+    }
+
+    /**
+     * Overrides amount/category/description for a single occurrence. A null argument
+     * (or a value equal to the template's) inherits the series value. If the result
+     * carries no change, any existing override for that date is cleared.
+     */
+    public void editOccurrence(Expense instance, Double amount, String category, String description) {
+        RecurringExpense src = sourceTemplateOf(instance);
+        if (src == null) {
+            throw new IllegalArgumentException("Not a generated recurring occurrence");
+        }
+        if (amount != null && amount <= 0) {
+            throw new IllegalArgumentException("Amount must be positive");
+        }
+        if (category != null && category.trim().isEmpty()) {
+            throw new IllegalArgumentException("Category cannot be empty");
+        }
+        if (category != null && category.length() > MAX_CATEGORY_LENGTH) {
+            throw new IllegalArgumentException("Category name is too long (max " + MAX_CATEGORY_LENGTH + " characters)");
+        }
+        if (description != null && description.length() > MAX_DESCRIPTION_LENGTH) {
+            throw new IllegalArgumentException("Description is too long (max " + MAX_DESCRIPTION_LENGTH + " characters)");
+        }
+        OccurrenceOverride o = new OccurrenceOverride(src.getId(), instance.getDate());
+        o.setAmount(amount != null && amount != src.getAmount() ? amount : null);
+        o.setCategory(category != null && !category.equals(src.getCategory()) ? category : null);
+        o.setDescription(description != null && !description.equals(src.getDescription()) ? description : null);
+        if (o.isEmpty()) {
+            occurrenceOverrides.remove(o.key());
+        } else {
+            occurrenceOverrides.put(o.key(), o);
+        }
+        regenerateExpenses();
+    }
+
+    /** Removes any override for a generated occurrence, restoring it to the series default. */
+    public void resetOccurrence(Expense instance) {
+        RecurringExpense src = sourceTemplateOf(instance);
+        if (src == null) return;
+        occurrenceOverrides.remove(OccurrenceOverride.key(src.getId(), instance.getDate()));
+        regenerateExpenses();
+    }
+
+    /**
+     * Future recurring occurrences falling within [from, to] (inclusive), with skip/edit
+     * overrides applied. Unlike {@link #generateRecurringExpenses}, this projects past
+     * today without mutating the ledger — used to surface upcoming bills. Results are
+     * sorted by date.
+     */
+    public List<Expense> getUpcomingRecurring(LocalDate from, LocalDate to) {
+        List<Expense> result = new ArrayList<>();
+        if (from == null || to == null || from.isAfter(to)) return result;
+        for (RecurringExpense rec : baseRecurringExpenses) {
+            LocalDate end = rec.getEndDate() != null && rec.getEndDate().isBefore(to)
+                ? rec.getEndDate() : to;
+            LocalDate cur = rec.getDate();
+            // Skip forward to the first occurrence on/after the window start.
+            while (cur.isBefore(from) && !cur.isAfter(end)) {
+                cur = getNextRecurringDate(rec, cur);
+            }
+            while (!cur.isAfter(end)) {
+                String id = generateRecurringId(rec, cur);
+                OccurrenceOverride ov = occurrenceOverrides.get(id);
+                if (ov == null || !ov.isSkipped()) {
+                    double amount = ov != null && ov.getAmount() != null ? ov.getAmount() : rec.getAmount();
+                    String category = ov != null && ov.getCategory() != null ? ov.getCategory() : rec.getCategory();
+                    String description = ov != null && ov.getDescription() != null ? ov.getDescription() : rec.getDescription();
+                    Expense e = new Expense(amount, category, cur, description, id, rec);
+                    if (rec.isIncome()) e.setIncome(true);
+                    if (rec.isRefund()) e.setRefund(true);
+                    if (rec.isExcluded()) e.setExcluded(true);
+                    if (rec.getCurrency() != null) e.setCurrency(rec.getCurrency());
+                    result.add(e);
+                }
+                cur = getNextRecurringDate(rec, cur);
+            }
+        }
+        result.sort(java.util.Comparator.comparing(Expense::getDate));
+        return result;
+    }
+
     public double getTotalByCategory(String category) {
         if (category == null) {
             return 0.0;
@@ -234,9 +422,18 @@ public class ExpenseManager {
     }
 
     private void regenerateExpenses() {
+        pruneOrphanOverrides();
         expenses.removeIf(e -> e.getRecurringId() != null);
         generatedRecurringIds.clear();
         generateRecurringExpenses(LocalDate.now());
+    }
+
+    /** Drops overrides whose owning template no longer exists (e.g. series deleted). */
+    private void pruneOrphanOverrides() {
+        if (occurrenceOverrides.isEmpty()) return;
+        Set<String> liveIds = new HashSet<>();
+        for (RecurringExpense r : baseRecurringExpenses) liveIds.add(r.getId());
+        occurrenceOverrides.values().removeIf(o -> !liveIds.contains(o.getTemplateId()));
     }
 
     private LocalDate getNextRecurringDate(RecurringExpense expense, LocalDate fromDate) {
@@ -260,9 +457,9 @@ public class ExpenseManager {
     }
 
     private String generateRecurringId(RecurringExpense expense, LocalDate date) {
-        return expense.getAmount() + "|" + expense.getCategory() + "|" +
-               expense.getDate() + "|" + expense.getFrequency() + "|" +
-               expense.getEndDate() + "|" + expense.getDescription() + "|" + date;
+        // Stable per-occurrence id: template identity + occurrence date. Stable across
+        // edits to the template's fields, which is what lets overrides survive them.
+        return OccurrenceOverride.key(expense.getId(), date);
     }
 
     public void loadExpenses(List<Expense> loadedExpenses) {

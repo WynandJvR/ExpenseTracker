@@ -70,6 +70,13 @@ public class ExpenseTrackerApp extends Application {
         // Migrate from Excel if needed (one-time)
         storage.migrateFromExcelIfNeeded();
 
+        // Load per-occurrence overrides before expenses so regeneration applies them
+        try {
+            manager.setOverrides(storage.loadRecurringOverrides());
+        } catch (Exception e) {
+            System.err.println("Failed to load recurring overrides: " + e.getMessage());
+        }
+
         // Load expenses
         try {
             manager.loadExpenses(storage.loadExpenses());
@@ -77,6 +84,10 @@ public class ExpenseTrackerApp extends Application {
             if (manager.getExpenses().isEmpty() && !storage.expensesFileExists()) {
                 manager.executeCommand(new AddExpenseCommand(manager, new Expense(50.0, "Food", LocalDate.now(), "Groceries")));
                 manager.executeCommand(new AddExpenseCommand(manager, new Expense(30.0, "Transport", LocalDate.now(), "Bus fare")));
+                storage.saveExpenses(manager.getExpensesForSave());
+            } else if (storage.hadLegacyRecurringOnLoad()) {
+                // Upgrade path: persist the freshly-minted series ids so they stay stable
+                // across launches and overrides keyed to them survive.
                 storage.saveExpenses(manager.getExpensesForSave());
             }
         } catch (Exception e) {
