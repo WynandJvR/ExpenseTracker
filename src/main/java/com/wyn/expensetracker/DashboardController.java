@@ -351,8 +351,12 @@ public class DashboardController {
         ObservableList<Expense> expenseList = state.getExpenseList();
         Map<String, Double> budgets = state.getBudgets();
 
-        // Check if this month has real imported data (not just recurring projections)
+        // Check if this month has real imported data (drives the "Projected" labeling below)
         boolean hasImportedData = state.monthHasImportedData(selectedYearMonth);
+
+        // Shared spend filter — same source of truth the analytics charts use, so the
+        // dashboard total reconciles with the analytics pie for the same month.
+        Set<YearMonth> imported = state.importedMonths();
 
         // Filter expenses for the selected month (dashboard computes its own totals
         // by streaming over expenseList directly)
@@ -360,20 +364,10 @@ public class DashboardController {
                 .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
                 .collect(Collectors.toList());
 
-        double total;
-        if (hasImportedData) {
-            // Actual month: only count real expenses (exclude recurring projections)
-            total = monthExpenses.stream()
-                    .filter(e -> !e.isExcluded() && !e.isIncome() && e.getRecurringId() == null)
-                    .mapToDouble(this::toBase)
-                    .sum();
-        } else {
-            // Projected month: use recurring expenses as forecast
-            total = monthExpenses.stream()
-                    .filter(e -> !e.isExcluded() && !e.isIncome())
-                    .mapToDouble(this::toBase)
-                    .sum();
-        }
+        double total = monthExpenses.stream()
+                .filter(e -> state.countsAsSpend(e, imported))
+                .mapToDouble(this::toBase)
+                .sum();
 
         double actualIncome = monthExpenses.stream()
                 .filter(e -> !e.isExcluded() && e.isIncome())
@@ -406,8 +400,7 @@ public class DashboardController {
         }
 
         Map<String, Double> categoryMap = monthExpenses.stream()
-                .filter(e -> !e.isExcluded() && !e.isIncome()
-                        && (!hasImportedData || e.getRecurringId() == null))
+                .filter(e -> state.countsAsSpend(e, imported))
                 .collect(Collectors.groupingBy(
                         Expense::getCategory,
                         Collectors.summingDouble(this::toBase))
@@ -421,13 +414,9 @@ public class DashboardController {
 
         // Compute previous month total for month-over-month comparison
         YearMonth prevYearMonth = selectedYearMonth.minusMonths(1);
-        boolean prevMonthHasImports = state.monthHasImportedData(prevYearMonth);
         double prevTotal = expenseList.stream()
-                .filter(expense -> {
-                    if (expense.isExcluded() || expense.isIncome()) return false;
-                    if (prevMonthHasImports && expense.getRecurringId() != null) return false;
-                    return YearMonth.from(expense.getDate()).equals(prevYearMonth);
-                })
+                .filter(e -> state.countsAsSpend(e, imported))
+                .filter(e -> YearMonth.from(e.getDate()).equals(prevYearMonth))
                 .mapToDouble(this::toBase)
                 .sum();
 
