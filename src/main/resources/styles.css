@@ -45,6 +45,27 @@
     -fx-border-radius: 5;
 }
 
+/* Uniform height for all single-line form inputs. Text fields, combo boxes and
+   date pickers compute different natural heights (each has its own internal padding),
+   which made rows of mixed controls look uneven — pin them to one height. */
+.text-field,
+.combo-box,
+.date-picker {
+    -fx-min-height: 36px;
+    -fx-pref-height: 36px;
+    -fx-max-height: 36px;
+}
+
+/* Let the date picker / editable combo's inner editor fill that height without
+   adding a second layer of vertical padding. */
+.date-picker .text-field,
+.combo-box .text-field {
+    -fx-min-height: 34px;
+    -fx-pref-height: 34px;
+    -fx-max-height: 34px;
+    -fx-padding: 0 8 0 8;
+}
+
 .text-field:focused {
     -fx-background-color: #4A4A4A;
     -fx-border-color: #5C6BC0;
@@ -70,9 +91,17 @@
     -fx-text-fill: #FFFFFF;
     -fx-prompt-text-fill: #A0A0A0;
     -fx-font-size: 14px;
-    -fx-padding: 8;
+    /* Horizontal padding only — vertical space is governed by the fixed 36px height
+       above. Padding on both axes plus the height cap clipped the selected value. */
+    -fx-padding: 0 8 0 8;
     -fx-background-radius: 5;
     -fx-border-radius: 5;
+}
+
+/* Ensure the combo's displayed value cell fills the height and stays vertically centered. */
+.combo-box > .list-cell {
+    -fx-padding: 0 4 0 0;
+    -fx-alignment: CENTER_LEFT;
 }
 
 .combo-box:focused {
