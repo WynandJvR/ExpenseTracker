@@ -174,6 +174,10 @@ public class SharedState {
         storage.saveExpenses(manager.getExpensesForSave());
     }
 
+    public void saveRecurringOverrides() throws IOException {
+        storage.saveRecurringOverrides(manager.getOverrides());
+    }
+
     public void syncExpenseList() {
         expenseList.setAll(manager.getExpenses());
     }

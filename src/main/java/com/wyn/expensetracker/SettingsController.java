@@ -134,6 +134,7 @@ public class SettingsController {
         dialog.showAndWait().ifPresent(name -> {
             String trimmed = name.trim();
             if (trimmed.isEmpty()) { showMsg("Category name cannot be empty", true); return; }
+            if (trimmed.length() > ExpenseManager.MAX_CATEGORY_LENGTH) { showMsg("Category name is too long (max " + ExpenseManager.MAX_CATEGORY_LENGTH + " characters)", true); return; }
             if (state.getCategories().contains(trimmed)) { showMsg("A category named \"" + trimmed + "\" already exists", true); return; }
             state.getCategories().add(trimmed);
             try {

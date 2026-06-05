@@ -36,6 +36,9 @@
             </VBox>
         </HBox>
 
+        <!-- Upcoming bill reminders -->
+        <VBox fx:id="remindersBox" spacing="6"/>
+
         <!-- Anomaly Alerts -->
         <VBox fx:id="anomalyBox" spacing="6"/>
 

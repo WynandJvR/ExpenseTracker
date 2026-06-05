@@ -233,6 +233,8 @@ public class RecurringController {
             }
         } catch (NumberFormatException ex) {
             showMsgOn("Invalid amount: Please enter a valid number (e.g., 10.99)", true, editRecurringErrorLabel);
+        } catch (IllegalArgumentException ex) {
+            showMsgOn(ex.getMessage(), true, editRecurringErrorLabel);
         }
     }
 
@@ -296,6 +298,10 @@ public class RecurringController {
 
         dialog.showAndWait().ifPresent(category -> {
             category = category.trim();
+            if (category.length() > ExpenseManager.MAX_CATEGORY_LENGTH) {
+                showMsg("Category name is too long (max " + ExpenseManager.MAX_CATEGORY_LENGTH + " characters)", true);
+                return;
+            }
             if (!category.isEmpty() && !state.getCategories().contains(category)) {
                 state.getCategories().add(category);
                 addRecurringCategoryCombo.setValue(category);

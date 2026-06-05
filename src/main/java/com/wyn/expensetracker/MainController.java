@@ -15,6 +15,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
@@ -69,6 +70,10 @@ public class MainController {
     // --- Shared state ---
     private SharedState state;
     private boolean refreshingTable = false;
+    // Last non-maximized window bounds, tracked continuously so we can restore a sensible
+    // floating size even when the app is closed while maximized.
+    private double lastFloatW = Double.NaN, lastFloatH = Double.NaN;
+    private double lastFloatX = Double.NaN, lastFloatY = Double.NaN;
 
     @FXML
     public void initialize() {
@@ -165,6 +170,17 @@ public class MainController {
 
         // Restore UI state from previous session
         restoreUIState();
+
+        // Track floating (non-maximized) bounds so a session closed while maximized still
+        // restores to a usable size rather than snapping to the default.
+        stage.widthProperty().addListener((o, ov, nv) -> { if (!stage.isMaximized()) lastFloatW = nv.doubleValue(); });
+        stage.heightProperty().addListener((o, ov, nv) -> { if (!stage.isMaximized()) lastFloatH = nv.doubleValue(); });
+        stage.xProperty().addListener((o, ov, nv) -> { if (!stage.isMaximized()) lastFloatX = nv.doubleValue(); });
+        stage.yProperty().addListener((o, ov, nv) -> { if (!stage.isMaximized()) lastFloatY = nv.doubleValue(); });
+
+        // Restore window size/position once the stage is shown (after the scene sizes it)
+        Map<String, String> savedState = state.getStorage().loadUIState();
+        stage.setOnShown(e -> applyWindowGeometry(savedState));
 
         // Save UI state on window close
         stage.setOnCloseRequest(e -> saveUIState());
@@ -495,6 +511,24 @@ public class MainController {
             uiState.put("analyticsTab", String.valueOf(analyticsController.getSelectedTabIndex()));
             uiState.put("chartPeriod", state.getChartPeriod());
             uiState.put("expenseSort", expensesController.getSortState());
+            if (state.getSelectedYear() != null) {
+                uiState.put("selectedYear", String.valueOf(state.getSelectedYear()));
+            }
+            if (state.getSelectedMonth() != null) {
+                uiState.put("selectedMonth", state.getSelectedMonth().name());
+            }
+            Stage stage = state.getStage();
+            // Persist the last floating bounds (not the maximized ones) so un-maximizing
+            // after a restore lands on a real size.
+            if (!Double.isNaN(lastFloatW) && !Double.isNaN(lastFloatH)) {
+                uiState.put("winW", String.valueOf((int) lastFloatW));
+                uiState.put("winH", String.valueOf((int) lastFloatH));
+            }
+            if (!Double.isNaN(lastFloatX) && !Double.isNaN(lastFloatY)) {
+                uiState.put("winX", String.valueOf((int) lastFloatX));
+                uiState.put("winY", String.valueOf((int) lastFloatY));
+            }
+            uiState.put("winMaximized", String.valueOf(stage != null && stage.isMaximized()));
             state.getStorage().saveUIState(uiState);
         } catch (IOException e) {
             System.err.println("Error saving UI state: " + e.getMessage());
@@ -530,6 +564,60 @@ public class MainController {
         if (uiState.containsKey("expenseSort")) {
             expensesController.applySortState(uiState.get("expenseSort"));
         }
+
+        if (uiState.containsKey("selectedYear")) {
+            try {
+                Integer yr = Integer.valueOf(uiState.get("selectedYear"));
+                if (yearCombo.getItems().contains(yr)) yearCombo.setValue(yr);
+            } catch (NumberFormatException ignored) { /* stale value */ }
+        }
+
+        if (uiState.containsKey("selectedMonth")) {
+            try {
+                monthCombo.setValue(Month.valueOf(uiState.get("selectedMonth")));
+            } catch (IllegalArgumentException ignored) { /* stale value */ }
+        }
+    }
+
+    /**
+     * Restores the saved window size/position. Applied via setOnShown because the scene's
+     * preferred size would otherwise overwrite stage dimensions set before the window is shown.
+     * Off-screen positions (e.g. a since-disconnected monitor) are ignored.
+     */
+    private void applyWindowGeometry(Map<String, String> uiState) {
+        Stage stage = state.getStage();
+        if (stage == null || uiState.isEmpty()) return;
+        try {
+            if (uiState.containsKey("winW") && uiState.containsKey("winH")) {
+                double w = Double.parseDouble(uiState.get("winW"));
+                double h = Double.parseDouble(uiState.get("winH"));
+                if (w >= stage.getMinWidth() && h >= stage.getMinHeight()) {
+                    stage.setWidth(w);
+                    stage.setHeight(h);
+                }
+            }
+            if (uiState.containsKey("winX") && uiState.containsKey("winY")) {
+                double x = Double.parseDouble(uiState.get("winX"));
+                double y = Double.parseDouble(uiState.get("winY"));
+                if (isOnScreen(x, y, stage.getWidth(), stage.getHeight())) {
+                    stage.setX(x);
+                    stage.setY(y);
+                }
+            }
+            if (Boolean.parseBoolean(uiState.get("winMaximized"))) {
+                stage.setMaximized(true);
+            }
+        } catch (NumberFormatException ignored) { /* stale geometry — keep defaults */ }
+    }
+
+    /** True if the given window rectangle overlaps any currently-attached screen. */
+    private boolean isOnScreen(double x, double y, double w, double h) {
+        for (Screen screen : Screen.getScreens()) {
+            if (screen.getVisualBounds().intersects(x, y, Math.max(w, 1), Math.max(h, 1))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ======================== PROFILES ========================
@@ -553,7 +641,17 @@ public class MainController {
         state.getStorage().migrateFromExcelIfNeeded();
 
         try {
+            state.getManager().setOverrides(state.getStorage().loadRecurringOverrides());
+        } catch (Exception e) {
+            System.err.println("Error loading recurring overrides for profile " + profileName + ": " + e.getMessage());
+        }
+
+        try {
             state.getManager().loadExpenses(state.getStorage().loadExpenses());
+            if (state.getStorage().hadLegacyRecurringOnLoad()) {
+                // Upgrade path: persist minted series ids so overrides keyed to them survive.
+                state.getStorage().saveExpenses(state.getManager().getExpensesForSave());
+            }
         } catch (Exception e) {
             System.err.println("Error loading expenses for profile " + profileName + ": " + e.getMessage());
         }

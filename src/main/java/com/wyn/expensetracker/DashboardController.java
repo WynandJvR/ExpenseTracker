@@ -51,6 +51,8 @@ public class DashboardController {
     @FXML private VBox budgetAlertBox;
 
     // --- Anomaly detection ---
+    @FXML private VBox remindersBox;
+
     @FXML private VBox anomalyBox;
 
     // --- Savings goals ---
@@ -99,6 +101,7 @@ public class DashboardController {
         refreshIncomeTable();
         updateIncomeField();
         updateGoalsPanel();
+        updateRemindersPanel();
         updateAnomalyAlerts();
         updateDebtSummary();
         updateExchangeRatesPanel();
@@ -556,6 +559,72 @@ public class DashboardController {
 
             alertBox.getChildren().addAll(iconLabel, msgLabel, dismissBtn);
             anomalyBox.getChildren().add(alertBox);
+            shown++;
+        }
+    }
+
+    // ======================== UPCOMING BILL REMINDERS ========================
+
+    private static final int REMINDER_WINDOW_DAYS = 14;
+
+    private void updateRemindersPanel() {
+        remindersBox.getChildren().clear();
+        java.time.LocalDate today = java.time.LocalDate.now();
+        List<Expense> upcoming = state.getManager().getUpcomingRecurring(
+            today.plusDays(1), today.plusDays(REMINDER_WINDOW_DAYS));
+        // Bills are money going out — drop income, refunds, and analytics-excluded series.
+        upcoming.removeIf(e -> e.isIncome() || e.isRefund() || e.isExcluded());
+        if (upcoming.isEmpty()) return;
+
+        double totalBase = upcoming.stream()
+            .mapToDouble(e -> state.getCurrencyManager().toBase(e.getAmount(), e.getCurrency()))
+            .sum();
+
+        HBox headerRow = new HBox(8);
+        headerRow.setAlignment(Pos.CENTER_LEFT);
+        headerRow.setPadding(new Insets(6, 10, 6, 10));
+        headerRow.setStyle("-fx-background-color: rgba(92, 107, 192, 0.12); -fx-border-color: #5C6BC0; "
+            + "-fx-border-width: 0 0 0 3; -fx-background-radius: 6; -fx-border-radius: 6;");
+        Label icon = new Label("📅");
+        icon.setStyle("-fx-font-size: 13px;");
+        Label headerLabel = new Label(String.format("%d upcoming bill%s in the next %d days — %s",
+            upcoming.size(), upcoming.size() == 1 ? "" : "s", REMINDER_WINDOW_DAYS, fmt(totalBase)));
+        headerLabel.setStyle("-fx-text-fill: #9FA8DA; -fx-font-size: 12px; -fx-font-weight: bold;");
+        headerLabel.setWrapText(true);
+        HBox.setHgrow(headerLabel, Priority.ALWAYS);
+        headerRow.getChildren().addAll(icon, headerLabel);
+        remindersBox.getChildren().add(headerRow);
+
+        int shown = 0;
+        for (Expense bill : upcoming) {
+            if (shown >= 6) {
+                Label more = new Label(String.format("+%d more…", upcoming.size() - shown));
+                more.setStyle("-fx-text-fill: #757575; -fx-font-size: 11px; -fx-font-style: italic;");
+                more.setPadding(new Insets(0, 0, 0, 14));
+                remindersBox.getChildren().add(more);
+                break;
+            }
+            long days = java.time.temporal.ChronoUnit.DAYS.between(today, bill.getDate());
+            String due = days == 1 ? "tomorrow" : "in " + days + " days";
+            String name = bill.getDescription() != null && !bill.getDescription().isEmpty()
+                ? bill.getDescription() : bill.getCategory();
+
+            HBox row = new HBox(8);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setPadding(new Insets(2, 10, 2, 14));
+            Label dot = new Label("•");
+            dot.setStyle("-fx-text-fill: #9FA8DA; -fx-font-size: 12px;");
+            Label text = new Label(String.format("%s — due %s (%s)", name, due,
+                bill.getDate().format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))));
+            text.setStyle("-fx-text-fill: #B0BEC5; -fx-font-size: 11px;");
+            text.setWrapText(true);
+            HBox.setHgrow(text, Priority.ALWAYS);
+            String code = bill.getCurrency() != null ? bill.getCurrency()
+                : state.getCurrencyManager().getBaseCurrency();
+            Label amt = new Label(UIUtils.fmt(bill.getAmount(), CurrencyManager.getSymbol(code)));
+            amt.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 11px; -fx-font-weight: bold;");
+            row.getChildren().addAll(dot, text, amt);
+            remindersBox.getChildren().add(row);
             shown++;
         }
     }

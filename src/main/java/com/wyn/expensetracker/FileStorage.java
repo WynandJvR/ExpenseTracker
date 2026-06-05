@@ -19,6 +19,7 @@ public class FileStorage {
     private final List<String> parseWarnings = new ArrayList<>();
     private int lastLoadTotalLines = 0;
     private int lastLoadFailedLines = 0;
+    private boolean lastLoadHadLegacyRecurring = false;
 
     public static final class LoadStats {
         public final int totalLines;
@@ -93,6 +94,7 @@ public class FileStorage {
                     String tagsFlag = expense.getTags().isEmpty() ? "" : ",TAGS:" + String.join("|", expense.getTags());
                     String currencyFlag = expense.getCurrency() != null ? ",CUR:" + expense.getCurrency() : "";
                     String receiptFlag = expense.getReceiptPath() != null ? ",RCPT:" + escapeCsv(expense.getReceiptPath()) : "";
+                    String idFlag = ",ID:" + recurringExpense.getId();
                     out.println(expense.getAmount() + "," +
                             escapeCsv(expense.getCategory()) + "," +
                             expense.getDate() + "," +
@@ -100,7 +102,7 @@ public class FileStorage {
                             "RECURRING," +
                             recurringExpense.getFrequency() + "," +
                             (recurringExpense.getEndDate() != null ? recurringExpense.getEndDate() : "") +
-                            excludedFlag + incomeFlag + refundFlag + tagsFlag + currencyFlag + receiptFlag);
+                            excludedFlag + incomeFlag + refundFlag + tagsFlag + currencyFlag + receiptFlag + idFlag);
                 } else {
                     String importId = expense.getImportId() != null ? expense.getImportId() : "";
                     String excludedFlag = expense.isExcluded() ? ",EXCLUDED" : "";
@@ -123,10 +125,21 @@ public class FileStorage {
         return new File(expensesFile).exists();
     }
 
+    /**
+     * True if the most recent load parsed a recurring template with no persisted id
+     * (i.e. data written before per-occurrence overrides existed). Callers should
+     * re-save once so the minted ids stick — otherwise each launch re-mints a random
+     * id and any overrides keyed to the old one are silently pruned.
+     */
+    public boolean hadLegacyRecurringOnLoad() {
+        return lastLoadHadLegacyRecurring;
+    }
+
     public List<Expense> loadExpenses() throws IOException {
         List<Expense> expenses = new ArrayList<>();
         lastLoadTotalLines = 0;
         lastLoadFailedLines = 0;
+        lastLoadHadLegacyRecurring = false;
         File file = new File(expensesFile);
         if (!file.exists()) {
             return expenses;
@@ -156,6 +169,7 @@ public class FileStorage {
                             RecurrenceType frequency = RecurrenceType.valueOf(parts[5]);
                             LocalDate endDate = parts[6].isEmpty() ? null : LocalDate.parse(parts[6]);
                             RecurringExpense rec = new RecurringExpense(amount, category, date, description, frequency, endDate);
+                            boolean hasIdFlag = false;
                             for (int i = 7; i < parts.length; i++) {
                                 if ("EXCLUDED".equals(parts[i])) rec.setExcluded(true);
                                 else if ("INCOME".equals(parts[i])) rec.setIncome(true);
@@ -163,7 +177,9 @@ public class FileStorage {
                                 else if (parts[i].startsWith("TAGS:")) parseTags(rec, parts[i]);
                                 else if (parts[i].startsWith("CUR:")) rec.setCurrency(parts[i].substring(4));
                                 else if (parts[i].startsWith("RCPT:")) rec.setReceiptPath(parts[i].substring(5));
+                                else if (parts[i].startsWith("ID:")) { rec.setId(parts[i].substring(3)); hasIdFlag = true; }
                             }
+                            if (!hasIdFlag) lastLoadHadLegacyRecurring = true;
                             expenses.add(rec);
                         } else if ("REGULAR".equals(type)) {
                             Expense exp = new Expense(amount, category, date, description);
@@ -730,6 +746,56 @@ public class FileStorage {
         String dir = baseDir + File.separator + "receipts";
         new File(dir).mkdirs();
         return dir;
+    }
+
+    // ======================== Recurring occurrence overrides ========================
+
+    public void saveRecurringOverrides(List<OccurrenceOverride> overrides) throws IOException {
+        atomicWrite(Path.of(baseDir + File.separator + "recurring_overrides.txt"), out -> {
+            for (OccurrenceOverride o : overrides) {
+                if (o == null || o.isEmpty()) continue;
+                String kind = o.isSkipped() ? "SKIP" : "MODIFY";
+                out.println(escapeCsv(o.getTemplateId()) + "," +
+                    o.getDate() + "," +
+                    kind + "," +
+                    (o.getAmount() != null ? o.getAmount() : "") + "," +
+                    escapeCsv(o.getCategory() != null ? o.getCategory() : "") + "," +
+                    escapeCsv(o.getDescription() != null ? o.getDescription() : ""));
+            }
+        });
+    }
+
+    public List<OccurrenceOverride> loadRecurringOverrides() throws IOException {
+        List<OccurrenceOverride> result = new ArrayList<>();
+        File file = new File(baseDir + File.separator + "recurring_overrides.txt");
+        if (!file.exists()) return result;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            int lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (line.trim().isEmpty()) continue;
+                try {
+                    String[] parts = splitCsv(line);
+                    if (parts.length >= 3) {
+                        OccurrenceOverride o = new OccurrenceOverride(parts[0], LocalDate.parse(parts[1]));
+                        if ("SKIP".equals(parts[2])) {
+                            o.setSkipped(true);
+                        } else {
+                            if (parts.length >= 4 && !parts[3].isEmpty()) o.setAmount(Double.parseDouble(parts[3]));
+                            if (parts.length >= 5 && !parts[4].isEmpty()) o.setCategory(parts[4]);
+                            if (parts.length >= 6 && !parts[5].isEmpty()) o.setDescription(parts[5]);
+                        }
+                        if (!o.isEmpty()) result.add(o);
+                    } else {
+                        addParseWarning("Malformed recurring override at line " + lineNumber + ": " + line);
+                    }
+                } catch (Exception e) {
+                    addParseWarning("Error parsing recurring override line " + lineNumber + ": " + e.getMessage());
+                }
+            }
+        }
+        return result;
     }
 
     // ======================== Debts ========================
