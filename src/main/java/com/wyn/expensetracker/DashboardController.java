@@ -77,6 +77,7 @@ public class DashboardController {
     private Runnable onReviewUncategorized = () -> {};
     private Runnable onGoToImport = () -> {};
     private java.util.function.Consumer<String> onShowCategory = c -> {};
+    private java.util.function.Consumer<YearMonth> onSelectMonth = ym -> {};
     private String summaryText = "";
     private boolean suppressIncomeListener = false;
     private boolean suppressRecurringIncomeListener = false;
@@ -94,6 +95,13 @@ public class DashboardController {
 
         setupIncomeTable();
         setupIncomeFieldListeners();
+        explain(kpiInValue, "Salary and other payments into your account this month. "
+            + "Refunds and transfers from your own accounts don't count as income.");
+        explain(kpiOutValue, "What you spent this month, after refunds. Money moved to your own "
+            + "accounts or savings pockets isn't spending, so it's left out.");
+        explain(kpiNetValue, "Money in minus money out for the month.");
+        explain(kpiBalanceValue, "The closing balance on your most recent imported statement.");
+        ChartHover.install(trendChart, this::fmt, x -> x + "  (net " + netText(x) + ")", "Click to open this month");
         ((NumberAxis) trendChart.getYAxis()).setTickLabelFormatter(new StringConverter<Number>() {
             @Override public String toString(Number n) { return compact(n.doubleValue()); }
             @Override public Number fromString(String s) { return 0; }
@@ -104,6 +112,32 @@ public class DashboardController {
     public void setNavigation(Runnable reviewUncategorized, Runnable goToImport) {
         if (reviewUncategorized != null) this.onReviewUncategorized = reviewUncategorized;
         if (goToImport != null) this.onGoToImport = goToImport;
+    }
+
+    /** Hover text for a headline card (installed on the whole card). */
+    private static void explain(Label value, String text) {
+        Tooltip t = new Tooltip(text);
+        t.setWrapText(true);
+        t.setMaxWidth(320);
+        Tooltip.install(value.getParent(), t);
+    }
+
+    /** Lets a click on a month in the trend chart switch the whole app to that month. */
+    public void setOnSelectMonth(java.util.function.Consumer<YearMonth> select) {
+        if (select != null) this.onSelectMonth = select;
+    }
+
+    /** "R1,234.56 saved" / "R99.00 short" for the trend read-out heading. */
+    private String netText(String monthLabel) {
+        double in = 0, out = 0;
+        for (XYChart.Series<String, Number> s : trendChart.getData()) {
+            for (XYChart.Data<String, Number> d : s.getData()) {
+                if (!d.getXValue().equals(monthLabel)) continue;
+                if ("Money in".equals(s.getName())) in = d.getYValue().doubleValue(); else out = d.getYValue().doubleValue();
+            }
+        }
+        double net = in - out;
+        return fmt(Math.abs(net)) + (net >= 0 ? " kept" : " overspent");
     }
 
     /** Opens the Transactions screen filtered to one category, across all months. */
@@ -466,8 +500,15 @@ public class DashboardController {
                 menu.getItems().add(clear);
             }
             row.setOnContextMenuRequested(ev -> menu.show(row, ev.getScreenX(), ev.getScreenY()));
-            Tooltip.install(row, new Tooltip(category + ": " + fmt(spent)
-                + (budget > 0 ? " of " + fmt(budget) + " budget" : "") + "\nRight-click to set a budget"));
+            row.setOnMouseClicked(ev -> {
+                if (ev.getButton() == javafx.scene.input.MouseButton.PRIMARY) {
+                    CategoryDetailDialog.show(state, category, state.getSelectedYearMonth(),
+                        () -> onShowCategory.accept(category));
+                }
+            });
+            Tooltip.install(row, new Tooltip(category + ": " + fmt(spent) + " this month"
+                + (budget > 0 ? " of " + fmt(budget) + " budget" : "")
+                + "\nClick for totals, trend and where it goes · right-click to set a budget"));
             categoryBars.getChildren().add(row);
         }
     }
@@ -495,10 +536,10 @@ public class DashboardController {
         trendChart.getData().setAll(List.of(in, out));
         for (XYChart.Series<String, Number> s : trendChart.getData()) {
             for (XYChart.Data<String, Number> d : s.getData()) {
-                if (d.getNode() != null) {
-                    Tooltip.install(d.getNode(), new Tooltip(s.getName() + " · " + d.getXValue() + "\n"
-                        + fmt(d.getYValue().doubleValue())));
-                }
+                if (d.getNode() == null) continue;
+                YearMonth ym = YearMonth.parse(d.getXValue(), label);
+                d.getNode().setOnMouseClicked(ev -> onSelectMonth.accept(ym));
+                d.getNode().getStyleClass().add("clickable");
             }
         }
     }
@@ -568,10 +609,7 @@ public class DashboardController {
     }
 
     private static String compact(double v) {
-        double a = Math.abs(v);
-        if (a >= 1_000_000) return String.format("%.1fm", v / 1_000_000);
-        if (a >= 1_000) return String.format("%.0fk", v / 1_000);
-        return String.format("%.0f", v);
+        return CategoryDetailDialog.compactAmount(v);
     }
 
     // ======================== ANOMALY DETECTION ========================

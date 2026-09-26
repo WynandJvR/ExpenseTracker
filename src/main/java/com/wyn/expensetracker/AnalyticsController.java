@@ -98,6 +98,19 @@ public class AnalyticsController {
 
         chartPeriodCombo.valueProperty().addListener((obs, oldVal, newVal) -> updateCharts());
 
+        // Hover read-outs: point anywhere over a column/day to see every value there.
+        java.util.function.Function<Double, String> money = this::fmt;
+        String drill = "Click a coloured block to see its transactions";
+        ChartHover.install(monthlyTrendChart, money, null, drill);
+        ChartHover.install(incomeVsExpensesChart, money);
+        ChartHover.install(budgetVsActualChart, money);
+        ChartHover.install(cumulativeSpendingChart, money, d -> "Day " + d.intValue() + " of the month", null);
+        ChartHover.install(categoryTrendChart, money);
+        ChartHover.install(yearOverYearChart, money);
+        ChartHover.install(projOutlookChart, money);
+        ChartHover.install(projBalanceChart, money);
+        ChartHover.install(projCategoryChart, money);
+
         // Projections and Cash Flow tabs — lazy compute
         analyticsTabPane.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
             if (newTab == projectionsTab && state.isProjectionsNeedUpdate()) {

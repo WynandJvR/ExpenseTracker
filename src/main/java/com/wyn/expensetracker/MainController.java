@@ -159,6 +159,7 @@ public class MainController {
             expensesController.showUncategorized();
         };
         dashboardController.setNavigation(reviewUncategorized, () -> navImport.setSelected(true));
+        dashboardController.setOnSelectMonth(this::showMonth);
         dashboardController.setOnShowCategory(category -> {
             navExpenses.setSelected(true);
             expensesController.showCategoryAllTime(category);

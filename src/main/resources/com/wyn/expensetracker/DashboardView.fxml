@@ -61,7 +61,7 @@
                     <Label fx:id="categorySummaryLabel" styleClass="muted-text"/>
                 </HBox>
                 <VBox fx:id="categoryBars" spacing="10"/>
-                <Label text="Right-click a category to set a monthly budget." styleClass="faint-text"/>
+                <Label text="Click a category for its totals and where the money goes · right-click to set a budget." styleClass="faint-text" wrapText="true"/>
             </VBox>
             <VBox spacing="8" styleClass="card" HBox.hgrow="ALWAYS" minWidth="320" prefWidth="460">
                 <Label text="Money in vs out · last 6 months" styleClass="card-title"/>

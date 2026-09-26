@@ -528,6 +528,9 @@
 .separator-menu-item .line { -fx-border-color: -c-border transparent transparent transparent; }
 
 .tooltip {
+    -fx-show-delay: 120ms;        /* JavaFX waits a full second by default */
+    -fx-show-duration: 30s;
+    -fx-hide-delay: 80ms;
     -fx-background-color: #2b3036;
     -fx-text-fill: -c-text;
     -fx-font-size: 12px;
@@ -852,3 +855,9 @@
 
 /* Debt schedule: instalments assumed paid before the first statement */
 .table-row-cell:assumed { -fx-background-color: -c-accent-soft; }
+
+/* Hover read-outs on charts, and anything that can be clicked */
+.chart-hover-tip { -fx-font-size: 12.5px; -fx-line-spacing: 2px; -fx-padding: 9 12; }
+.clickable, .bar-row { -fx-cursor: hand; }
+.bar-row:hover { -fx-background-color: -c-surface-2; }
+.bar-row { -fx-background-radius: 8; -fx-padding: 4 6; }
