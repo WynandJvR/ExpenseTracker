@@ -1,51 +1,36 @@
 # ExpenseTracker
 
-A feature-rich desktop expense tracking application built with JavaFX. Track daily spending, manage budgets, import bank statements, scan receipts, and visualize spending patterns — all with a polished dark-themed UI.
+A desktop app (JavaFX) that turns your bank statements into a clear picture of where your money goes. Drop in a statement and it does the rest: every line is checked against the statement's balances, transfers between your own accounts are set aside, and spending is categorised automatically.
 
 ## Features
 
-### Expense Management
-- Add, edit, and delete expenses with amount, category, date, and description
-- Inline table editing (double-click any cell)
-- Full undo/redo support (Ctrl+Z / Ctrl+Y)
-- Search and filter by category, amount range, or text
-- Month/year navigation with keyboard shortcuts
+### Import — the main way in
+- **Drag and drop** PDF, CSV, OFX/QFX or QIF statements (several at once), or pick them with *Choose files…*
+- **Statements folder** — point the app at the folder where you save statements; new ones are imported whenever the app opens (and when you come back to it). Removed imports aren't brought back.
+- **Balance check** — for statements that print balances (e.g. FNB), opening balance + money in − money out must equal the closing balance. Each import shows ✓ Matches or ⚠ Check. Lines that don't move the balance (such as failed debit-order notices) are skipped.
+- **Classification** — own-account transfers (pockets, savings, investments, loan draw-downs) are excluded from totals; credits are income or refunds; fee reversals are refunds of bank fees.
+- **Categories** — built-in list of common South African merchants, plus rules learned from you: change a transaction's category once and similar transactions (and future imports) follow. Right-click → *This is one of my own accounts* turns a payee into a transfer.
+- **No double counting** — re-importing a file, or importing overlapping statements (even a PDF and a CSV of the same period), only adds new transactions; genuine repeated same-day charges are kept.
+- One undo (Ctrl+Z) reverses a whole import. CSV columns and date formats are detected automatically; a mapping dialog appears only when they can't be.
+- Receipt scanning (OCR via Tesseract) is still available for till slips.
 
-### Recurring Expenses
-- Create recurring expenses with daily, weekly, monthly, or yearly frequency
-- Optional end dates
-- Auto-generates expense instances up to the current date
+### Overview
+- Money in, money out, what's left over, and your latest account balance for the selected month
+- "Where your money went" — categories as bars, with budgets (right-click a category to set one)
+- Money in vs out for the last six months
+- Notes that need attention: uncategorised transactions, statements that don't add up, an out-of-date latest statement, categories over budget
+- Upcoming bills, unusual spending, savings goals and debts
 
-### Income & Budget Tracking
-- Set recurring monthly income with per-month overrides
-- Per-category budget limits with color-coded progress bars (green/yellow/red)
-- Money saved calculation (income minus expenses)
+### Transactions
+- One searchable table; switch between *This month* and *All time*, filter by type (spending, income, refunds, transfers), category, amount or tag
+- Double-click to edit; right-click for refunds, tags, receipts, recurring and own-account actions
+- Undo/redo everything (Ctrl+Z / Ctrl+Y); export to Excel
 
-### Import
-- **Receipt Scanning** — OCR-based extraction from receipt images (JPG, PNG, BMP, TIFF) via Tesseract
-- **Bank Statement Import** — PDF parsing (FNB format supported) and CSV with auto-delimiter detection
-- **Auto-Categorization Rules** — keyword-based category assignment for imported transactions
-- **Import History** — track and remove entire import batches
-- Preview dialog to review and edit items before importing
-
-### Analytics & Charts
-- **Overview** — pie chart, monthly trend bar chart, category breakdown table
-- **Income & Budget** — income vs expenses, budget vs actual comparisons
-- **Spending Trends** — cumulative spending line chart, stacked area chart by category
-- **Comparisons** — year-over-year trends, recurring vs one-time breakdown
-- Configurable chart periods: All Time, Last 12/6 Months, By Year, By Month
-
-### Dashboard
-- Summary cards: Total Spent, Top Category, Budget Status, vs Last Month
-- Real-time updates when switching periods
-
-### Export
-- Export to Excel (.xlsx) — all expenses or current filtered view
-
-### Other
-- Multi-currency support (R, $, €, £, ¥, CHF, kr, Rs)
-- Automatic backup rotation (keeps last 5 backups)
-- Atomic file writes for data safety
+### Planning
+- **Recurring** bills and income (daily → yearly, per-occurrence skip/edit), and detection of repeating payments in your statements
+- **Analytics** — spending by category, trends, income vs spending, budgets, projections and a cash-flow calendar
+- **Debts** — amortisation schedules; link a debt to a keyword so its debit orders count as payments
+- **Savings goals**, multiple profiles, multi-currency with exchange rates
 
 ## Prerequisites
 
@@ -83,7 +68,7 @@ mvn package
 
 ## Data Storage
 
-All data is stored in `~/.expenseTracker/` as plain text files:
+All data is stored per profile in `~/.expenseTracker/profiles/<name>/` as UTF-8 text files. Nothing is sent anywhere.
 
 | File | Contents |
 |---|---|
@@ -91,8 +76,12 @@ All data is stored in `~/.expenseTracker/` as plain text files:
 | `categories.txt` | User-defined categories |
 | `incomes.txt` | Monthly income entries |
 | `budgets.txt` | Per-category budget limits |
-| `categorizationRules.txt` | Auto-categorization keywords |
-| `currencySymbol.txt` | Selected currency |
+| `categorization_rules.txt` | Categorisation rules (including ones learned from your edits) |
+| `statements.txt` | Imported statements: period, balances, balance check |
+| `fingerprints.txt` | Identities of imported transactions (prevents double counting) |
+| `auto_import.txt` / `dismissed.txt` | Statements folder, and removed imports the folder scan should skip |
+| `settings.txt`, `exchange_rates.txt` | Base currency, recurring income, exchange rates |
+| `debts.txt`, `goals.txt`, `import_log.txt`, … | Debts, savings goals, import history, and other features |
 
 ## Tech Stack
 

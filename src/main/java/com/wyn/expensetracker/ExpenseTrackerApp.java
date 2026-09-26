@@ -14,7 +14,6 @@ import javafx.stage.Stage;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.HashMap;
 import java.util.List;
@@ -81,17 +80,17 @@ public class ExpenseTrackerApp extends Application {
         try {
             manager.loadExpenses(storage.loadExpenses());
             System.out.println("Loaded " + manager.getExpenses().size() + " expenses");
-            if (manager.getExpenses().isEmpty() && !storage.expensesFileExists()) {
-                manager.executeCommand(new AddExpenseCommand(manager, new Expense(50.0, "Food", LocalDate.now(), "Groceries")));
-                manager.executeCommand(new AddExpenseCommand(manager, new Expense(30.0, "Transport", LocalDate.now(), "Bus fare")));
-                storage.saveExpenses(manager.getExpensesForSave());
-            } else if (storage.hadLegacyRecurringOnLoad()) {
+            // A brand-new user starts with an empty ledger (no sample data).
+            if (storage.hadLegacyRecurringOnLoad()) {
                 // Upgrade path: persist the freshly-minted series ids so they stay stable
                 // across launches and overrides keyed to them survive.
                 storage.saveExpenses(manager.getExpensesForSave());
             }
         } catch (Exception e) {
             System.err.println("Error loading expenses: " + e.getMessage());
+            if (storage.isExpenseSaveBlocked()) {
+                handleUnreadableExpenses(storage, e);
+            }
         }
 
         // Load incomes
@@ -114,8 +113,12 @@ public class ExpenseTrackerApp extends Application {
             if (severe) {
                 alert.setHeaderText(stats.failedLines + " of " + stats.totalLines
                     + " expense lines failed to parse — your expense file may be corrupted.");
-                alert.setContentText("A backup is kept under .expenseTracker. Review the details before continuing; "
-                    + "saving over the file now will overwrite the bad rows with the data that did load.");
+                String copy = storage.getLastCorruptCopyPath();
+                alert.setContentText((copy != null
+                        ? "An untouched copy of the original file was saved to:\n" + copy + "\n\n"
+                        : "Rolling backups are kept under .expenseTracker. ")
+                    + "Review the details before continuing; saving now will overwrite the bad rows "
+                    + "with the data that did load.");
             } else {
                 alert.setHeaderText(warnings.size() + " issue(s) found while loading data.");
                 alert.setContentText("Some entries were skipped. Expand for details.");
@@ -150,6 +153,40 @@ public class ExpenseTrackerApp extends Application {
         stage.setTitle("Expense Tracker - " + activeProfile);
         stage.setScene(scene);
         stage.show();
+    }
+
+    /**
+     * expenses.txt exists but could not be read at all. FileStorage has blocked saving so the
+     * empty in-memory ledger can't overwrite it. Move the file aside (keeping it intact),
+     * start fresh, and tell the user where their data went. If even the move fails, saving
+     * stays blocked for this session.
+     */
+    private static void handleUnreadableExpenses(FileStorage storage, Exception cause) {
+        String movedTo = null;
+        String moveError = null;
+        try {
+            movedTo = storage.quarantineUnreadableExpenses();
+        } catch (Exception ex) {
+            moveError = ex.getMessage();
+        }
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        UIUtils.applyStylesheet(alert.getDialogPane());
+        alert.setTitle("Could Not Read Expenses");
+        alert.setHeaderText("Your expense file could not be read: " + cause.getMessage());
+        StringBuilder msg = new StringBuilder();
+        if (movedTo != null) {
+            msg.append("It has been moved aside, unchanged, to:\n").append(movedTo)
+               .append("\n\nThe app will start with an empty ledger.");
+        } else {
+            msg.append("The file could not be moved aside");
+            if (moveError != null) msg.append(" (").append(moveError).append(")");
+            msg.append(", so saving expenses is disabled for this session to avoid overwriting it.");
+        }
+        if (storage.getLastCorruptCopyPath() != null) {
+            msg.append("\n\nA copy was also saved to:\n").append(storage.getLastCorruptCopyPath());
+        }
+        alert.setContentText(msg.toString());
+        alert.showAndWait();
     }
 
     public static void main(String[] args) {

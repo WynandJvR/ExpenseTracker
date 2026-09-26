@@ -1,68 +1,719 @@
 package com.wyn.expensetracker;
 
 import javafx.application.Platform;
+import javafx.beans.property.ReadOnlyObjectWrapper;
+import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
-import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.input.DragEvent;
+import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.event.EventHandler;
 import javafx.stage.WindowEvent;
 
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.text.PDFTextStripper;
-
 import java.io.File;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * The Import screen. Statements go through {@link StatementImporter} on a background
+ * thread and are committed without any review step; the watched folder is scanned on
+ * startup and whenever the window regains focus.
+ */
 public class ImportController {
 
+    private static final DateTimeFormatter PERIOD_FMT = DateTimeFormatter.ofPattern("d MMM yyyy");
+    private static final long FOCUS_RESCAN_MILLIS = 60_000;
+
+    @FXML private StackPane dropZone;
+    @FXML private VBox dropIdle;
+    @FXML private VBox dropBusy;
+    @FXML private Label busyLabel;
+    @FXML private VBox resultBox;
+    @FXML private Label folderLabel;
+    @FXML private Button scanNowButton;
+    @FXML private Button clearFolderButton;
+    @FXML private Button deleteImportButton;
+    @FXML private TableView<ImportRow> statementsTable;
+    @FXML private TableColumn<ImportRow, String> periodColumn;
+    @FXML private TableColumn<ImportRow, String> accountColumn;
+    @FXML private TableColumn<ImportRow, Number> countColumn;
+    @FXML private TableColumn<ImportRow, ImportRow> checkColumn;
+    @FXML private TableColumn<ImportRow, String> closingColumn;
+    @FXML private TableColumn<ImportRow, String> fileColumn;
+    @FXML private TitledPane rulesPane;
     @FXML private TableView<CategorizationRules.RuleEntry> rulesTable;
     @FXML private Label importErrorLabel;
 
     private SharedState state;
+    private ImportRegistry registry;
+    private boolean busy;
+    /** Set when import history can't be saved or read; the silent folder scan stops until restart. */
+    private boolean autoScanPaused;
+    /** path|size|modified of folder files already looked at, so focus scans don't re-read them. */
+    private final Set<String> scannedFolderFiles = new HashSet<>();
+    private long lastFolderScan;
+    private boolean focusListenerInstalled;
+    private Runnable onReviewUncategorized = () -> {};
+    private java.util.function.Consumer<java.time.YearMonth> onImported = ym -> {};
+    private final ObservableList<ImportRow> rows = FXCollections.observableArrayList();
+
+    /** One row of the imported-statements table: an import log plus its statement summary, if any. */
+    public static class ImportRow {
+        final ImportLog log;
+        final ImportRegistry.StatementRecord record;
+
+        ImportRow(ImportLog log, ImportRegistry.StatementRecord record) {
+            this.log = log;
+            this.record = record;
+        }
+    }
 
     @FXML
     public void initialize() {
+        periodColumn.setCellValueFactory(c -> new ReadOnlyStringWrapper(periodText(c.getValue())));
+        accountColumn.setCellValueFactory(c -> {
+            ImportRow r = c.getValue();
+            String text = r.record != null
+                ? r.record.bank + (r.record.account != null ? " · " + r.record.account : "")
+                : r.log.getSourceType();
+            return new ReadOnlyStringWrapper(text);
+        });
+        countColumn.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue().log.getItemCount()));
+        closingColumn.setCellValueFactory(c -> {
+            ImportRegistry.StatementRecord r = c.getValue().record;
+            return new ReadOnlyStringWrapper(r != null && r.closingBalance != null ? fmt(r.closingBalance) : "—");
+        });
+        fileColumn.setCellValueFactory(c -> new ReadOnlyStringWrapper(c.getValue().log.getSourceFile()));
+        checkColumn.setCellValueFactory(c -> new ReadOnlyObjectWrapper<>(c.getValue()));
+        checkColumn.setCellFactory(col -> new TableCell<>() {
+            @Override
+            protected void updateItem(ImportRow row, boolean empty) {
+                super.updateItem(row, empty);
+                setText(null);
+                if (empty || row == null) {
+                    setGraphic(null);
+                    return;
+                }
+                Label badge = new Label();
+                badge.getStyleClass().add("badge");
+                if (row.record == null || row.record.openingBalance == null) {
+                    badge.setText("Not available");
+                    badge.getStyleClass().add("badge-neutral");
+                    badge.setTooltip(new Tooltip("This file doesn't include opening and closing balances."));
+                } else if (row.record.reconciled) {
+                    badge.setText("✓ Matches");
+                    badge.getStyleClass().add("badge-good");
+                    badge.setTooltip(new Tooltip("Opening balance + money in − money out equals the closing balance, "
+                        + "so no transactions were missed."));
+                } else {
+                    badge.setText("⚠ Check");
+                    badge.getStyleClass().add("badge-warn");
+                    badge.setTooltip(new Tooltip("The imported transactions don't add up to the statement's closing "
+                        + "balance. Some lines may not have been read correctly."));
+                }
+                setGraphic(badge);
+            }
+        });
+        statementsTable.setItems(rows);
+        Label empty = new Label("Nothing imported yet — drop a statement above.");
+        empty.getStyleClass().add("empty-state-hint");
+        statementsTable.setPlaceholder(empty);
+        deleteImportButton.disableProperty().bind(statementsTable.getSelectionModel().selectedItemProperty().isNull());
+
+        setupDropZone();
     }
 
     public void init(SharedState state) {
         this.state = state;
         rulesTable.setItems(state.getCategorizationRules().getRuleEntries());
+        Label rulesEmpty = new Label("No rules yet. Change a transaction's category and a rule is added for you.");
+        rulesEmpty.getStyleClass().add("empty-state-hint");
+        rulesEmpty.setWrapText(true);
+        rulesTable.setPlaceholder(rulesEmpty);
 
-        VBox rulesEmptyState = new VBox(6);
-        rulesEmptyState.setAlignment(Pos.CENTER);
-        Label rulesMsg = new Label("No auto-categorization rules yet.");
-        rulesMsg.getStyleClass().add("empty-state-label");
-        Label rulesHint = new Label("Use 'Add Rule' to map a keyword to a category.");
-        rulesHint.getStyleClass().add("empty-state-hint");
-        rulesEmptyState.getChildren().addAll(rulesMsg, rulesHint);
-        rulesTable.setPlaceholder(rulesEmptyState);
-
-        // Load import logs from storage
         try {
-            List<ImportLog> logs = state.getStorage().loadImportLogs();
-            state.getImportLogs().setAll(logs);
+            state.getImportLogs().setAll(state.getStorage().loadImportLogs());
         } catch (IOException e) {
-            // Silently use empty list
+            state.getImportLogs().clear();
         }
+        ProfileManager pm = state.getProfileManager();
+        registry = new ImportRegistry(pm.getProfileDir(pm.getActiveProfile()));
+        registry.load();
+        state.setImportRegistry(registry);
+        scannedFolderFiles.clear();
+        autoScanPaused = registry.isLoadFailed() || state.getStorage().isExpenseSaveBlocked();
+        if (registry.isLoadFailed()) {
+            showMsg("Your import history couldn't be read (the file may be locked by OneDrive or antivirus). "
+                + "Importing is paused until you restart the app, so nothing gets imported twice.", true);
+        } else if (state.getStorage().isExpenseSaveBlocked()) {
+            // The ledger in memory isn't your real data; leave import history alone.
+            showMsg("Your transactions couldn't be loaded, so automatic importing is paused.", true);
+        } else {
+            reconcileHistoryWithLedger(state.getStorage().wasLastExpenseLoadLossy());
+        }
+
+        refreshRows();
+        updateFolderUi();
+        resultBox.getChildren().clear();
+        resultBox.setVisible(false);
+        resultBox.setManaged(false);
+
+        if (!focusListenerInstalled && state.getStage() != null) {
+            focusListenerInstalled = true;
+            state.getStage().focusedProperty().addListener((obs, was, focused) -> {
+                if (focused && System.currentTimeMillis() - lastFolderScan > FOCUS_RESCAN_MILLIS) {
+                    scanFolder(false);
+                }
+            });
+        }
+        // Pick up statements saved into the folder since the app last ran.
+        Platform.runLater(() -> scanFolder(false));
+    }
+
+    /**
+     * Imports whose transactions are no longer in the ledger:
+     *  - after a lossy load (an unreadable file was set aside), forget them without
+     *    dismissing, so re-importing the statements rebuilds the data;
+     *  - otherwise the user deleted those rows themselves, so treat it like "Remove import":
+     *    dismiss the file (the folder scan won't bring it back) and drop its history row.
+     */
+    private void reconcileHistoryWithLedger(boolean ledgerWasLossy) {
+        Set<String> present = new HashSet<>();
+        for (Expense e : state.getManager().getExpenses()) {
+            if (e.getImportId() != null) present.add(e.getImportId());
+        }
+        boolean changed = false;
+        for (ImportRegistry.StatementRecord r : registry.getStatements()) {
+            if (present.contains(r.importId)) continue;
+            if (ledgerWasLossy) registry.purge(r.importId); else registry.forget(r.importId);
+            changed = true;
+        }
+        // Either way the history rows for those imports are stale.
+        changed |= state.getImportLogs().removeIf(log -> !present.contains(log.getImportId()));
+        if (changed) saveRegistryQuietly();
+    }
+
+    /** Told the newest month in each successful import, so the main window can show it. */
+    public void setOnImported(java.util.function.Consumer<java.time.YearMonth> r) {
+        this.onImported = r != null ? r : ym -> {};
+    }
+
+    /** Called by the main window so the "Review" link can open the uncategorised transactions. */
+    public void setOnReviewUncategorized(Runnable r) {
+        this.onReviewUncategorized = r != null ? r : () -> {};
     }
 
     public void refresh() {
         rulesTable.refresh();
+        rulesPane.setText("Categorisation rules (" + state.getCategorizationRules().getRules().size() + ")");
+        refreshRows();
     }
+
+    // ------------------------------------------------------------ statement import
+
+    @FXML
+    private void handleImportStatement() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Import Bank Statements");
+        fileChooser.getExtensionFilters().addAll(
+            new FileChooser.ExtensionFilter("Bank statements", "*.pdf", "*.csv", "*.ofx", "*.qfx", "*.qif"),
+            new FileChooser.ExtensionFilter("All files", "*.*")
+        );
+        if (registry.getAutoImportFolder() != null) {
+            File dir = new File(registry.getAutoImportFolder());
+            if (dir.isDirectory()) fileChooser.setInitialDirectory(dir);
+        }
+        List<File> files = fileChooser.showOpenMultipleDialog(state.getStage());
+        if (files != null && !files.isEmpty()) importFiles(files, true);
+    }
+
+    private void setupDropZone() {
+        dropZone.setOnDragOver((DragEvent e) -> {
+            if (e.getDragboard().hasFiles() && !busy) {
+                e.acceptTransferModes(TransferMode.COPY);
+                if (!dropZone.getStyleClass().contains("drop-zone-active")) {
+                    dropZone.getStyleClass().add("drop-zone-active");
+                }
+            }
+            e.consume();
+        });
+        dropZone.setOnDragExited(e -> dropZone.getStyleClass().remove("drop-zone-active"));
+        dropZone.setOnDragDropped(e -> {
+            boolean ok = false;
+            if (e.getDragboard().hasFiles() && !busy) {
+                List<File> files = new ArrayList<>();
+                for (File f : e.getDragboard().getFiles()) {
+                    if (f.isDirectory()) {
+                        File[] inner = f.listFiles();
+                        if (inner != null) files.addAll(Arrays.asList(inner));
+                    } else {
+                        files.add(f);
+                    }
+                }
+                importFiles(files, true);
+                ok = true;
+            }
+            e.setDropCompleted(ok);
+            e.consume();
+        });
+    }
+
+    /**
+     * Runs the pipeline for {@code files} in the background and commits the result.
+     * @param interactive true when the user started it (always report); false for the
+     *                    silent folder scan (report only if something was imported)
+     */
+    private void importFiles(List<File> files, boolean interactive) {
+        importFiles(files, interactive, !interactive);
+    }
+
+    /**
+     * @param respectDismissed skip files whose import the user removed earlier (folder scans);
+     *                         false when the user picked or dropped the files themselves
+     */
+    private void importFiles(List<File> files, boolean interactive, boolean respectDismissed) {
+        if (busy) return;
+        if (registry.isLoadFailed() || state.getStorage().isExpenseSaveBlocked()) {
+            // Without the history we can't tell what's already imported; don't risk duplicates.
+            if (interactive) showMsg("Importing is paused because your saved data couldn't be read. Restart the app to try again.", true);
+            return;
+        }
+        List<File> supported = files.stream().filter(StatementImporter::isSupported)
+            .sorted(Comparator.comparing(File::getName)).collect(Collectors.toList());
+        if (supported.isEmpty()) {
+            if (interactive) showMsg("Those files aren't bank statements (PDF, CSV, OFX or QIF).", true);
+            return;
+        }
+        // Snapshot everything the background thread reads (rules, history, ledger) here on the FX thread.
+        StatementImporter importer = new StatementImporter(state.getCategorizationRules(), registry,
+            new ArrayList<>(state.getManager().getExpenses()));
+        ExpenseManager managerAtStart = state.getManager();
+        ImportRegistry registryAtStart = registry;
+
+        Task<List<StatementImporter.Prepared>> task = new Task<>() {
+            @Override
+            protected List<StatementImporter.Prepared> call() {
+                List<StatementImporter.Prepared> out = new ArrayList<>();
+                for (int i = 0; i < supported.size(); i++) {
+                    File f = supported.get(i);
+                    updateMessage("Reading " + f.getName() + " (" + (i + 1) + " of " + supported.size() + ")…");
+                    out.add(importer.prepare(f, null, respectDismissed));
+                }
+                return out;
+            }
+        };
+        setBusy(true);
+        busyLabel.textProperty().bind(task.messageProperty());
+        task.setOnSucceeded(e -> {
+            busyLabel.textProperty().unbind();
+            List<StatementImporter.Prepared> prepared = new ArrayList<>(task.getValue());
+            if (state.getManager() != managerAtStart || registry != registryAtStart) {
+                // The profile changed while files were being read: don't import into the wrong one.
+                setBusy(false);
+                return;
+            }
+            if (!interactive) {
+                for (StatementImporter.Prepared p : prepared) scannedFolderFiles.add(folderKey(p.file));
+            }
+            // CSVs whose columns couldn't be recognised get one chance at manual mapping.
+            if (interactive) {
+                for (int i = 0; i < prepared.size(); i++) {
+                    StatementImporter.Prepared p = prepared.get(i);
+                    if (StatementImporter.NEEDS_CSV_MAPPING.equals(p.problem)) {
+                        StatementParseResult mapped = mapCsvManually(p.file);
+                        if (mapped != null) prepared.set(i, importer.prepare(p.file, mapped));
+                    }
+                }
+            }
+            try {
+                commit(prepared, interactive);
+            } finally {
+                setBusy(false);
+            }
+        });
+        task.setOnFailed(e -> {
+            busyLabel.textProperty().unbind();
+            setBusy(false);
+            showMsg("Import failed: " + task.getException().getMessage(), true);
+        });
+        Thread t = new Thread(task, "statement-import");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** Adds every prepared file's transactions as one undoable step, then saves. */
+    private void commit(List<StatementImporter.Prepared> prepared, boolean interactive) {
+        List<StatementImporter.Prepared> work = prepared.stream()
+            .filter(StatementImporter.Prepared::hasWork).collect(Collectors.toList());
+
+        if (!work.isEmpty()) {
+            List<Expense> all = new ArrayList<>();
+            List<ImportLog> logs = new ArrayList<>();
+            List<ImportRegistry.StatementRecord> records = new ArrayList<>();
+            Map<String, List<String>> fingerprints = new HashMap<>();
+            for (StatementImporter.Prepared p : work) {
+                String importId = "IMP-" + UUID.randomUUID();
+                List<Expense> expenses = StatementImporter.toExpenses(p, importId,
+                    state.getCurrencyManager().getBaseCurrency());
+                all.addAll(expenses);
+                logs.add(new ImportLog(importId, LocalDateTime.now(), p.file.getName(), p.sourceType(), expenses.size()));
+                records.add(StatementImporter.recordFor(p, importId));
+                fingerprints.put(importId, StatementImporter.fingerprintsOf(p));
+            }
+            for (Expense e : all) {
+                if (!state.getCategories().contains(e.getCategory())) state.getCategories().add(e.getCategory());
+            }
+
+            ExpenseManager manager = state.getManager();
+            ImportRegistry reg = registry;
+            boolean[] rollingBack = {false};
+            Command cmd = new Command() {
+                @Override public void execute() {
+                    manager.addExpenses(all);
+                    for (ImportRegistry.StatementRecord r : records) reg.record(r, fingerprints.get(r.importId));
+                    state.getImportLogs().addAll(logs);
+                    saveRegistryQuietly(); // also on redo, so a restart doesn't re-import it
+                }
+                @Override public void undo() {
+                    for (Expense e : all) manager.removeExpense(e);
+                    // Undo marks the files dismissed so the folder scan doesn't re-import them; a
+                    // rollback after a failed save doesn't (the file should be retried later).
+                    for (ImportRegistry.StatementRecord r : records) {
+                        if (rollingBack[0]) reg.purge(r.importId); else reg.forget(r.importId);
+                    }
+                    state.getImportLogs().removeAll(logs);
+                    saveRegistryQuietly();
+                }
+            };
+            try {
+                manager.executeCommand(cmd);
+            } catch (Exception ex) {
+                showMsg("Couldn't import: " + ex.getMessage(), true);
+                return;
+            }
+            try {
+                state.saveExpenses();
+            } catch (Exception ex) {
+                rollingBack[0] = true;
+                manager.rollbackLastCommand();
+                autoScanPaused = true;
+                showMsg("Couldn't save the import (" + ex.getMessage() + "). Nothing was imported; "
+                    + "automatic importing is paused until you restart the app.", true);
+                return;
+            }
+            try {
+                registry.save();
+                state.getStorage().saveImportLogs(new ArrayList<>(state.getImportLogs()));
+                state.getStorage().saveCategories(state.getCategories());
+            } catch (IOException ex) {
+                autoScanPaused = true;
+                showMsg("Transactions saved, but import history couldn't be saved (" + ex.getMessage()
+                    + "). Automatic importing is paused so nothing is imported twice.", true);
+            }
+            state.requestRefresh();
+            all.stream().map(Expense::getDate).max(Comparator.naturalOrder())
+                .ifPresent(d -> onImported.accept(java.time.YearMonth.from(d)));
+        }
+        refreshRows();
+        if (interactive || !work.isEmpty()) showResult(prepared);
+    }
+
+    private void showResult(List<StatementImporter.Prepared> prepared) {
+        resultBox.getChildren().clear();
+        int imported = 0;
+        long uncategorized = 0;
+        double in = 0, out = 0;
+        for (StatementImporter.Prepared p : prepared) {
+            if (!p.hasWork()) continue;
+            imported += p.newItems.size();
+            uncategorized += p.uncategorizedCount();
+            for (ImportItem i : p.newItems) {
+                if (i.isTransfer()) continue;
+                if (i.isCredit() && !i.isRefund()) in += i.getAmount();
+                else if (!i.isCredit()) out += i.getAmount();
+            }
+        }
+
+        Label title = new Label(imported > 0
+            ? "Imported " + imported + " transaction" + (imported == 1 ? "" : "s")
+            : "Nothing new to import");
+        title.getStyleClass().add("card-title");
+        resultBox.getChildren().add(title);
+        if (imported > 0) {
+            Label totals = new Label("Money in " + fmt(in) + "  ·  Money out " + fmt(out)
+                + "  (transfers between your own accounts are left out)");
+            totals.getStyleClass().add("muted-text");
+            resultBox.getChildren().add(totals);
+        }
+
+        for (StatementImporter.Prepared p : prepared) {
+            resultBox.getChildren().add(resultLine(p));
+        }
+
+        if (uncategorized > 0) {
+            Button review = new Button("Review " + uncategorized + " uncategorised");
+            review.getStyleClass().add("accent-button");
+            review.setOnAction(e -> onReviewUncategorized.run());
+            Label hint = new Label("Pick a category once and similar transactions are sorted automatically from then on.");
+            hint.getStyleClass().add("muted-text");
+            hint.setWrapText(true);
+            HBox row = new HBox(12, review, hint);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setPadding(new Insets(6, 0, 0, 0));
+            resultBox.getChildren().add(row);
+        }
+        resultBox.setVisible(true);
+        resultBox.setManaged(true);
+        if (imported > 0) Toast.show("Imported " + imported + " transactions");
+    }
+
+    private HBox resultLine(StatementImporter.Prepared p) {
+        Label icon = new Label();
+        Label text = new Label();
+        text.setWrapText(true);
+        icon.getStyleClass().add("result-icon");
+        if (p.problem != null) {
+            icon.setText("✕");
+            icon.getStyleClass().add("result-bad");
+            text.setText(p.file.getName() + " — " + p.problem);
+        } else if (p.skippedWholeFile) {
+            icon.setText("–");
+            icon.getStyleClass().add("result-neutral");
+            text.setText(p.file.getName() + (p.dismissed
+                ? " — you removed this import earlier (drop the file here to bring it back)"
+                : " — already imported"));
+        } else {
+            StatementParseResult s = p.statement;
+            StringBuilder sb = new StringBuilder(p.file.getName()).append(" — ")
+                .append(p.newItems.size()).append(" transactions");
+            if (s.getPeriodStart() != null && s.getPeriodEnd() != null) {
+                sb.append(", ").append(s.getPeriodStart().format(PERIOD_FMT)).append(" to ")
+                  .append(s.getPeriodEnd().format(PERIOD_FMT));
+            }
+            if (p.alreadyImported > 0) sb.append(" (").append(p.alreadyImported).append(" already imported)");
+            if (p.duplicatesOfManualEntries > 0) {
+                sb.append(" (").append(p.duplicatesOfManualEntries).append(" matched entries you'd added by hand)");
+            }
+            if (s.canReconcile()) {
+                if (s.isReconciled()) {
+                    sb.append(" · balances match");
+                    icon.setText("✓");
+                    icon.getStyleClass().add("result-good");
+                } else {
+                    sb.append(" · balances are off by ").append(fmt(Math.abs(s.reconciliationDifference())));
+                    icon.setText("!");
+                    icon.getStyleClass().add("result-warn");
+                }
+            } else {
+                icon.setText("✓");
+                icon.getStyleClass().add("result-good");
+            }
+            text.setText(sb.toString());
+        }
+        HBox row = new HBox(10, icon, text);
+        row.setAlignment(Pos.CENTER_LEFT);
+        return row;
+    }
+
+    private void setBusy(boolean b) {
+        busy = b;
+        dropIdle.setVisible(!b);
+        dropIdle.setManaged(!b);
+        dropBusy.setVisible(b);
+        dropBusy.setManaged(b);
+        scanNowButton.setDisable(b);
+    }
+
+    // ------------------------------------------------------------ watched folder
+
+    @FXML
+    private void handleChooseFolder() {
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle("Folder where you save bank statements");
+        if (registry.getAutoImportFolder() != null) {
+            File current = new File(registry.getAutoImportFolder());
+            if (current.isDirectory()) chooser.setInitialDirectory(current);
+        }
+        File dir = chooser.showDialog(state.getStage());
+        if (dir == null) return;
+        registry.setAutoImportFolder(dir.getAbsolutePath());
+        saveRegistryQuietly();
+        updateFolderUi();
+        scanFolder(true);
+    }
+
+    @FXML
+    private void handleClearFolder() {
+        registry.setAutoImportFolder(null);
+        saveRegistryQuietly();
+        updateFolderUi();
+    }
+
+    @FXML
+    private void handleScanNow() {
+        scanFolder(true);
+    }
+
+    private void scanFolder(boolean interactive) {
+        if (registry == null || busy) return;
+        if (autoScanPaused && !interactive) return;
+        String folder = registry.getAutoImportFolder();
+        if (folder == null) return;
+        lastFolderScan = System.currentTimeMillis();
+        File dir = new File(folder);
+        File[] files = dir.listFiles();
+        if (files == null) {
+            if (interactive) showMsg("Can't open the statements folder: " + folder, true);
+            return;
+        }
+        List<File> candidates = new ArrayList<>();
+        for (File f : files) {
+            // Plain .txt files in a documents folder are usually notes, not statements.
+            if (f.getName().toLowerCase().endsWith(".txt")) continue;
+            // The silent scan skips files it has already looked at (unchanged since).
+            if (!interactive && scannedFolderFiles.contains(folderKey(f))) continue;
+            candidates.add(f);
+        }
+        if (candidates.isEmpty()) {
+            if (interactive) showResult(List.of());
+            return;
+        }
+        // "Check now" is explicit, but it still shouldn't resurrect imports the user removed.
+        importFiles(candidates, interactive, true);
+    }
+
+    private static String folderKey(File f) {
+        return f.getAbsolutePath() + "|" + f.length() + "|" + f.lastModified();
+    }
+
+    private void updateFolderUi() {
+        String folder = registry.getAutoImportFolder();
+        boolean set = folder != null;
+        folderLabel.setText(set
+            ? folder + "\nNew statements saved here are imported automatically when the app opens."
+            : "Not set — pick the folder where you save your statements and new ones will be imported every time the app opens.");
+        scanNowButton.setVisible(set);
+        scanNowButton.setManaged(set);
+        clearFolderButton.setVisible(set);
+        clearFolderButton.setManaged(set);
+    }
+
+    // ------------------------------------------------------------ imported statements
+
+    private void refreshRows() {
+        if (registry == null) return;
+        Map<String, ImportRegistry.StatementRecord> byId = new HashMap<>();
+        for (ImportRegistry.StatementRecord r : registry.getStatements()) byId.put(r.importId, r);
+        List<ImportRow> list = new ArrayList<>();
+        for (ImportLog log : state.getImportLogs()) list.add(new ImportRow(log, byId.get(log.getImportId())));
+        list.sort(Comparator.comparing((ImportRow r) -> r.record != null && r.record.periodEnd != null
+            ? r.record.periodEnd.atStartOfDay() : r.log.getTimestamp()).reversed());
+        rows.setAll(list);
+    }
+
+    private String periodText(ImportRow r) {
+        if (r.record != null && r.record.periodStart != null && r.record.periodEnd != null) {
+            return r.record.periodStart.format(PERIOD_FMT) + " – " + r.record.periodEnd.format(PERIOD_FMT);
+        }
+        List<LocalDate> dates = state.getManager().getExpenses().stream()
+            .filter(e -> r.log.getImportId().equals(e.getImportId()))
+            .map(Expense::getDate).sorted().collect(Collectors.toList());
+        if (dates.isEmpty()) return "Imported " + r.log.getTimestampDisplay();
+        return dates.get(0).format(PERIOD_FMT) + " – " + dates.get(dates.size() - 1).format(PERIOD_FMT);
+    }
+
+    @FXML
+    private void handleDeleteImport() {
+        ImportRow selected = statementsTable.getSelectionModel().getSelectedItem();
+        if (selected == null) return;
+        ImportLog log = selected.log;
+        ExpenseManager manager = state.getManager();
+        List<Expense> toRemove = manager.getExpenses().stream()
+            .filter(exp -> log.getImportId().equals(exp.getImportId()))
+            .collect(Collectors.toList());
+
+        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+        confirmation.initOwner(state.getStage());
+        UIUtils.applyStylesheet(confirmation.getDialogPane());
+        confirmation.setTitle("Remove import");
+        confirmation.setHeaderText("Remove " + log.getSourceFile() + "?");
+        confirmation.setContentText("Its " + toRemove.size() + " transaction(s) will be removed and the file "
+            + "won't be re-imported from your statements folder. You can still import it by hand, or press Ctrl+Z to undo.");
+        if (confirmation.showAndWait().orElse(null) != ButtonType.OK) return;
+
+        ImportRegistry.StatementRecord record = selected.record;
+        List<String> fps = new ArrayList<>();
+        // Remember which fingerprints belonged to this import so undo can restore them.
+        if (record != null) fps.addAll(registry.fingerprintsFor(record.importId));
+
+        manager.executeCommand(new Command() {
+            @Override public void execute() {
+                for (Expense exp : toRemove) manager.removeExpense(exp);
+                state.getImportLogs().remove(log);
+                registry.forget(log.getImportId()); // also keeps the folder scan from re-importing it
+                saveRegistryQuietly();
+            }
+            @Override public void undo() {
+                // Restoring rows that were already in the ledger: no re-validation.
+                for (Expense exp : toRemove) manager.addExpenseUnchecked(exp);
+                state.getImportLogs().add(log);
+                if (record != null) registry.record(record, fps);
+                saveRegistryQuietly();
+            }
+        });
+        try {
+            state.saveExpenses();
+            state.getStorage().saveImportLogs(new ArrayList<>(state.getImportLogs()));
+            registry.save();
+        } catch (IOException ex) {
+            showMsg("Failed to save after removing the import: " + ex.getMessage(), true);
+            return;
+        }
+        state.requestRefresh();
+        refreshRows();
+        Toast.show("Removed " + toRemove.size() + " transactions");
+    }
+
+    private void saveRegistryQuietly() {
+        try {
+            registry.save();
+            state.getStorage().saveImportLogs(new ArrayList<>(state.getImportLogs()));
+        } catch (IOException e) {
+            System.err.println("Failed to save import registry: " + e.getMessage());
+        }
+    }
+
+    private StatementParseResult mapCsvManually(File file) {
+        try {
+            String text = new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+            char delimiter = CsvStatementParser.detectDelimiter(text);
+            String[] lines = text.split("\\r?\\n");
+            if (lines.length < 2) return null;
+            String[] headers = CsvStatementParser.parseHeaders(lines[0], delimiter);
+            List<ImportItem> items = showCsvMappingDialog(text, headers, delimiter, lines);
+            return items == null || items.isEmpty() ? null : new StatementParseResult("CSV", items);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    // ------------------------------------------------------------ receipts
 
     @FXML
     private void handleScanReceipt() {
@@ -177,199 +828,6 @@ public class ImportController {
     }
 
     @FXML
-    private void handleImportStatement() {
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Import Bank Statements");
-        fileChooser.getExtensionFilters().addAll(
-            new FileChooser.ExtensionFilter("Bank Statements", "*.pdf", "*.csv", "*.ofx", "*.qfx", "*.qif"),
-            new FileChooser.ExtensionFilter("PDF Files", "*.pdf"),
-            new FileChooser.ExtensionFilter("CSV Files", "*.csv"),
-            new FileChooser.ExtensionFilter("OFX/QFX Files", "*.ofx", "*.qfx"),
-            new FileChooser.ExtensionFilter("QIF Files", "*.qif"),
-            new FileChooser.ExtensionFilter("All Files", "*.*")
-        );
-        List<File> files = fileChooser.showOpenMultipleDialog(state.getStage());
-        if (files == null || files.isEmpty()) return;
-
-        List<ImportItem> allItems = new ArrayList<>();
-        List<String> fileNames = new ArrayList<>();
-
-        for (File file : files) {
-            try {
-                String fileName = file.getName().toLowerCase();
-                List<ImportItem> items;
-
-                if (fileName.endsWith(".pdf")) {
-                    items = parsePdfStatement(file);
-                } else if (fileName.endsWith(".ofx") || fileName.endsWith(".qfx")) {
-                    items = parseOfxStatement(file);
-                } else if (fileName.endsWith(".qif")) {
-                    items = parseQifStatement(file);
-                } else {
-                    items = parseCsvStatement(file);
-                }
-
-                if (items != null && !items.isEmpty()) {
-                    for (ImportItem item : items) {
-                        item.setSourceFile(file.getName());
-                    }
-                    allItems.addAll(items);
-                    fileNames.add(file.getName());
-                }
-            } catch (Exception e) {
-                showMsg("Failed to parse " + file.getName() + ": " + e.getMessage(), true);
-            }
-        }
-
-        if (allItems.isEmpty()) {
-            showMsg("No transactions found in the selected files.", true);
-            return;
-        }
-
-        // Auto-categorize
-        CategorizationRules categorizationRules = state.getCategorizationRules();
-        for (ImportItem item : allItems) {
-            String cat = categorizationRules.categorize(item.getDescription());
-            if (cat != null) {
-                item.setCategory(cat);
-                item.setStatus("Auto-categorized");
-            }
-        }
-
-        ImportReviewDialog dialog = new ImportReviewDialog(
-            state.getStage(), allItems, state.getCategories(), state.getCurrencySymbol(),
-            null, categorizationRules, state.getManager().getExpenses(),
-            state.getManager().getBaseRecurringExpenses());
-        List<Expense> expenses = dialog.showAndWait();
-        if (expenses != null && !expenses.isEmpty()) {
-            saveLearnedRules(dialog);
-
-            // Build a map from each selected ImportItem to its resulting Expense.
-            // The review dialog returns expenses in the same order as selected items.
-            List<ImportItem> selectedItems = allItems.stream()
-                .filter(i -> i.isSelected() && i.getAmount() > 0)
-                .collect(Collectors.toList());
-
-            // Group expenses by source file
-            Map<String, List<Expense>> expensesByFile = new LinkedHashMap<>();
-            for (int i = 0; i < expenses.size() && i < selectedItems.size(); i++) {
-                String src = selectedItems.get(i).getSourceFile();
-                if (src == null) src = "Unknown";
-                expensesByFile.computeIfAbsent(src, k -> new ArrayList<>()).add(expenses.get(i));
-            }
-
-            // Import each file's expenses separately
-            for (Map.Entry<String, List<Expense>> entry : expensesByFile.entrySet()) {
-                String entryFileName = entry.getKey();
-                String lowerName = entryFileName.toLowerCase();
-                String type = lowerName.endsWith(".pdf") ? "PDF"
-                    : lowerName.endsWith(".ofx") || lowerName.endsWith(".qfx") ? "OFX"
-                    : lowerName.endsWith(".qif") ? "QIF" : "CSV";
-                importExpenses(entry.getValue(), entryFileName, type);
-            }
-        }
-    }
-
-    @FXML
-    private void handleShowImportHistory() {
-        Stage dialog = new Stage();
-        dialog.initOwner(state.getStage());
-        dialog.initModality(Modality.WINDOW_MODAL);
-        dialog.setTitle("Import History");
-
-        // Table
-        TableView<ImportLog> table = new TableView<>();
-        table.setItems(state.getImportLogs());
-        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-
-        TableColumn<ImportLog, String> dateCol = new TableColumn<>("Date");
-        dateCol.setCellValueFactory(new PropertyValueFactory<>("timestampDisplay"));
-        dateCol.setMinWidth(140);
-
-        TableColumn<ImportLog, String> sourceCol = new TableColumn<>("Source");
-        sourceCol.setCellValueFactory(new PropertyValueFactory<>("sourceFile"));
-        sourceCol.setMinWidth(180);
-
-        TableColumn<ImportLog, String> typeCol = new TableColumn<>("Type");
-        typeCol.setCellValueFactory(new PropertyValueFactory<>("sourceType"));
-        typeCol.setMinWidth(80);
-
-        TableColumn<ImportLog, Number> itemsCol = new TableColumn<>("Items");
-        itemsCol.setCellValueFactory(new PropertyValueFactory<>("itemCount"));
-        itemsCol.setMinWidth(60);
-
-        table.getColumns().addAll(dateCol, sourceCol, typeCol, itemsCol);
-        table.setPlaceholder(new Label("No imports yet"));
-
-        // Delete button
-        Button deleteBtn = new Button("Delete Selected Import");
-        deleteBtn.getStyleClass().add("danger-button");
-        deleteBtn.disableProperty().bind(table.getSelectionModel().selectedItemProperty().isNull());
-        deleteBtn.setOnAction(e -> {
-            ImportLog selected = table.getSelectionModel().getSelectedItem();
-            if (selected == null) return;
-
-            ExpenseManager manager = state.getManager();
-            long count = manager.getExpenses().stream()
-                .filter(exp -> selected.getImportId().equals(exp.getImportId()))
-                .count();
-
-            Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
-            confirmation.initOwner(dialog);
-            confirmation.setTitle("Delete Import");
-            confirmation.setHeaderText("Delete import from " + selected.getSourceFile() + "?");
-            confirmation.setContentText("This will remove " + count + " expense(s) that were imported on " +
-                selected.getTimestampDisplay() + ".");
-            confirmation.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
-            confirmation.getDialogPane().getStyleClass().add("dialog-pane");
-
-            if (confirmation.showAndWait().orElse(null) != ButtonType.OK) return;
-
-            List<Expense> toRemove = manager.getExpenses().stream()
-                .filter(exp -> selected.getImportId().equals(exp.getImportId()))
-                .collect(Collectors.toList());
-
-            if (!toRemove.isEmpty()) {
-                manager.executeCommand(new Command() {
-                    @Override public void execute() {
-                        for (Expense exp : toRemove) manager.removeExpense(exp);
-                    }
-                    @Override public void undo() {
-                        for (Expense exp : toRemove) manager.addExpense(exp);
-                    }
-                });
-            }
-
-            state.getImportLogs().remove(selected);
-            try {
-                state.getStorage().saveImportLogs(new ArrayList<>(state.getImportLogs()));
-                state.saveExpenses();
-            } catch (IOException ex) {
-                showMsg("Failed to save after delete: " + ex.getMessage(), true);
-                return;
-            }
-
-            state.requestRefresh();
-            showMsg(count + " expenses from import deleted.", false);
-        });
-
-        // Layout
-        HBox buttonBar = new HBox(deleteBtn);
-        buttonBar.setAlignment(Pos.CENTER_RIGHT);
-        buttonBar.setPadding(new Insets(10, 0, 0, 0));
-
-        VBox root = new VBox(10, table, buttonBar);
-        root.setPadding(new Insets(20));
-        root.getStyleClass().add("dialog-pane");
-        VBox.setVgrow(table, Priority.ALWAYS);
-
-        Scene scene = new Scene(root, 560, 400);
-        scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
-        dialog.setScene(scene);
-        dialog.showAndWait();
-    }
-
-    @FXML
     private void handleAddRule() {
         Stage ruleStage = new Stage();
         ruleStage.initModality(Modality.WINDOW_MODAL);
@@ -393,7 +851,7 @@ public class ImportController {
         catCombo.setMaxWidth(Double.MAX_VALUE);
 
         Button addBtn = new Button("Add Rule");
-        addBtn.getStyleClass().add("success-button");
+        addBtn.getStyleClass().add("accent-button");
         addBtn.setOnAction(e -> {
             String keyword = keywordField.getText().trim();
             String cat = catCombo.getValue();
@@ -408,12 +866,14 @@ public class ImportController {
             }
             state.getCategorizationRules().addRule(keyword, cat);
             try { state.getStorage().saveCategorizationRules(state.getCategorizationRules().getRules()); } catch (IOException ex) { /* ignore */ }
-            rulesTable.refresh();
             ruleStage.close();
+            // Apply the new rule to anything still uncategorised right away.
+            handleRecategorize();
+            refresh();
         });
 
         Button cancelBtn = new Button("Cancel");
-        cancelBtn.getStyleClass().add("danger-button");
+        cancelBtn.getStyleClass().add("ghost-button");
         cancelBtn.setOnAction(e -> ruleStage.close());
 
         HBox btnBox = new HBox(10, addBtn, cancelBtn);
@@ -429,113 +889,6 @@ public class ImportController {
         ruleStage.setMinHeight(250);
         ruleStage.setScene(scene);
         ruleStage.showAndWait();
-    }
-
-    @FXML
-    private void handleRemoveRule() {
-        CategorizationRules.RuleEntry selected = rulesTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            showMsg("Please select a rule to remove", true);
-            return;
-        }
-        state.getCategorizationRules().removeRule(selected.getKeyword());
-        try {
-            state.getStorage().saveCategorizationRules(state.getCategorizationRules().getRules());
-        } catch (IOException ex) {
-            showMsg("Failed to save rules: " + ex.getMessage(), true);
-        }
-        rulesTable.refresh();
-        showMsg("Rule removed.", false);
-    }
-
-    @FXML
-    private void handleRecategorize() {
-        ExpenseManager manager = state.getManager();
-        List<Expense> allExpenses = manager.getExpenses();
-        CategorizationRules categorizationRules = state.getCategorizationRules();
-        int recategorized = 0;
-        for (Expense expense : allExpenses) {
-            if ("Uncategorized".equals(expense.getCategory())) {
-                String cat = categorizationRules.categorize(expense.getDescription());
-                if (cat != null) {
-                    expense.setCategory(cat);
-                    recategorized++;
-                }
-            }
-        }
-        if (recategorized > 0) {
-            try {
-                state.saveExpenses();
-            } catch (IOException e) {
-                showMsg("Failed to save: " + e.getMessage(), true);
-                return;
-            }
-            state.requestRefresh();
-            showMsg("Re-categorized " + recategorized + " expense(s).", false);
-        } else {
-            showMsg("No uncategorized expenses could be matched to existing rules.", false);
-        }
-    }
-
-    // --- Private helpers ---
-
-    private List<ImportItem> parsePdfStatement(File file) throws Exception {
-        String text;
-        try (PDDocument doc = PDDocument.load(file)) {
-            PDFTextStripper stripper = new PDFTextStripper();
-            text = stripper.getText(doc);
-        }
-
-        BankStatementParser[] parsers = { new FnbPdfParser(), new GenericPdfParser() };
-        for (BankStatementParser parser : parsers) {
-            if (parser.canParse(text)) {
-                List<ImportItem> items = parser.parse(text);
-                showMsg("Detected " + parser.getBankName() + ". " + items.size() + " transactions found.", false);
-                return items;
-            }
-        }
-
-        showMsg("Could not find transactions in this PDF. Try exporting as CSV instead.", true);
-        return null;
-    }
-
-    private List<ImportItem> parseCsvStatement(File file) throws Exception {
-        String text = new String(java.nio.file.Files.readAllBytes(file.toPath()));
-        char delimiter = CsvStatementParser.detectDelimiter(text);
-        String[] lines = text.split("\\r?\\n");
-        if (lines.length < 2) {
-            showMsg("CSV file is empty or has no data rows.", true);
-            return null;
-        }
-
-        String[] headers = CsvStatementParser.parseHeaders(lines[0], delimiter);
-
-        // Show column mapping dialog
-        return showCsvMappingDialog(text, headers, delimiter, lines);
-    }
-
-    private List<ImportItem> parseOfxStatement(File file) throws Exception {
-        String text = new String(java.nio.file.Files.readAllBytes(file.toPath()));
-        OfxStatementParser parser = new OfxStatementParser();
-        if (!parser.canParse(text)) {
-            showMsg("File does not appear to be a valid OFX/QFX file.", true);
-            return null;
-        }
-        List<ImportItem> items = parser.parse(text);
-        showMsg("OFX: " + items.size() + " transactions found.", false);
-        return items;
-    }
-
-    private List<ImportItem> parseQifStatement(File file) throws Exception {
-        String text = new String(java.nio.file.Files.readAllBytes(file.toPath()));
-        QifStatementParser parser = new QifStatementParser();
-        if (!parser.canParse(text)) {
-            showMsg("File does not appear to be a valid QIF file.", true);
-            return null;
-        }
-        List<ImportItem> items = parser.parse(text);
-        showMsg("QIF: " + items.size() + " transactions found.", false);
-        return items;
     }
 
     private List<ImportItem> showCsvMappingDialog(String text, String[] headers, char delimiter, String[] lines) {
@@ -603,7 +956,7 @@ public class ImportController {
         final List<ImportItem>[] resultHolder = new List[]{null};
 
         Button okBtn = new Button("Parse");
-        okBtn.getStyleClass().add("success-button");
+        okBtn.getStyleClass().add("accent-button");
         okBtn.setOnAction(e -> {
             String dateCol = dateColCombo.getValue();
             String amountCol = amountColCombo.getValue();
@@ -621,7 +974,7 @@ public class ImportController {
         });
 
         Button cancelBtn = new Button("Cancel");
-        cancelBtn.getStyleClass().add("danger-button");
+        cancelBtn.getStyleClass().add("ghost-button");
         cancelBtn.setOnAction(e -> mappingStage.close());
 
         HBox btnBox = new HBox(10, okBtn, cancelBtn);
@@ -647,80 +1000,109 @@ public class ImportController {
         return resultHolder[0];
     }
 
+    // ------------------------------------------------------------ rules
+
+    @FXML
+    private void handleRemoveRule() {
+        CategorizationRules.RuleEntry selected = rulesTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            showMsg("Select a rule to remove.", true);
+            return;
+        }
+        state.getCategorizationRules().removeRule(selected.getKeyword());
+        try {
+            state.getStorage().saveCategorizationRules(state.getCategorizationRules().getRules());
+        } catch (IOException ex) {
+            showMsg("Failed to save rules: " + ex.getMessage(), true);
+        }
+        refresh();
+    }
+
+    /** Runs the user's rules, then the built-in merchant list, over every uncategorised transaction. */
+    @FXML
+    private void handleRecategorize() {
+        int changed = recategorizeUncategorized(state);
+        if (changed > 0) {
+            try {
+                state.saveExpenses();
+                state.getStorage().saveCategories(state.getCategories());
+            } catch (IOException e) {
+                showMsg("Failed to save: " + e.getMessage(), true);
+                return;
+            }
+            state.requestRefresh();
+            Toast.show("Categorised " + changed + " transaction" + (changed == 1 ? "" : "s"));
+        } else {
+            showMsg("No uncategorised transactions matched a rule.", false);
+        }
+    }
+
+    /** Shared with the Transactions screen, which calls it after the user teaches a new rule. */
+    static int recategorizeUncategorized(SharedState state) {
+        CategorizationRules rules = state.getCategorizationRules();
+        int changed = 0;
+        for (Expense expense : state.getManager().getExpenses()) {
+            if (expense.getRecurringId() != null || expense.isExcluded()) continue;
+            if (!TransactionClassifier.UNCATEGORIZED.equals(expense.getCategory())) continue;
+            String cat = rules.categorize(expense.getDescription());
+            if (cat == null && !expense.isIncome()) cat = TransactionClassifier.builtInCategory(expense.getDescription());
+            if (cat != null && !cat.equals(expense.getCategory())) {
+                expense.setCategory(cat);
+                if (!state.getCategories().contains(cat)) state.getCategories().add(cat);
+                changed++;
+            }
+        }
+        return changed;
+    }
+
     private void saveLearnedRules(ImportReviewDialog dialog) {
         Map<String, String> learned = dialog.getLearnedRules();
         if (learned.isEmpty()) return;
         CategorizationRules categorizationRules = state.getCategorizationRules();
-        for (Map.Entry<String, String> entry : learned.entrySet()) {
-            if (!categorizationRules.getRules().containsKey(entry.getKey())) {
-                categorizationRules.addRule(entry.getKey(), entry.getValue());
-            }
-        }
+        // A correction always wins over an older rule for the same keyword.
+        learned.forEach(categorizationRules::addRule);
         try {
             state.getStorage().saveCategorizationRules(categorizationRules.getRules());
         } catch (IOException ex) {
             System.err.println("Failed to save learned rules: " + ex.getMessage());
         }
-        rulesTable.refresh();
+        refresh();
     }
 
+    /** Commits receipt line items reviewed in {@link ImportReviewDialog}. */
     private void importExpenses(List<Expense> expenses, String sourceFile, String sourceType) {
-        // Count income items (income flag already set by ImportReviewDialog)
-        int incomeCount = 0;
-        double totalIncomeAdded = 0;
-        for (Expense exp : expenses) {
-            if (exp.isIncome()) {
-                incomeCount++;
-                totalIncomeAdded += exp.getAmount();
-            }
-        }
+        String importId = "IMP-" + UUID.randomUUID();
+        for (Expense exp : expenses) exp.setImportId(importId);
 
-        // Tag all items with a unique import ID
-        String importId = "IMP-" + System.currentTimeMillis();
-        for (Expense exp : expenses) {
-            exp.setImportId(importId);
-        }
-
-        // Add all items (expenses + income) to the manager
         ExpenseManager manager = state.getManager();
-        if (!expenses.isEmpty()) {
-            BulkAddExpenseCommand cmd = new BulkAddExpenseCommand(manager, expenses);
-            manager.executeCommand(cmd);
-            try {
-                state.saveExpenses();
-            } catch (IOException ex) {
-                manager.rollbackLastCommand();
-                showMsg("Failed to save imported expenses: " + ex.getMessage(), true);
-                return;
-            }
-            try {
-                state.getStorage().saveCategories(state.getCategories());
-            } catch (IOException ex) {
-                showMsg("Expenses saved but failed to save categories: " + ex.getMessage(), true);
-            }
-        }
-
-        // Log the import
         ImportLog log = new ImportLog(importId, LocalDateTime.now(), sourceFile, sourceType, expenses.size());
-        state.getImportLogs().add(log);
+        manager.executeCommand(new Command() {
+            @Override public void execute() {
+                manager.addExpenses(expenses);
+                state.getImportLogs().add(log);
+            }
+            @Override public void undo() {
+                for (Expense e : expenses) manager.removeExpense(e);
+                state.getImportLogs().remove(log);
+                saveRegistryQuietly();
+            }
+        });
         try {
+            state.saveExpenses();
+        } catch (IOException ex) {
+            manager.rollbackLastCommand();
+            showMsg("Failed to save imported items: " + ex.getMessage(), true);
+            return;
+        }
+        try {
+            state.getStorage().saveCategories(state.getCategories());
             state.getStorage().saveImportLogs(new ArrayList<>(state.getImportLogs()));
         } catch (IOException ex) {
-            System.err.println("Failed to save import log: " + ex.getMessage());
+            showMsg("Items saved, but categories or history couldn't be saved: " + ex.getMessage(), true);
         }
-
         state.requestRefresh();
-
-        // Build summary message
-        StringBuilder msg = new StringBuilder();
-        int expenseCount = expenses.size() - incomeCount;
-        msg.append(expenseCount).append(" expenses imported");
-        if (totalIncomeAdded > 0) {
-            msg.append(", ").append(fmt(totalIncomeAdded)).append(" income added across ")
-               .append(incomeCount).append(" transaction(s)");
-        }
-        msg.append("!");
-        showMsg(msg.toString(), false);
+        refreshRows();
+        Toast.show("Added " + expenses.size() + " item" + (expenses.size() == 1 ? "" : "s") + " from " + sourceFile);
     }
 
     private String fmt(double amount) {

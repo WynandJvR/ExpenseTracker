@@ -20,6 +20,7 @@ import javafx.stage.Stage;
 
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -50,10 +51,29 @@ public class RecurringController {
     // --- Labels ---
     @FXML private Label addRecurringErrorLabel;
     @FXML private Label editRecurringErrorLabel;
+    @FXML private Label recurringListErrorLabel;
+    @FXML private Label recurringCountLabel;
+    @FXML private Label editRecurringTitle;
+
+    // --- Layout ---
+    @FXML private TitledPane addRecurringPane;
+    @FXML private VBox editRecurringBox;
+    @FXML private VBox suggestionBox;
+    @FXML private Button deleteRecurringButton;
+    @FXML private TableColumn<RecurringExpense, Double> recurringAmountColumn;
+    @FXML private TableColumn<RecurringExpense, LocalDate> recurringStartColumn;
+    @FXML private TableColumn<RecurringExpense, LocalDate> recurringEndColumn;
 
     private SharedState state;
     private RecurringExpense selectedRecurringExpense;
     private boolean initialized = false;
+
+    /** Patterns found silently in imported statements; cached until the data changes. */
+    private List<RecurringPatternDetector.DetectedPattern> suggestedPatterns = List.of();
+    private int suggestionKey = -1;
+    private boolean suggestionDismissed = false;
+
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd MMM yyyy");
 
     @FXML
     public void initialize() {
@@ -62,6 +82,9 @@ public class RecurringController {
 
     public void init(SharedState state) {
         this.state = state;
+        // Profile switch: forget suggestions computed for the previous profile's data
+        suggestionKey = -1;
+        suggestionDismissed = false;
         if (initialized) return;
         initialized = true;
 
@@ -83,12 +106,23 @@ public class RecurringController {
         recurringTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         recurringTable.setItems(state.getRecurringList());
 
+        recurringAmountColumn.setCellFactory(col -> new TableCell<RecurringExpense, Double>() {
+            @Override
+            protected void updateItem(Double item, boolean empty) {
+                super.updateItem(item, empty);
+                RecurringExpense r = empty || getTableRow() == null ? null : getTableRow().getItem();
+                setText(r == null || item == null ? null : (r.isIncome() ? "+" : "") + fmt(item));
+            }
+        });
+        recurringStartColumn.setCellFactory(col -> dateCell());
+        recurringEndColumn.setCellFactory(col -> dateCell());
+
         // Empty state for recurring table
         VBox recurringEmptyState = new VBox(6);
         recurringEmptyState.setAlignment(Pos.CENTER);
-        Label recurringMsg = new Label("No recurring expenses yet.");
+        Label recurringMsg = new Label("Nothing recurring yet.");
         recurringMsg.getStyleClass().add("empty-state-label");
-        Label recurringHint = new Label("Add one above, or use \"Detect Recurring Patterns\" to find them automatically.");
+        Label recurringHint = new Label("Use \"Find them in my statements\" to pick up debit orders and subscriptions, or \"+ Add\" to enter one.");
         recurringHint.getStyleClass().add("empty-state-hint");
         recurringEmptyState.getChildren().addAll(recurringMsg, recurringHint);
         recurringTable.setPlaceholder(recurringEmptyState);
@@ -99,10 +133,16 @@ public class RecurringController {
         // Enter in the amount or description field submits the form
         UIUtils.submitOnEnter(addRecurringButton, addRecurringAmountField, addRecurringDescField);
 
-        // Selection listener: populate edit form when recurring expense selected
+        // Selection listener: the edit form is shown, filled in, only while a row is selected
         recurringTable.getSelectionModel().selectedItemProperty().addListener((obs, oldSelection, newSelection) -> {
+            setShown(editRecurringBox, newSelection != null);
+            deleteRecurringButton.setDisable(newSelection == null);
+            showMsgOn("", false, editRecurringErrorLabel);
             if (newSelection != null) {
                 selectedRecurringExpense = newSelection;
+                String desc = newSelection.getDescription();
+                editRecurringTitle.setText(desc == null || desc.isBlank()
+                    ? "Edit recurring item" : "Edit \u201c" + desc.trim() + "\u201d");
                 editRecurringAmountField.setText(String.valueOf(newSelection.getAmount()));
                 editRecurringCategoryCombo.setValue(newSelection.getCategory());
                 editRecurringDatePicker.setValue(newSelection.getDate());
@@ -117,12 +157,168 @@ public class RecurringController {
             }
         });
 
-        // Date picker default to today
+        // Date picker default to today; most bills are monthly
         addRecurringDatePicker.setValue(LocalDate.now());
+        addRecurringFreqCombo.setValue(RecurrenceType.MONTHLY);
+
+        state.getRecurringList().addListener((javafx.collections.ListChangeListener<RecurringExpense>) c -> updateCount());
+        updateCount();
     }
 
     public void refresh() {
-        // Minimal — list is already synced via SharedState
+        if (state == null) return;
+        updateCount();
+        updateSuggestion();
+    }
+
+    private TableCell<RecurringExpense, LocalDate> dateCell() {
+        return new TableCell<>() {
+            @Override
+            protected void updateItem(LocalDate item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty ? null : item == null ? "\u2014" : item.format(DATE_FMT));
+            }
+        };
+    }
+
+    private void updateCount() {
+        int n = state.getRecurringList().size();
+        recurringCountLabel.setText(n == 0 ? "" : n + (n == 1 ? " item" : " items"));
+    }
+
+    private static void setShown(javafx.scene.Node node, boolean shown) {
+        node.setVisible(shown);
+        node.setManaged(shown);
+    }
+
+    /**
+     * When nothing recurring is set up yet but statements have been imported, quietly look for
+     * repeating payments and offer them for review. Nothing is added until the user confirms.
+     */
+    private void updateSuggestion() {
+        List<Expense> all = state.getManager().getExpenses();
+        boolean hasImports = all.stream().anyMatch(e -> e.getImportId() != null);
+        if (!state.getRecurringList().isEmpty() || !hasImports || suggestionDismissed) {
+            suggestionBox.getChildren().clear();
+            setShown(suggestionBox, false);
+            return;
+        }
+        // Keyed on the rows' content, so recategorising, marking a transfer or an inline
+        // edit (which replaces the row) all invalidate the cached patterns.
+        int key = ledgerSignature(all);
+        if (key != suggestionKey) {
+            suggestionKey = key;
+            try {
+                suggestedPatterns = detectNow();
+            } catch (RuntimeException ex) {
+                suggestedPatterns = List.of();
+            }
+        }
+        suggestionBox.getChildren().clear();
+        if (suggestedPatterns.isEmpty()) {
+            suggestionBox.getChildren().add(notice(
+                "We can look for debit orders and subscriptions in your statements",
+                "Nothing obvious turned up yet. Try again after importing a few months of statements.",
+                "Find them", this::handleDetectRecurring));
+        } else {
+            int n = suggestedPatterns.size();
+            List<String> names = suggestedPatterns.stream()
+                .map(RecurringPatternDetector.DetectedPattern::getDescription)
+                .filter(d -> d != null && !d.isBlank())
+                .map(d -> UIUtils.truncate(d.trim(), 28))
+                .distinct().limit(2)
+                .collect(Collectors.toList());
+            String title = "Found " + n + " likely repeating payment" + (n == 1 ? "" : "s")
+                + (names.isEmpty() ? "" : " (e.g. " + String.join(", ", names) + ")");
+            suggestionBox.getChildren().add(notice(title,
+                "Review them and tick the ones to track. Nothing is added until you confirm.",
+                "Review", this::handleDetectRecurring));
+        }
+        setShown(suggestionBox, true);
+    }
+
+    /** Only spend rows can become a recurring bill: excluded, income and refund rows are left out. */
+    static List<Expense> detectionInput(List<Expense> all) {
+        return all.stream()
+            .filter(e -> e != null && !e.isExcluded() && !e.isIncome() && !e.isRefund())
+            .collect(Collectors.toList());
+    }
+
+    /** Runs pattern detection on the current ledger. */
+    private List<RecurringPatternDetector.DetectedPattern> detectNow() {
+        return new RecurringPatternDetector().detectPatterns(
+            detectionInput(state.getManager().getExpenses()), state.getManager().getBaseRecurringExpenses());
+    }
+
+    /** Cheap content signature of the ledger rows that detection depends on. */
+    static int ledgerSignature(List<Expense> all) {
+        int h = all.size();
+        for (Expense e : all) {
+            if (e == null) continue;
+            h = 31 * h + System.identityHashCode(e);
+            h = 31 * h + java.util.Objects.hash(e.getDescription(), e.getCategory(), e.isExcluded(),
+                e.isIncome(), e.isRefund(), e.getAmount(), e.getDate());
+        }
+        return h;
+    }
+
+    /**
+     * The originals of a pattern that may be removed after converting it: rows still in
+     * the ledger (by identity, so rows replaced by an edit are not "deleted" and later
+     * re-added by undo) and still plain spend (not since marked as a transfer/income/refund).
+     */
+    static List<Expense> removableOriginals(RecurringPatternDetector.DetectedPattern pattern, List<Expense> ledger) {
+        java.util.Set<Expense> present = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        present.addAll(ledger);
+        return pattern.getMatchingExpenses().stream()
+            .filter(present::contains)
+            .filter(e -> !e.isExcluded() && !e.isIncome() && !e.isRefund())
+            .collect(Collectors.toList());
+    }
+
+    private HBox notice(String title, String body, String actionText, Runnable action) {
+        Label icon = new Label("\u2139");
+        icon.getStyleClass().addAll("notice-icon", "notice-icon-info");
+        Label t = new Label(title);
+        t.getStyleClass().add("notice-title");
+        t.setWrapText(true);
+        Label b = new Label(body);
+        b.getStyleClass().add("notice-body");
+        b.setWrapText(true);
+        VBox text = new VBox(2, t, b);
+        HBox.setHgrow(text, Priority.ALWAYS);
+        Button btn = new Button(actionText);
+        btn.getStyleClass().add("secondary-button");
+        btn.setOnAction(e -> action.run());
+        Button dismiss = new Button("Dismiss");
+        dismiss.getStyleClass().add("ghost-button");
+        dismiss.setOnAction(e -> {
+            suggestionDismissed = true;
+            updateSuggestion();
+        });
+        HBox box = new HBox(12, icon, text, btn, dismiss);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.getStyleClass().addAll("notice", "notice-info");
+        return box;
+    }
+
+    @FXML
+    private void handleShowAddForm() {
+        setShown(addRecurringPane, true);
+        addRecurringPane.setExpanded(true);
+        Platform.runLater(() -> addRecurringAmountField.requestFocus());
+    }
+
+    @FXML
+    private void handleHideAddForm() {
+        addRecurringPane.setExpanded(false);
+        setShown(addRecurringPane, false);
+        showMsg("", false);
+    }
+
+    @FXML
+    private void handleCancelEdit() {
+        recurringTable.getSelectionModel().clearSelection();
     }
 
     @FXML
@@ -180,7 +376,8 @@ public class RecurringController {
             }
             state.requestRefresh();
             resetRecurringForm();
-            showMsg("Recurring expense added successfully!", false);
+            handleHideAddForm();
+            showMsg("Recurring item added", false);
         } catch (NumberFormatException ex) {
             showMsg("Invalid amount: Please enter a valid number (e.g., 10.99)", true);
         } catch (Exception ex) {
@@ -220,14 +417,16 @@ public class RecurringController {
             LocalDate endDate = editRecurringEndDatePicker.getValue();
 
             RecurringExpense newExpense = new RecurringExpense(amount, category, date, description, frequency, endDate);
+            copyNonFormFields(selectedRecurringExpense, newExpense);
             state.getManager().executeCommand(new UpdateRecurringExpenseCommand(state.getManager(), selectedRecurringExpense, newExpense));
             try {
                 state.saveExpenses();
                 state.syncRecurringList();
                 state.requestRefresh();
+                recurringTable.getSelectionModel().clearSelection();
                 clearEditRecurringForm();
                 updateRecurringButton.setDisable(true);
-                showMsgOn("Recurring expense updated successfully!", false, editRecurringErrorLabel);
+                showMsgOn("Recurring item updated", false, recurringListErrorLabel);
             } catch (Exception ex) {
                 showMsgOn("Error updating recurring expense: " + ex.getMessage(), true, editRecurringErrorLabel);
             }
@@ -238,11 +437,27 @@ public class RecurringController {
         }
     }
 
+    /**
+     * Carries over the fields the edit form does not expose (income/refund/excluded
+     * flags, currency, tags, import id, receipt) so editing amount/date/etc. doesn't
+     * silently turn a salary into an expense or drop its currency.
+     */
+    static void copyNonFormFields(RecurringExpense from, RecurringExpense to) {
+        if (from == null || to == null) return;
+        to.setIncome(from.isIncome());
+        to.setRefund(from.isRefund());
+        to.setExcluded(from.isExcluded());
+        to.setCurrency(from.getCurrency());
+        to.setTags(from.getTags());
+        to.setImportId(from.getImportId());
+        to.setReceiptPath(from.getReceiptPath());
+    }
+
     @FXML
     private void handleDeleteRecurring() {
         RecurringExpense selected = recurringTable.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            showMsgOn("Please select a recurring expense to delete", true, editRecurringErrorLabel);
+            showMsgOn("Select a recurring item to delete", true, recurringListErrorLabel);
             return;
         }
 
@@ -264,23 +479,23 @@ public class RecurringController {
                 state.saveExpenses();
                 state.syncRecurringList();
                 state.requestRefresh();
+                recurringTable.getSelectionModel().clearSelection();
                 clearEditRecurringForm();
                 updateRecurringButton.setDisable(true);
-                showMsgOn("Recurring expense deleted successfully!", false, editRecurringErrorLabel);
+                showMsgOn("Recurring item deleted", false, recurringListErrorLabel);
             } catch (Exception ex) {
-                showMsgOn("Error deleting recurring expense: " + ex.getMessage(), true, editRecurringErrorLabel);
+                showMsgOn("Error deleting recurring item: " + ex.getMessage(), true, recurringListErrorLabel);
             }
         }
     }
 
     @FXML
     private void handleDetectRecurring() {
-        RecurringPatternDetector detector = new RecurringPatternDetector();
-        List<RecurringPatternDetector.DetectedPattern> patterns = detector.detectPatterns(
-            state.getManager().getExpenses(), state.getManager().getBaseRecurringExpenses());
+        // Always re-detected from the current ledger (never a stale cached list).
+        List<RecurringPatternDetector.DetectedPattern> patterns = detectNow();
 
         if (patterns.isEmpty()) {
-            showMsg("No recurring patterns detected in your expenses.", false);
+            showMsgOn("No repeating payments found in your transactions yet.", false, recurringListErrorLabel);
             return;
         }
 
@@ -411,12 +626,12 @@ public class RecurringController {
         patternTable.setPrefHeight(Math.min(300, 50 + patterns.size() * 30));
 
         // Select all / deselect all
-        Button selectAllBtn = new Button("Select All");
-        selectAllBtn.getStyleClass().add("primary-button");
+        Button selectAllBtn = new Button("Select all");
+        selectAllBtn.getStyleClass().add("ghost-button");
         selectAllBtn.setOnAction(e -> patterns.forEach(p -> p.setSelected(true)));
 
-        Button deselectAllBtn = new Button("Deselect All");
-        deselectAllBtn.getStyleClass().add("primary-button");
+        Button deselectAllBtn = new Button("Select none");
+        deselectAllBtn.getStyleClass().add("ghost-button");
         deselectAllBtn.setOnAction(e -> patterns.forEach(p -> p.setSelected(false)));
 
         HBox selectionButtons = new HBox(10, selectAllBtn, deselectAllBtn);
@@ -428,8 +643,8 @@ public class RecurringController {
         Label statusLabel = new Label();
         statusLabel.getStyleClass().add("error-label");
 
-        Button convertBtn = new Button("Convert Selected to Recurring");
-        convertBtn.getStyleClass().add("success-button");
+        Button convertBtn = new Button("Track selected as recurring");
+        convertBtn.getStyleClass().add("accent-button");
         convertBtn.setOnAction(e -> {
             List<RecurringPatternDetector.DetectedPattern> selected = patterns.stream()
                 .filter(RecurringPatternDetector.DetectedPattern::isSelected)
@@ -454,7 +669,7 @@ public class RecurringController {
                 commandCount++;
 
                 if (removeOriginals.isSelected()) {
-                    for (Expense original : pattern.getMatchingExpenses()) {
+                    for (Expense original : removableOriginals(pattern, state.getManager().getExpenses())) {
                         state.getManager().executeCommand(new DeleteExpenseCommand(state.getManager(), original));
                         commandCount++;
                     }
@@ -470,18 +685,19 @@ public class RecurringController {
                 for (int i = 0; i < commandCount; i++) {
                     state.getManager().rollbackLastCommand();
                 }
-                showMsg("Failed to save: " + ex.getMessage(), true);
+                statusLabel.setText("Failed to save: " + ex.getMessage());
+                statusLabel.getStyleClass().setAll("error-label", "error-message");
                 return;
             }
 
             int converted = selected.size();
-            showMsg(converted + " recurring " + (converted == 1 ? "expense" : "expenses")
-                + " created successfully!", false);
+            showMsgOn(converted + " recurring " + (converted == 1 ? "item" : "items") + " added",
+                false, recurringListErrorLabel);
             dialog.close();
         });
 
         Button cancelBtn = new Button("Cancel");
-        cancelBtn.getStyleClass().add("danger-button");
+        cancelBtn.getStyleClass().add("ghost-button");
         cancelBtn.setOnAction(e -> dialog.close());
 
         // Copy All button
@@ -534,7 +750,7 @@ public class RecurringController {
         TextArea textArea = new TextArea(sb.toString());
         textArea.setEditable(false);
         textArea.setWrapText(false);
-        textArea.setStyle("-fx-font-family: monospace; -fx-font-size: 13px; -fx-control-inner-background: #2A2A2A; -fx-text-fill: #E0E0E0;");
+        textArea.getStyleClass().add("import-preview");
         textArea.setPrefHeight(400);
         textArea.setPrefWidth(700);
         textArea.selectAll();
@@ -554,9 +770,8 @@ public class RecurringController {
         addRecurringCategoryCombo.setValue(null);
         addRecurringDatePicker.setValue(LocalDate.now());
         addRecurringDescField.clear();
-        addRecurringFreqCombo.setValue(null);
+        addRecurringFreqCombo.setValue(RecurrenceType.MONTHLY);
         addRecurringEndDatePicker.setValue(null);
-        Platform.runLater(() -> addRecurringAmountField.requestFocus());
     }
 
     private void clearEditRecurringForm() {

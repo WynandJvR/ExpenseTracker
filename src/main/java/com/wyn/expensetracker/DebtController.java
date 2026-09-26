@@ -18,11 +18,17 @@ import java.util.*;
 
 public class DebtController {
 
-    // Summary cards
-    @FXML private TextField totalDebtField;
-    @FXML private TextField monthlyPaymentsField;
-    @FXML private TextField totalInterestField;
-    @FXML private TextField totalPaidField;
+    // Summary tiles
+    @FXML private Label totalDebtField;
+    @FXML private Label totalDebtSub;
+    @FXML private Label monthlyPaymentsField;
+    @FXML private Label totalInterestField;
+    @FXML private Label totalPaidField;
+
+    /** Row state for the amortisation schedule: instalments already paid. */
+    private static final javafx.css.PseudoClass PAID = javafx.css.PseudoClass.getPseudoClass("paid");
+    /** Row state for instalments assumed paid (before the first statement / estimated). */
+    private static final javafx.css.PseudoClass ASSUMED = javafx.css.PseudoClass.getPseudoClass("assumed");
 
     // Add form
     @FXML private TitledPane addDebtPane;
@@ -55,6 +61,9 @@ public class DebtController {
 
     @FXML private Label debtViewErrorLabel;
 
+    /** Added programmatically next to the payment field (optional statement keyword). */
+    private TextField debtKeywordField;
+
     private SharedState state;
     private boolean initialized = false;
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("dd MMM yyyy");
@@ -71,10 +80,11 @@ public class DebtController {
         setupDebtTable();
         setupPaymentTable();
         setupAutoCalculate();
+        setupKeywordField();
 
         // Enter in any add-form field submits (disabled button is ignored until valid)
         UIUtils.submitOnEnter(addDebtButton, debtNameField, debtPrincipalField,
-            debtRateField, debtTermField, debtPaymentField);
+            debtRateField, debtTermField, debtPaymentField, debtKeywordField);
     }
 
     public void refresh() {
@@ -82,6 +92,31 @@ public class DebtController {
         debtTable.setItems(FXCollections.observableArrayList(state.getDebts()));
         refreshPaymentTable();
         updateSummaryCards();
+    }
+
+    /** Adds the "statement keyword" input to the add form, beside the payment field. */
+    private void setupKeywordField() {
+        debtKeywordField = new TextField();
+        debtKeywordField.setPromptText("e.g., VEHICLE FIN 1234");
+        debtKeywordField.getStyleClass().add("text-field");
+        debtKeywordField.setTooltip(new Tooltip(KEYWORD_HELP));
+        Label label = new Label("Statement keyword (optional)");
+        label.getStyleClass().add("form-label");
+        VBox box = new VBox(5, label, debtKeywordField);
+        HBox.setHgrow(box, javafx.scene.layout.Priority.ALWAYS);
+        javafx.scene.Parent paymentBox = debtPaymentField.getParent();
+        if (paymentBox != null && paymentBox.getParent() instanceof HBox row) {
+            row.getChildren().add(box);
+        }
+    }
+
+    private static final String KEYWORD_HELP =
+        "Imported transactions whose description contains this word or phrase (on or after the start date) "
+        + "count as payments. If a debt has no payments at all, the scheduled balance is shown as an estimate.";
+
+    /** Balance text in the debt's currency, suffixed when it is an estimate. */
+    private String balanceText(Debt debt, Debt.BalanceStatus status) {
+        return fmtDebt(status.balance, debt) + (status.estimated ? " (est.)" : "");
     }
 
     // ======================== TABLE SETUP ========================
@@ -93,7 +128,7 @@ public class DebtController {
         debtEmptyState.setAlignment(Pos.CENTER);
         Label debtMsg = new Label("No debts or loans yet.");
         debtMsg.getStyleClass().add("empty-state-label");
-        Label debtHint = new Label("Use 'Add New Debt / Loan' above to track one.");
+        Label debtHint = new Label("Use \u201cAdd a debt or loan\u201d above to track one.");
         debtHint.getStyleClass().add("empty-state-hint");
         debtEmptyState.getChildren().addAll(debtMsg, debtHint);
         debtTable.setPlaceholder(debtEmptyState);
@@ -157,17 +192,20 @@ public class DebtController {
                 super.updateItem(item, empty);
                 if (empty || getTableRow() == null || getTableRow().getItem() == null) {
                     setText(null);
+                    setTooltip(null);
+                    getStyleClass().remove("paid-off-cell");
                 } else {
                     Debt debt = getTableRow().getItem();
-                    double totalPaid = getTotalPaidForDebt(debt.getId());
-                    double balance = debt.getRemainingBalance(totalPaid);
-                    setText(fmtDebt(balance, debt));
+                    Debt.BalanceStatus status = state.debtStatus(debt);
+                    double balance = status.balance;
+                    setText(balanceText(debt, status));
+                    setTooltip(status.estimated
+                        ? new Tooltip("Estimated: no payments recorded or matched, so the scheduled "
+                            + "balance is assumed. Record payments or set a statement keyword for an exact figure.")
+                        : null);
                     setAlignment(Pos.CENTER_RIGHT);
-                    if (balance <= 0.01) {
-                        setStyle("-fx-text-fill: #26DE81; -fx-font-weight: bold;");
-                    } else {
-                        setStyle("");
-                    }
+                    getStyleClass().remove("paid-off-cell");
+                    if (balance <= 0.01) getStyleClass().add("paid-off-cell");
                 }
             }
         });
@@ -181,19 +219,21 @@ public class DebtController {
                     setText(null);
                 } else {
                     Debt debt = getTableRow().getItem();
-                    double totalPaid = getTotalPaidForDebt(debt.getId());
-                    double totalCost = debt.getTotalCost();
-                    double progress = totalCost > 0 ? Math.min(totalPaid / totalCost, 1.0) : 0;
+                    // Share of principal repaid, from the month-by-month balance simulation,
+                    // so lump-sum payments that settle the debt show 100%.
+                    Debt.BalanceStatus status = state.debtStatus(debt);
+                    double progress = debt.getPrincipal() > 0
+                        ? Math.max(0, Math.min(1, (debt.getPrincipal() - status.balance) / debt.getPrincipal()))
+                        : 1;
 
                     ProgressBar bar = new ProgressBar(progress);
                     bar.setPrefWidth(100);
-                    bar.setPrefHeight(16);
-                    bar.setStyle(progress >= 1.0
-                        ? "-fx-accent: #26DE81;"
-                        : "-fx-accent: #5C6BC0;");
+                    bar.getStyleClass().add("debt-progress");
+                    if (progress >= 1.0) bar.getStyleClass().add("debt-progress-done");
 
-                    Label pctLabel = new Label(String.format("%.0f%%", progress * 100));
-                    pctLabel.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 11px;");
+                    Label pctLabel = new Label(String.format("%.0f%%", progress * 100)
+                        + (status.estimated ? " est." : ""));
+                    pctLabel.getStyleClass().add("muted-text");
                     pctLabel.setMinWidth(40);
 
                     HBox box = new HBox(6, bar, pctLabel);
@@ -212,7 +252,7 @@ public class DebtController {
         paymentEmptyState.setAlignment(Pos.CENTER);
         Label paymentMsg = new Label("No payments recorded yet.");
         paymentMsg.getStyleClass().add("empty-state-label");
-        Label paymentHint = new Label("Select a debt above and use 'Record Payment'.");
+        Label paymentHint = new Label("Select a debt above and use \u201cRecord payment\u201d.");
         paymentHint.getStyleClass().add("empty-state-hint");
         paymentEmptyState.getChildren().addAll(paymentMsg, paymentHint);
         paymentTable.setPlaceholder(paymentEmptyState);
@@ -313,22 +353,45 @@ public class DebtController {
         double totalMonthly = 0;
         double totalInterest = 0;
         double totalPaid = 0;
+        double totalAssumed = 0;
 
+        boolean anyEstimated = false;
         for (Debt debt : state.getDebts()) {
-            double paid = getTotalPaidForDebt(debt.getId());
-            double balance = debt.getRemainingBalance(paid);
+            Debt.BalanceStatus status = state.debtStatus(debt);
+            double balance = status.balance;
             double payment = debt.getMonthlyPayment() > 0 ? debt.getMonthlyPayment() : debt.calculateMonthlyPayment();
 
-            totalDebt += balance;
-            if (balance > 0.01) totalMonthly += payment;
-            totalInterest += debt.getTotalInterest();
-            totalPaid += paid;
+            // Summed across debts, so converted to the base currency.
+            totalDebt += state.debtToBase(debt, balance);
+            if (balance > 0.01) totalMonthly += state.debtToBase(debt, payment);
+            totalInterest += state.debtToBase(debt, debt.getTotalInterest());
+            totalPaid += state.debtToBase(debt, status.totalPaidInclAssumed());
+            totalAssumed += state.debtToBase(debt, status.assumedPaid);
+            anyEstimated |= status.estimated;
         }
 
-        totalDebtField.setText(UIUtils.fmt(totalDebt, state.getCurrencySymbol()));
+        totalDebtField.setText(UIUtils.fmt(totalDebt, state.getCurrencySymbol()) + (anyEstimated ? " (est.)" : ""));
+        totalDebtSub.setText(state.getDebts().isEmpty() ? "No debts added yet"
+            : anyEstimated ? "Estimated from the schedule where no payments are recorded or matched"
+            : "Across all debts");
         monthlyPaymentsField.setText(UIUtils.fmt(totalMonthly, state.getCurrencySymbol()));
         totalInterestField.setText(UIUtils.fmt(totalInterest, state.getCurrencySymbol()));
         totalPaidField.setText(UIUtils.fmt(totalPaid, state.getCurrencySymbol()));
+        setPaidSubtitle(totalAssumed > 0.005
+            ? "Incl. " + UIUtils.fmt(totalAssumed, state.getCurrencySymbol())
+                + (anyEstimated ? " assumed paid per the schedule" : " assumed paid before your first statement")
+            : "Recorded and matched payments");
+    }
+
+    /** Updates the "Paid so far" tile's subtitle (the kpi-sub label beside the value). */
+    private void setPaidSubtitle(String text) {
+        if (totalPaidField == null || !(totalPaidField.getParent() instanceof javafx.scene.layout.Pane)) return;
+        for (javafx.scene.Node n : ((javafx.scene.layout.Pane) totalPaidField.getParent()).getChildren()) {
+            if (n != totalPaidField && n instanceof Label && n.getStyleClass().contains("kpi-sub")) {
+                ((Label) n).setText(text);
+                return;
+            }
+        }
     }
 
     // ======================== HANDLERS ========================
@@ -365,6 +428,7 @@ public class DebtController {
             if (monthlyPayment == 0) {
                 debt.setMonthlyPayment(debt.calculateMonthlyPayment());
             }
+            if (debtKeywordField != null) debt.setPaymentKeyword(debtKeywordField.getText());
 
             state.getDebts().add(debt);
             saveDebts();
@@ -436,11 +500,40 @@ public class DebtController {
         TextField paymentField = new TextField(String.valueOf(selected.getMonthlyPayment()));
         paymentField.getStyleClass().add("text-field");
 
+        Label keywordLabel = new Label("Statement keyword (optional):");
+        keywordLabel.getStyleClass().add("form-label");
+        TextField keywordField = new TextField(selected.getPaymentKeyword() != null ? selected.getPaymentKeyword() : "");
+        keywordField.setPromptText("e.g., VEHICLE FIN 1234");
+        keywordField.getStyleClass().add("text-field");
+        keywordField.setTooltip(new Tooltip(KEYWORD_HELP));
+
+        // Live-recompute the instalment when principal/rate/term change, unless the user
+        // has typed their own payment.
+        boolean[] paymentTyped = {false};
+        paymentField.setOnKeyTyped(ev -> paymentTyped[0] = true);
+        javafx.beans.value.ChangeListener<String> termsListener = (obs, o, n) -> {
+            if (paymentTyped[0]) return;
+            try {
+                double p = Double.parseDouble(principalField.getText());
+                double r = Double.parseDouble(rateField.getText());
+                int t = Integer.parseInt(termField.getText());
+                if (p > 0 && r >= 0 && t > 0) {
+                    Debt preview = new Debt("preview", "", p, r, t, selected.getStartDate(), "MONTHLY", 0, null);
+                    paymentField.setText(String.format(Locale.ROOT, "%.2f", preview.calculateMonthlyPayment()));
+                }
+            } catch (NumberFormatException ignored) {
+                // leave the field as-is until the input is valid
+            }
+        };
+        principalField.textProperty().addListener(termsListener);
+        rateField.textProperty().addListener(termsListener);
+        termField.textProperty().addListener(termsListener);
+
         Label errorLabel = new Label();
         errorLabel.getStyleClass().add("error-label");
 
-        Button saveBtn = new Button("Save Changes");
-        saveBtn.getStyleClass().add("success-button");
+        Button saveBtn = new Button("Save changes");
+        saveBtn.getStyleClass().add("accent-button");
         saveBtn.setOnAction(e -> {
             try {
                 String name = nameField.getText().trim();
@@ -451,14 +544,23 @@ public class DebtController {
                 if (rate < 0) { errorLabel.setText("Rate cannot be negative"); return; }
                 int term = Integer.parseInt(termField.getText());
                 if (term <= 0) { errorLabel.setText("Term must be positive"); return; }
-                double payment = Double.parseDouble(paymentField.getText());
+                String paymentText = paymentField.getText().trim();
+                double payment = paymentText.isEmpty() ? 0 : Double.parseDouble(paymentText);
                 if (payment < 0) { errorLabel.setText("Payment cannot be negative"); return; }
+
+                // If the loan terms changed but the user left the payment untouched, the
+                // old instalment no longer amortises the loan — recompute it.
+                boolean termsChanged = principal != selected.getPrincipal()
+                    || rate != selected.getAnnualRate() || term != selected.getTermMonths();
+                boolean paymentUntouched = Math.abs(payment - selected.getMonthlyPayment()) < 0.005;
+                boolean recompute = payment <= 0 || (termsChanged && paymentUntouched);
 
                 selected.setName(name);
                 selected.setPrincipal(principal);
                 selected.setAnnualRate(rate);
                 selected.setTermMonths(term);
-                selected.setMonthlyPayment(payment > 0 ? payment : selected.calculateMonthlyPayment());
+                selected.setMonthlyPayment(recompute ? selected.calculateMonthlyPayment() : payment);
+                selected.setPaymentKeyword(keywordField.getText());
                 saveDebts();
                 refresh();
                 showMsg("Debt updated", false);
@@ -469,7 +571,7 @@ public class DebtController {
         });
 
         Button cancelBtn = new Button("Cancel");
-        cancelBtn.getStyleClass().add("danger-button");
+        cancelBtn.getStyleClass().add("ghost-button");
         cancelBtn.setOnAction(e -> dialog.close());
 
         HBox buttons = new HBox(10, saveBtn, cancelBtn);
@@ -481,11 +583,12 @@ public class DebtController {
             rateLabel, rateField,
             termLabel, termField,
             paymentLabel, paymentField,
+            keywordLabel, keywordField,
             errorLabel, buttons);
         content.setPadding(new Insets(20));
         content.getStyleClass().add("root-pane");
 
-        Scene scene = new Scene(content, 400, 520);
+        Scene scene = new Scene(content, 400, 590);
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
         dialog.setScene(scene);
         dialog.showAndWait();
@@ -522,8 +625,8 @@ public class DebtController {
         Label errorLabel = new Label();
         errorLabel.getStyleClass().add("error-label");
 
-        Button confirmBtn = new Button("Record Payment");
-        confirmBtn.getStyleClass().add("success-button");
+        Button confirmBtn = new Button("Record payment");
+        confirmBtn.getStyleClass().add("accent-button");
         confirmBtn.setOnAction(e -> {
             try {
                 double amount = Double.parseDouble(amountField.getText());
@@ -544,7 +647,7 @@ public class DebtController {
         });
 
         Button cancelBtn = new Button("Cancel");
-        cancelBtn.getStyleClass().add("danger-button");
+        cancelBtn.getStyleClass().add("ghost-button");
         cancelBtn.setOnAction(e -> dialog.close());
 
         HBox buttons = new HBox(10, confirmBtn, cancelBtn);
@@ -567,7 +670,9 @@ public class DebtController {
         if (selected == null) { showMsg("Select a debt first", true); return; }
 
         List<Debt.AmortizationEntry> schedule = selected.getAmortizationSchedule();
-        double totalPaid = getTotalPaidForDebt(selected.getId());
+        Debt.BalanceStatus scheduleStatus = state.debtStatus(selected);
+        double totalPaid = scheduleStatus.totalPaid;
+        LocalDate today = LocalDate.now();
 
         TableView<Debt.AmortizationEntry> scheduleTable = new TableView<>();
         scheduleTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
@@ -612,15 +717,26 @@ public class DebtController {
             protected void updateItem(Debt.AmortizationEntry item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
-                    setStyle("");
+                    pseudoClassStateChanged(PAID, false);
+                    pseudoClassStateChanged(ASSUMED, false);
                 } else {
-                    double cumulativeScheduled = item.month * (selected.getMonthlyPayment() > 0
-                        ? selected.getMonthlyPayment() : selected.calculateMonthlyPayment());
-                    if (cumulativeScheduled <= totalPaid) {
-                        setStyle("-fx-background-color: rgba(38, 222, 129, 0.1);"); // paid
+                    boolean assumed = item.month <= scheduleStatus.assumedPeriods;
+                    boolean paid;
+                    if (assumed) {
+                        paid = true;
+                    } else if (scheduleStatus.estimated) {
+                        paid = !item.date.isAfter(today);   // estimated: assume due instalments were paid
                     } else {
-                        setStyle("");
+                        // Recorded payments cover the instalments after the assumed ones.
+                        double cumulativeScheduled = 0;
+                        for (Debt.AmortizationEntry en : schedule) {
+                            if (en.month > item.month) break;
+                            if (en.month > scheduleStatus.assumedPeriods) cumulativeScheduled += en.payment;
+                        }
+                        paid = cumulativeScheduled <= totalPaid + 0.005;
                     }
+                    pseudoClassStateChanged(PAID, paid && !assumed);
+                    pseudoClassStateChanged(ASSUMED, assumed);
                 }
             }
         });
@@ -648,13 +764,6 @@ public class DebtController {
 
     // ======================== HELPERS ========================
 
-    private double getTotalPaidForDebt(String debtId) {
-        return state.getDebtPayments().stream()
-            .filter(p -> p.getDebtId().equals(debtId))
-            .mapToDouble(DebtPayment::getAmount)
-            .sum();
-    }
-
     private String fmtDebt(double amount, Debt debt) {
         String currency = debt.getCurrency();
         if (currency != null && CurrencyManager.CURRENCIES.containsKey(currency)) {
@@ -670,6 +779,7 @@ public class DebtController {
         debtTermField.clear();
         debtStartDate.setValue(LocalDate.now());
         debtPaymentField.clear();
+        if (debtKeywordField != null) debtKeywordField.clear();
         calculatedPaymentLabel.setText("");
         addDebtPane.setExpanded(false);
     }

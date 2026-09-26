@@ -3,12 +3,18 @@ package com.wyn.expensetracker;
 import javafx.collections.ObservableList;
 
 import java.io.*;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public class FileStorage {
@@ -70,10 +76,130 @@ public class FileStorage {
         parseWarnings.add(message);
     }
 
+    /**
+     * Opens a text file for reading. All files are written as UTF-8, so UTF-8 is tried
+     * first (strictly). Files written by older versions with the platform charset
+     * (e.g. Cp1252 on Windows) are not valid UTF-8; those fall back to the platform
+     * charset (or ISO-8859-1 if the platform default is itself UTF-8) so legacy
+     * non-ASCII text is still read correctly instead of being mangled or rejected.
+     * A leading UTF-8 BOM is stripped.
+     */
+    static BufferedReader openReader(File file) throws IOException {
+        byte[] bytes = Files.readAllBytes(file.toPath());
+        String text;
+        try {
+            text = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString();
+        } catch (CharacterCodingException e) {
+            Charset fallback = Charset.defaultCharset();
+            if (StandardCharsets.UTF_8.equals(fallback)) fallback = StandardCharsets.ISO_8859_1;
+            text = new String(bytes, fallback);
+        }
+        if (!text.isEmpty() && text.charAt(0) == '﻿') text = text.substring(1);
+        return new BufferedReader(new StringReader(text));
+    }
+
+    /** Collapses CR, LF and CRLF into a single space so a value can never split a line-based record. */
+    static String stripLineBreaks(String value) {
+        if (value == null) return null;
+        if (value.indexOf('\n') < 0 && value.indexOf('\r') < 0) return value;
+        return value.replaceAll("\r\n|\r|\n", " ");
+    }
+
+    // ======================== Save-blocking after an unreadable load ========================
+
+    private boolean expenseSavesBlocked = false;
+    private String expenseSavesBlockedReason = null;
+    private String lastCorruptCopyPath = null;
+    private boolean expensesQuarantined = false;
+
+    /**
+     * True when the ledger in memory may be missing rows that were on disk: the last load
+     * threw, found badly corrupted data, or the file was set aside. Callers that reconcile
+     * other records against the ledger (e.g. import history) must not treat missing rows
+     * as "deleted by the user" in that case.
+     */
+    public boolean wasLastExpenseLoadLossy() {
+        return expenseSavesBlocked || expensesQuarantined || lastCorruptCopyPath != null
+            || getLastExpenseLoadStats().failedLines > 0;
+    }
+
+    /**
+     * True when the last {@link #loadExpenses()} threw, meaning the in-memory ledger is
+     * not a faithful copy of expenses.txt. Saving now would replace the user's real data
+     * with an empty/partial list, so {@link #saveExpenses} refuses until the caller
+     * resolves it via {@link #quarantineUnreadableExpenses()} or {@link #acknowledgeLoadFailure()}.
+     */
+    public boolean isExpenseSaveBlocked() {
+        return expenseSavesBlocked;
+    }
+
+    /**
+     * The user has been told about the load failure and accepts that the next save will
+     * overwrite expenses.txt (a timestamped copy was already made, if possible).
+     */
+    public void acknowledgeLoadFailure() {
+        expenseSavesBlocked = false;
+        expenseSavesBlockedReason = null;
+    }
+
+    /**
+     * Moves an unreadable expenses.txt aside to {@code expenses.unreadable-<timestamp>.txt}
+     * so the app can start with a fresh ledger without destroying the original, and
+     * unblocks saving. Returns the path of the moved file, or null if there was nothing to move.
+     */
+    public String quarantineUnreadableExpenses() throws IOException {
+        File file = new File(expensesFile);
+        if (!file.exists()) {
+            acknowledgeLoadFailure();
+            return null;
+        }
+        File target = uniqueTimestampedFile("expenses.unreadable-");
+        Files.move(file.toPath(), target.toPath());
+        expensesQuarantined = true;
+        acknowledgeLoadFailure();
+        return target.getAbsolutePath();
+    }
+
+    /**
+     * Path of the timestamped, never-rotated copy of expenses.txt made during the last
+     * load because it was badly corrupted (or could not be read), or null if none was made.
+     */
+    public String getLastCorruptCopyPath() {
+        return lastCorruptCopyPath;
+    }
+
+    private File uniqueTimestampedFile(String prefix) {
+        String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
+        File candidate = new File(baseDir, prefix + ts + ".txt");
+        int n = 2;
+        while (candidate.exists()) {
+            candidate = new File(baseDir, prefix + ts + "-" + n++ + ".txt");
+        }
+        return candidate;
+    }
+
+    /** Copies expenses.txt to a timestamped file that backup rotation never touches. */
+    private void preserveCorruptCopy() {
+        File file = new File(expensesFile);
+        if (!file.exists()) return;
+        try {
+            File target = uniqueTimestampedFile("expenses.corrupt-");
+            Files.copy(file.toPath(), target.toPath());
+            lastCorruptCopyPath = target.getAbsolutePath();
+            addParseWarning("A copy of the original expense file was saved to " + lastCorruptCopyPath);
+        } catch (IOException e) {
+            addParseWarning("Could not save a copy of the corrupted expense file: " + e.getMessage());
+        }
+    }
+
     private void atomicWrite(Path target, IOConsumer<PrintWriter> writer) throws IOException {
         Path tmp = Files.createTempFile(target.getParent(), target.getFileName().toString(), ".tmp");
         try {
-            try (PrintWriter out = new PrintWriter(Files.newBufferedWriter(tmp))) {
+            try (PrintWriter out = new PrintWriter(Files.newBufferedWriter(tmp, StandardCharsets.UTF_8))) {
                 writer.accept(out);
             }
             Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
@@ -84,6 +210,11 @@ public class FileStorage {
     }
 
     public void saveExpenses(List<Expense> expenses) throws IOException {
+        if (expenseSavesBlocked) {
+            throw new IOException("Saving is disabled because expenses.txt could not be read ("
+                + expenseSavesBlockedReason + "). Your original file has not been touched; "
+                + "restart the app to recover it.");
+        }
         rotateBackups(expensesFile, 5);
         atomicWrite(Path.of(expensesFile), out -> {
             for (Expense expense : expenses) {
@@ -136,15 +267,36 @@ public class FileStorage {
     }
 
     public List<Expense> loadExpenses() throws IOException {
-        List<Expense> expenses = new ArrayList<>();
         lastLoadTotalLines = 0;
         lastLoadFailedLines = 0;
         lastLoadHadLegacyRecurring = false;
+        lastCorruptCopyPath = null;
+        expenseSavesBlocked = false;
+        expenseSavesBlockedReason = null;
         File file = new File(expensesFile);
         if (!file.exists()) {
-            return expenses;
+            return new ArrayList<>();
         }
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        List<Expense> expenses;
+        try {
+            expenses = readExpenses(file);
+        } catch (IOException | RuntimeException e) {
+            // The caller will end up with an empty (or stale) ledger. Keep a copy of the
+            // original and refuse to save over it until someone deals with the failure.
+            expenseSavesBlocked = true;
+            expenseSavesBlockedReason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            preserveCorruptCopy();
+            throw e;
+        }
+        if (getLastExpenseLoadStats().isSevere()) {
+            preserveCorruptCopy();
+        }
+        return expenses;
+    }
+
+    private List<Expense> readExpenses(File file) throws IOException {
+        List<Expense> expenses = new ArrayList<>();
+        try (BufferedReader reader = openReader(file)) {
             String line;
             int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
@@ -300,7 +452,7 @@ public class FileStorage {
         if (!file.exists()) {
             return categories;
         }
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!line.trim().isEmpty()) {
@@ -325,7 +477,7 @@ public class FileStorage {
         if (!file.exists()) {
             return incomes;
         }
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
@@ -363,7 +515,7 @@ public class FileStorage {
         Set<String> keys = new HashSet<>();
         File file = new File(baseDir + File.separator + "dismissed_anomalies.txt");
         if (!file.exists()) return keys;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!line.trim().isEmpty()) keys.add(line.trim());
@@ -389,7 +541,7 @@ public class FileStorage {
         List<SavingsGoal> goals = new ArrayList<>();
         File file = new File(baseDir + File.separator + "goals.txt");
         if (!file.exists()) return goals;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
@@ -428,7 +580,7 @@ public class FileStorage {
         List<GoalContribution> contributions = new ArrayList<>();
         File file = new File(baseDir + File.separator + "goal_contributions.txt");
         if (!file.exists()) return contributions;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.trim().isEmpty()) continue;
@@ -470,7 +622,7 @@ public class FileStorage {
         List<String> tags = new ArrayList<>();
         File file = new File(baseDir + File.separator + "tags.txt");
         if (!file.exists()) return tags;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!line.trim().isEmpty()) {
@@ -483,7 +635,9 @@ public class FileStorage {
 
     private String escapeCsv(String value) {
         if (value == null) return "";
-        if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+        // The file format is one record per line; an embedded CR/LF would split the row.
+        value = stripLineBreaks(value);
+        if (value.contains(",") || value.contains("\"")) {
             return "\"" + value.replace("\"", "\"\"") + "\"";
         }
         return value;
@@ -526,7 +680,7 @@ public class FileStorage {
         Map<String, String> settings = new HashMap<>();
         File file = new File(baseDir + File.separator + "settings.txt");
         if (!file.exists()) return settings;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 int eq = line.indexOf('=');
@@ -548,14 +702,6 @@ public class FileStorage {
                 out.println(entry.getKey() + "=" + entry.getValue());
             }
         });
-    }
-
-    public void saveCurrencySymbol(String symbol) throws IOException {
-        saveSetting("currency", symbol);
-    }
-
-    public String loadCurrencySymbol() {
-        return loadSettings().getOrDefault("currency", "R");
     }
 
     public void saveRecurringIncome(double amount) throws IOException {
@@ -582,7 +728,7 @@ public class FileStorage {
         Map<String, String> state = new HashMap<>();
         File file = new File(baseDir + File.separator + "ui_state.txt");
         if (!file.exists()) return state;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 int eq = line.indexOf('=');
@@ -610,7 +756,7 @@ public class FileStorage {
         if (!file.exists()) {
             return budgets;
         }
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
@@ -648,7 +794,7 @@ public class FileStorage {
         if (!file.exists()) {
             return rules;
         }
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!line.trim().isEmpty()) {
@@ -678,7 +824,7 @@ public class FileStorage {
         List<ImportLog> logs = new ArrayList<>();
         File file = new File(baseDir + File.separator + "import_log.txt");
         if (!file.exists()) return logs;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.trim().isEmpty()) continue;
@@ -719,11 +865,52 @@ public class FileStorage {
         saveSetting("baseCurrency", code);
     }
 
+    /**
+     * The base currency recorded in exchange_rates.txt (the currency the stored rates are
+     * relative to), or null if the file is missing or has no BASE= line.
+     */
+    public String loadExchangeRatesBase() throws IOException {
+        File file = new File(baseDir + File.separator + "exchange_rates.txt");
+        if (!file.exists()) return null;
+        try (BufferedReader reader = openReader(file)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.startsWith("BASE=")) {
+                    String base = line.substring(5).trim();
+                    return base.isEmpty() ? null : base;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Loads stored exchange rates, expressed relative to the configured base currency
+     * ({@link #loadBaseCurrency()}). If the file's BASE= line names a different currency
+     * (e.g. the base was changed by an older version that didn't rewrite the rates),
+     * the rates are converted to the configured base; if that's impossible (no rate for
+     * the configured base) they are dropped with a warning rather than silently misapplied.
+     */
     public Map<String, Double> loadExchangeRates() throws IOException {
+        Map<String, Double> rates = loadRawExchangeRates();
+        if (rates.isEmpty()) return rates;
+        String fileBase = loadExchangeRatesBase();
+        String base = loadBaseCurrency();
+        if (fileBase == null || fileBase.equals(base)) return rates;
+        Map<String, Double> converted = CurrencyManager.convertRates(rates, fileBase, base);
+        if (converted == null) {
+            addParseWarning("Stored exchange rates are relative to " + fileBase + " but the base currency is "
+                + base + ", and there is no " + base + " rate to convert them. Please re-enter your exchange rates.");
+            return new LinkedHashMap<>();
+        }
+        return converted;
+    }
+
+    private Map<String, Double> loadRawExchangeRates() throws IOException {
         Map<String, Double> rates = new LinkedHashMap<>();
         File file = new File(baseDir + File.separator + "exchange_rates.txt");
         if (!file.exists()) return rates;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.startsWith("BASE=")) continue;
@@ -769,7 +956,7 @@ public class FileStorage {
         List<OccurrenceOverride> result = new ArrayList<>();
         File file = new File(baseDir + File.separator + "recurring_overrides.txt");
         if (!file.exists()) return result;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
@@ -811,7 +998,8 @@ public class FileStorage {
                     d.getStartDate() + "," +
                     d.getPaymentFrequency() + "," +
                     d.getMonthlyPayment() + "," +
-                    (d.getCurrency() != null ? d.getCurrency() : ""));
+                    (d.getCurrency() != null ? d.getCurrency() : "") + "," +
+                    escapeCsv(d.getPaymentKeyword()));
             }
         });
     }
@@ -820,7 +1008,7 @@ public class FileStorage {
         List<Debt> debts = new ArrayList<>();
         File file = new File(baseDir + File.separator + "debts.txt");
         if (!file.exists()) return debts;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
@@ -838,8 +1026,11 @@ public class FileStorage {
                         String paymentFrequency = parts[6];
                         double monthlyPayment = Double.parseDouble(parts[7]);
                         String currency = parts.length >= 9 && !parts[8].isEmpty() ? parts[8] : null;
-                        debts.add(new Debt(id, name, principal, annualRate, termMonths, startDate,
-                            paymentFrequency, monthlyPayment, currency));
+                        Debt debt = new Debt(id, name, principal, annualRate, termMonths, startDate,
+                            paymentFrequency, monthlyPayment, currency);
+                        // Optional trailing field (added later): payment keyword.
+                        if (parts.length >= 10) debt.setPaymentKeyword(parts[9]);
+                        debts.add(debt);
                     }
                 } catch (Exception e) {
                     addParseWarning("Error parsing debt line " + lineNumber + ": " + e.getMessage());
@@ -864,7 +1055,7 @@ public class FileStorage {
         List<DebtPayment> payments = new ArrayList<>();
         File file = new File(baseDir + File.separator + "debt_payments.txt");
         if (!file.exists()) return payments;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = openReader(file)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.trim().isEmpty()) continue;

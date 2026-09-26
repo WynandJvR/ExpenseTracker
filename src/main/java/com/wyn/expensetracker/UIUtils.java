@@ -16,15 +16,20 @@ public final class UIUtils {
 
     private UIUtils() {}
 
+    /**
+     * Colour-blind-validated categorical palette for dark surfaces. Only eight colours, so
+     * charts show at most seven categories plus a grey "Other" (see {@link #OTHER_COLOR}).
+     */
     public static final String[] CATEGORY_COLORS = {
-        "#FF6F61", "#6B5B95", "#88B04B", "#F7B731", "#4ECDC4",
-        "#FC5C65", "#45AAF2", "#26DE81", "#FD9644", "#A55EEA",
-        "#778CA3", "#20BF6B", "#EB3B5A", "#3867D6", "#D1D8E0",
-        "#0FB9B1", "#FA8231", "#8854D0", "#2D98DA", "#E77F67"
+        "#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"
     };
 
+    /** Neutral grey used for the folded "Other" series/slice. */
+    public static final String OTHER_COLOR = "#6b7480";
+
     public static String fmt(double amount, String currencySymbol) {
-        return currencySymbol + String.format("%.2f", amount);
+        String digits = String.format(java.util.Locale.US, "%,.2f", Math.abs(amount));
+        return (amount < -0.004 ? "-" : "") + (currencySymbol == null ? "" : currencySymbol) + digits;
     }
 
     /** Applies the app stylesheet to a dialog pane, guarding against a missing/renamed resource. */
@@ -76,9 +81,15 @@ public final class UIUtils {
         }
     }
 
+    /**
+     * Stable colour for a category: the same name always maps to the same palette slot
+     * (String.hashCode is specified, so this holds across runs). "Other" is always grey.
+     * Charts that need distinct colours for their visible categories assign slots
+     * themselves and use this only as a fallback.
+     */
     public static String getCategoryColor(String category) {
-        int hash = Math.abs(category.hashCode());
-        return CATEGORY_COLORS[hash % CATEGORY_COLORS.length];
+        if (category == null || "Other".equals(category)) return OTHER_COLOR;
+        return CATEGORY_COLORS[Math.floorMod(category.hashCode(), CATEGORY_COLORS.length)];
     }
 
     public static void animateChartFadeIn(Node chart) {

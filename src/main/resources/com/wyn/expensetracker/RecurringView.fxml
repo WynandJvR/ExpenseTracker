@@ -10,126 +10,145 @@
             fx:controller="com.wyn.expensetracker.RecurringController"
             fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane"
             visible="false" managed="false">
-    <VBox spacing="16" styleClass="content-view">
-        <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
+    <VBox spacing="20" styleClass="content-view">
+        <padding><Insets top="28" right="32" bottom="28" left="32"/></padding>
 
-        <Label text="Recurring Expenses" styleClass="view-title"/>
+        <!-- Header -->
+        <HBox spacing="10" alignment="CENTER_LEFT">
+            <VBox spacing="4" HBox.hgrow="ALWAYS">
+                <Label text="Recurring" styleClass="view-title"/>
+                <Label text="Bills, subscriptions and income that repeat. These fill in future months and power the upcoming-bills reminders."
+                       styleClass="view-subtitle" wrapText="true"/>
+            </VBox>
+            <Button fx:id="showAddFormButton" text="+ Add" styleClass="secondary-button" onAction="#handleShowAddForm"/>
+            <Button fx:id="detectButton" text="Find them in my statements" styleClass="accent-button" onAction="#handleDetectRecurring"/>
+        </HBox>
 
-        <!-- Add Recurring Form -->
-        <TitledPane text="Add New Recurring Expense" expanded="true" styleClass="form-titled-pane">
-            <VBox spacing="8" styleClass="panel-box">
-                <padding><Insets top="12" right="12" bottom="12" left="12"/></padding>
+        <!-- Suggestions from the user's imported statements (filled by the controller) -->
+        <VBox fx:id="suggestionBox" spacing="8" visible="false" managed="false"/>
 
+        <!-- Add form: hidden until "+ Add" -->
+        <TitledPane fx:id="addRecurringPane" text="Add a recurring item" expanded="false" visible="false" managed="false"
+                    styleClass="card-titled-pane">
+            <VBox spacing="12">
                 <HBox spacing="16">
-                    <VBox spacing="5" HBox.hgrow="ALWAYS">
-                        <Label text="Amount:" styleClass="form-label"/>
-                        <TextField fx:id="addRecurringAmountField" promptText="e.g., 10.99" styleClass="text-field"/>
+                    <VBox spacing="4" HBox.hgrow="ALWAYS">
+                        <Label text="Amount" styleClass="form-label"/>
+                        <TextField fx:id="addRecurringAmountField" promptText="e.g. 199.00" styleClass="text-field"/>
                     </VBox>
-                    <VBox spacing="5" HBox.hgrow="ALWAYS">
-                        <Label text="Category:" styleClass="form-label"/>
-                        <ComboBox fx:id="addRecurringCategoryCombo" promptText="Select or enter category" styleClass="combo-box" maxWidth="Infinity"/>
+                    <VBox spacing="4" HBox.hgrow="ALWAYS">
+                        <Label text="Category" styleClass="form-label"/>
+                        <ComboBox fx:id="addRecurringCategoryCombo" promptText="Select or type a category" styleClass="combo-box" maxWidth="Infinity"/>
                     </VBox>
-                    <VBox spacing="5" HBox.hgrow="ALWAYS">
-                        <Label text="Start Date:" styleClass="form-label"/>
-                        <DatePicker fx:id="addRecurringDatePicker" promptText="Select Date" styleClass="date-picker" maxWidth="Infinity"/>
+                    <VBox spacing="4" HBox.hgrow="ALWAYS">
+                        <Label text="Starts on" styleClass="form-label"/>
+                        <DatePicker fx:id="addRecurringDatePicker" promptText="Select date" styleClass="date-picker" maxWidth="Infinity"/>
                     </VBox>
                 </HBox>
 
                 <HBox spacing="16">
-                    <VBox spacing="5" HBox.hgrow="ALWAYS">
-                        <Label text="Frequency:" styleClass="form-label"/>
+                    <VBox spacing="4" HBox.hgrow="ALWAYS">
+                        <Label text="Repeats" styleClass="form-label"/>
                         <ComboBox fx:id="addRecurringFreqCombo" promptText="Select frequency" styleClass="combo-box" maxWidth="Infinity"/>
                     </VBox>
-                    <VBox spacing="5" HBox.hgrow="ALWAYS">
-                        <Label text="Description (optional):" styleClass="form-label"/>
-                        <TextField fx:id="addRecurringDescField" promptText="Enter description" styleClass="text-field"/>
+                    <VBox spacing="4" HBox.hgrow="ALWAYS">
+                        <Label text="Description (optional)" styleClass="form-label"/>
+                        <TextField fx:id="addRecurringDescField" promptText="e.g. Netflix, rent, gym" styleClass="text-field"/>
                     </VBox>
-                    <VBox spacing="5" HBox.hgrow="ALWAYS">
-                        <Label text="End Date (optional):" styleClass="form-label"/>
-                        <DatePicker fx:id="addRecurringEndDatePicker" promptText="Select end date" styleClass="date-picker" maxWidth="Infinity"/>
+                    <VBox spacing="4" HBox.hgrow="ALWAYS">
+                        <Label text="Ends on (optional)" styleClass="form-label"/>
+                        <DatePicker fx:id="addRecurringEndDatePicker" promptText="No end date" styleClass="date-picker" maxWidth="Infinity"/>
                     </VBox>
                 </HBox>
 
-                <HBox spacing="10">
-                    <Button fx:id="addRecurringButton" text="Add Recurring Expense" styleClass="success-button" onAction="#handleAddRecurring"/>
-                    <Button text="Add Category" styleClass="secondary-button" onAction="#handleAddCategory"/>
-                    <Button text="Remove Category" styleClass="secondary-button" onAction="#handleRemoveCategory"/>
+                <HBox spacing="10" alignment="CENTER_LEFT">
+                    <Button fx:id="addRecurringButton" text="Add" styleClass="accent-button" onAction="#handleAddRecurring"/>
+                    <Button text="Cancel" styleClass="ghost-button" onAction="#handleHideAddForm"/>
+                    <Region HBox.hgrow="ALWAYS"/>
+                    <Button text="New category" styleClass="ghost-button" onAction="#handleAddCategory"/>
+                    <Button text="Remove category" styleClass="ghost-button" onAction="#handleRemoveCategory"/>
                 </HBox>
                 <Label fx:id="addRecurringErrorLabel" styleClass="error-label"/>
             </VBox>
         </TitledPane>
 
-        <!-- Detect Recurring Patterns -->
-        <Button text="Detect Recurring Patterns" styleClass="primary-button" onAction="#handleDetectRecurring" maxWidth="Infinity"/>
-
-        <!-- Manage Recurring Expenses -->
-        <VBox spacing="8" styleClass="panel-box">
-            <Label text="Manage Recurring Expenses" styleClass="section-title"/>
-            <TableView fx:id="recurringTable" styleClass="table-view" prefHeight="250">
+        <!-- The list -->
+        <VBox spacing="12" styleClass="card">
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Label text="Your recurring items" styleClass="card-title"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Label fx:id="recurringCountLabel" styleClass="muted-text"/>
+            </HBox>
+            <TableView fx:id="recurringTable" styleClass="table-view" prefHeight="300">
                 <columns>
-                    <TableColumn text="Amount" prefWidth="80">
-                        <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
-                    </TableColumn>
-                    <TableColumn text="Category" prefWidth="100">
-                        <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
-                    </TableColumn>
-                    <TableColumn text="Start Date" prefWidth="100">
-                        <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
-                    </TableColumn>
-                    <TableColumn text="Description" prefWidth="120">
+                    <TableColumn fx:id="recurringDescColumn" text="Description" prefWidth="200">
                         <cellValueFactory><PropertyValueFactory property="description"/></cellValueFactory>
                     </TableColumn>
-                    <TableColumn text="Frequency" prefWidth="80">
+                    <TableColumn text="Category" prefWidth="120">
+                        <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="recurringAmountColumn" text="Amount" prefWidth="100" styleClass="amount-column">
+                        <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn text="Repeats" prefWidth="90">
                         <cellValueFactory><PropertyValueFactory property="frequency"/></cellValueFactory>
                     </TableColumn>
-                    <TableColumn text="End Date" prefWidth="80">
+                    <TableColumn fx:id="recurringStartColumn" text="Starts" prefWidth="100">
+                        <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
+                    </TableColumn>
+                    <TableColumn fx:id="recurringEndColumn" text="Ends" prefWidth="100">
                         <cellValueFactory><PropertyValueFactory property="endDate"/></cellValueFactory>
                     </TableColumn>
                 </columns>
             </TableView>
-            <HBox spacing="10">
-                <Button text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteRecurring"/>
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Label text="Select a row to edit it." styleClass="faint-text"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Label fx:id="recurringListErrorLabel" styleClass="error-label"/>
+                <Button fx:id="deleteRecurringButton" text="Delete" styleClass="ghost-danger-button" disable="true"
+                        onAction="#handleDeleteRecurring"/>
             </HBox>
         </VBox>
 
-        <!-- Edit Recurring Form -->
-        <VBox spacing="8" styleClass="panel-box">
-            <Label text="Edit Selected Recurring Expense" styleClass="section-title"/>
+        <!-- Edit form: shown only while a row is selected -->
+        <VBox fx:id="editRecurringBox" spacing="12" styleClass="card" visible="false" managed="false">
+            <Label fx:id="editRecurringTitle" text="Edit recurring item" styleClass="card-title"/>
 
             <HBox spacing="16">
-                <VBox spacing="5" HBox.hgrow="ALWAYS">
-                    <Label text="Amount:" styleClass="form-label"/>
-                    <TextField fx:id="editRecurringAmountField" promptText="e.g., 10.99" styleClass="text-field"/>
+                <VBox spacing="4" HBox.hgrow="ALWAYS">
+                    <Label text="Amount" styleClass="form-label"/>
+                    <TextField fx:id="editRecurringAmountField" promptText="e.g. 199.00" styleClass="text-field"/>
                 </VBox>
-                <VBox spacing="5" HBox.hgrow="ALWAYS">
-                    <Label text="Category:" styleClass="form-label"/>
+                <VBox spacing="4" HBox.hgrow="ALWAYS">
+                    <Label text="Category" styleClass="form-label"/>
                     <ComboBox fx:id="editRecurringCategoryCombo" promptText="Select category" styleClass="combo-box" maxWidth="Infinity"/>
                 </VBox>
-                <VBox spacing="5" HBox.hgrow="ALWAYS">
-                    <Label text="Start Date:" styleClass="form-label"/>
-                    <DatePicker fx:id="editRecurringDatePicker" promptText="Select Date" styleClass="date-picker" maxWidth="Infinity"/>
+                <VBox spacing="4" HBox.hgrow="ALWAYS">
+                    <Label text="Starts on" styleClass="form-label"/>
+                    <DatePicker fx:id="editRecurringDatePicker" promptText="Select date" styleClass="date-picker" maxWidth="Infinity"/>
                 </VBox>
             </HBox>
 
             <HBox spacing="16">
-                <VBox spacing="5" HBox.hgrow="ALWAYS">
-                    <Label text="Frequency:" styleClass="form-label"/>
+                <VBox spacing="4" HBox.hgrow="ALWAYS">
+                    <Label text="Repeats" styleClass="form-label"/>
                     <ComboBox fx:id="editRecurringFreqCombo" promptText="Select frequency" styleClass="combo-box" maxWidth="Infinity"/>
                 </VBox>
-                <VBox spacing="5" HBox.hgrow="ALWAYS">
-                    <Label text="Description (optional):" styleClass="form-label"/>
-                    <TextField fx:id="editRecurringDescField" promptText="Enter description" styleClass="text-field"/>
+                <VBox spacing="4" HBox.hgrow="ALWAYS">
+                    <Label text="Description (optional)" styleClass="form-label"/>
+                    <TextField fx:id="editRecurringDescField" promptText="Description" styleClass="text-field"/>
                 </VBox>
-                <VBox spacing="5" HBox.hgrow="ALWAYS">
-                    <Label text="End Date (optional):" styleClass="form-label"/>
-                    <DatePicker fx:id="editRecurringEndDatePicker" promptText="Select end date" styleClass="date-picker" maxWidth="Infinity"/>
+                <VBox spacing="4" HBox.hgrow="ALWAYS">
+                    <Label text="Ends on (optional)" styleClass="form-label"/>
+                    <DatePicker fx:id="editRecurringEndDatePicker" promptText="No end date" styleClass="date-picker" maxWidth="Infinity"/>
                 </VBox>
             </HBox>
 
-            <HBox spacing="10">
-                <Button fx:id="updateRecurringButton" text="Update Expense" styleClass="success-button" disable="true" onAction="#handleUpdateRecurring"/>
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Button fx:id="updateRecurringButton" text="Update" styleClass="accent-button" disable="true" onAction="#handleUpdateRecurring"/>
+                <Button text="Cancel" styleClass="ghost-button" onAction="#handleCancelEdit"/>
+                <Label fx:id="editRecurringErrorLabel" styleClass="error-label"/>
             </HBox>
-            <Label fx:id="editRecurringErrorLabel" styleClass="error-label"/>
         </VBox>
     </VBox>
 </ScrollPane>

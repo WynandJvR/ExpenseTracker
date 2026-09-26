@@ -70,14 +70,150 @@ public class SettingsController {
         refreshCurrencyValue();
         currencyCombo.valueProperty().addListener((obs, oldVal, newVal) -> {
             if (suppressCurrencyListener || newVal == null) return;
-            state.getCurrencyManager().setBaseCurrency(newVal);
-            state.setCurrencySymbol(CurrencyManager.getSymbol(newVal));
-            try {
-                state.getStorage().saveBaseCurrency(newVal);
-                state.getStorage().saveCurrencySymbol(CurrencyManager.getSymbol(newVal));
-            } catch (Exception ex) { /* persistence best-effort */ }
-            state.requestRefresh();
+            changeBaseCurrency(newVal);
         });
+    }
+
+    /**
+     * Switches the base currency without changing what existing data means:
+     * <ul>
+     *   <li>records with no explicit currency (i.e. "base") are stamped with the OLD base code,
+     *       so a R100 expense doesn't silently become $100;</li>
+     *   <li>amounts that are implicitly in the base currency (planned incomes, the recurring
+     *       income default, budgets, savings goals and their contributions) are converted
+     *       with the old&rarr;new rate. Debts keep their own (stamped) currency.</li>
+     *   <li>stored exchange rates (relative to the old base) are re-expressed relative to the
+     *       new base, or cleared with a warning if there's no rate for the new base.</li>
+     * </ul>
+     * If there are base-currency amounts to convert but no rate for the new base is
+     * configured, the change is refused. On save failure the in-memory changes are rolled back.
+     */
+    private void changeBaseCurrency(String newBase) {
+        CurrencyManager cm = state.getCurrencyManager();
+        String oldBase = cm.getBaseCurrency();
+        if (newBase.equals(oldBase)) return;
+
+        Map<String, Double> oldRates = new LinkedHashMap<>(cm.getExchangeRates());
+        // Rates are "1 X = rate(X) old-base", so 1 old-base = 1/rate(newBase) new-base.
+        Double newBaseRate = oldRates.get(newBase);
+        boolean haveRate = newBaseRate != null && newBaseRate > 0
+            && !newBaseRate.isNaN() && !newBaseRate.isInfinite();
+        boolean needConversion = state.hasBaseCurrencyAmounts();
+        java.util.Set<String> lacking = currenciesLackingRateAfterSwitch(state, newBase);
+        if (!lacking.isEmpty()) {
+            refreshCurrencyValue();
+            showMsg("Can't switch the base currency to " + newBase + ": after the switch there would be no "
+                + newBase + " exchange rate for " + String.join(", ", lacking)
+                + ", so those amounts would be silently re-valued 1:1. "
+                + "Add a " + newBase + " rate (1 " + newBase + " = ? " + oldBase + ")"
+                + (lacking.size() > 1 || !lacking.contains(oldBase) ? " and rates for the other listed currencies" : "")
+                + " first, then try again.", true);
+            return;
+        }
+        double factor = haveRate ? 1.0 / newBaseRate : 1.0;
+        if (needConversion) state.scaleBaseCurrencyAmounts(factor);
+
+        List<Expense> stamped = state.getManager().stampMissingCurrency(oldBase);
+        List<Debt> stampedDebts = new ArrayList<>();
+        for (Debt d : state.getDebts()) {
+            if (d.getCurrency() == null) { d.setCurrency(oldBase); stampedDebts.add(d); }
+        }
+        boolean ratesConverted = cm.changeBaseCurrency(newBase);
+
+        try {
+            if (!stamped.isEmpty()) state.saveExpenses();
+            if (!stampedDebts.isEmpty()) state.getStorage().saveDebts(state.getDebts());
+            if (needConversion) {
+                state.getStorage().saveIncomes(state.getIncomes());
+                state.getStorage().saveRecurringIncome(state.getRecurringIncome());
+                state.getStorage().saveBudgets(state.getBudgets());
+                state.getStorage().saveGoals(new ArrayList<>(state.getSavingsGoals()));
+                state.getStorage().saveGoalContributions(new ArrayList<>(state.getGoalContributions()));
+            }
+            // Rates first, then base: if the base write fails, the BASE= line in the rates
+            // file lets the loader convert them back to the still-configured old base.
+            state.getStorage().saveExchangeRates(newBase, cm.getExchangeRates());
+            state.getStorage().saveBaseCurrency(newBase);
+        } catch (Exception ex) {
+            // Stamped records already written to disk are harmless (explicit old-base code
+            // means the same thing as "base" did), so only memory needs rolling back.
+            for (Expense e : stamped) e.setCurrency(null);
+            for (Debt d : stampedDebts) d.setCurrency(null);
+            if (needConversion) {
+                state.scaleBaseCurrencyAmounts(1.0 / factor);
+                // Best effort: put the old-base amounts back on disk too.
+                try {
+                    state.getStorage().saveIncomes(state.getIncomes());
+                    state.getStorage().saveRecurringIncome(state.getRecurringIncome());
+                    state.getStorage().saveBudgets(state.getBudgets());
+                    state.getStorage().saveGoals(new ArrayList<>(state.getSavingsGoals()));
+                    state.getStorage().saveGoalContributions(new ArrayList<>(state.getGoalContributions()));
+                } catch (Exception ignored) {
+                    // the original error is reported below
+                }
+            }
+            cm.setBaseCurrency(oldBase);
+            cm.setExchangeRates(oldRates);
+            refreshCurrencyValue();
+            showMsg("Failed to change base currency: " + ex.getMessage(), true);
+            return;
+        }
+
+        state.setCurrencySymbol(CurrencyManager.getSymbol(newBase));
+        state.requestRefresh();
+        if (!ratesConverted && !oldRates.isEmpty()) {
+            showMsg("Base currency is now " + newBase + ". Your exchange rates were relative to " + oldBase
+                + " and there was no " + newBase + " rate to convert them, so they were cleared — please re-enter them.", true);
+        } else {
+            showMsg("Base currency changed to " + newBase
+                + (stamped.isEmpty() ? "" : "; existing entries keep their " + oldBase + " amounts")
+                + (needConversion ? "; incomes, budgets and goals were converted at 1 " + oldBase + " = "
+                    + String.format(java.util.Locale.ROOT, "%.4f", factor) + " " + newBase : ""), false);
+        }
+    }
+
+    /**
+     * Currencies in use that would have no rate to {@code newBase} after a base switch
+     * (sorted; empty = the switch is safe). "In use" means every currency stamped on an
+     * expense, recurring template or debt, plus the current base itself whenever any data
+     * exists (unstamped records get stamped with it, and base-denominated settings are
+     * converted from it). Without a rate, toBase would fall back to 1.0 and re-value them.
+     */
+    static java.util.Set<String> currenciesLackingRateAfterSwitch(SharedState state, String newBase) {
+        CurrencyManager cm = state.getCurrencyManager();
+        String oldBase = cm.getBaseCurrency();
+        java.util.Set<String> used = new java.util.TreeSet<>();
+        boolean anyData = state.hasBaseCurrencyAmounts();
+        List<Expense> records = new ArrayList<>();
+        if (state.getManager() != null) {
+            records.addAll(state.getManager().getExpenses());
+            records.addAll(state.getManager().getBaseRecurringExpenses());
+        }
+        for (Expense e : records) {
+            if (e == null) continue;
+            anyData = true;
+            used.add(e.getCurrency() != null ? e.getCurrency() : oldBase);
+        }
+        for (Debt d : state.getDebts()) {
+            anyData = true;
+            used.add(d.getCurrency() != null ? d.getCurrency() : oldBase);
+        }
+        if (anyData) used.add(oldBase);
+        return currenciesLackingRate(cm.getExchangeRates(), oldBase, newBase, used);
+    }
+
+    /** Pure core of {@link #currenciesLackingRateAfterSwitch}: which of {@code used} lack a rate to newBase. */
+    static java.util.Set<String> currenciesLackingRate(Map<String, Double> oldRates, String oldBase,
+                                                       String newBase, java.util.Collection<String> used) {
+        java.util.Set<String> lacking = new java.util.TreeSet<>();
+        if (newBase == null || newBase.equals(oldBase)) return lacking;
+        Map<String, Double> converted = CurrencyManager.convertRates(oldRates, oldBase, newBase);
+        for (String c : used) {
+            if (c == null || c.equals(newBase)) continue;
+            Double r = converted != null ? converted.get(c) : null;
+            if (r == null || r <= 0 || r.isNaN() || r.isInfinite()) lacking.add(c);
+        }
+        return lacking;
     }
 
     private void refreshCurrencyValue() {
@@ -288,6 +424,8 @@ public class SettingsController {
     private boolean persistAll() {
         try {
             state.saveExpenses();
+            // renameCategory also rewrites per-occurrence override categories.
+            state.saveRecurringOverrides();
             state.getStorage().saveBudgets(state.getBudgets());
             state.getStorage().saveCategorizationRules(state.getCategorizationRules().getRules());
             state.getStorage().saveCategories(state.getCategories());

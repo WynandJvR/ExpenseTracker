@@ -10,52 +10,103 @@
             fx:controller="com.wyn.expensetracker.ImportController"
             fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane"
             visible="false" managed="false">
-    <VBox spacing="16" styleClass="content-view">
-        <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
+    <VBox spacing="20" styleClass="content-view">
+        <padding><Insets top="28" right="32" bottom="28" left="32"/></padding>
 
-        <Label text="Import" styleClass="view-title"/>
+        <VBox spacing="4">
+            <Label text="Import" styleClass="view-title"/>
+            <Label text="Add your bank statements and everything else happens automatically: transactions are checked against the statement balances, transfers between your own accounts are set aside, and spending is categorised."
+                   styleClass="view-subtitle" wrapText="true"/>
+        </VBox>
 
-        <HBox spacing="16">
-            <VBox spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS">
-                <Label text="Scan Receipt" styleClass="section-title"/>
-                <Label text="Scan a receipt image (JPG, PNG, BMP, TIFF) to extract line items via OCR." styleClass="form-label" wrapText="true"/>
-                <Button text="Scan Receipt Image..." styleClass="success-button" onAction="#handleScanReceipt"/>
+        <!-- Drop zone -->
+        <StackPane fx:id="dropZone" styleClass="drop-zone" minHeight="170">
+            <VBox fx:id="dropIdle" spacing="10" alignment="CENTER">
+                <Region styleClass="drop-icon" minWidth="40" minHeight="40" maxWidth="40" maxHeight="40"/>
+                <Label text="Drop bank statements here" styleClass="drop-title"/>
+                <Label text="PDF, CSV, OFX or QIF · you can drop several at once" styleClass="drop-hint"/>
+                <Button text="Choose files…" styleClass="accent-button" onAction="#handleImportStatement"/>
             </VBox>
-            <VBox spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS">
-                <Label text="Import Bank Statement" styleClass="section-title"/>
-                <Label text="Import transactions from PDF, CSV, OFX, or QIF bank statements." styleClass="form-label" wrapText="true"/>
-                <Button text="Import Bank Statement..." styleClass="success-button" onAction="#handleImportStatement"/>
+            <VBox fx:id="dropBusy" spacing="10" alignment="CENTER" visible="false" managed="false">
+                <ProgressIndicator fx:id="busyIndicator" maxWidth="36" maxHeight="36"/>
+                <Label fx:id="busyLabel" text="Reading statements…" styleClass="drop-title"/>
             </VBox>
-            <VBox spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS">
-                <Label text="Import History" styleClass="section-title"/>
-                <Label text="View previous imports and their results." styleClass="form-label" wrapText="true"/>
-                <Button text="View Import History..." styleClass="primary-button" onAction="#handleShowImportHistory"/>
+        </StackPane>
+
+        <!-- Result of the last import -->
+        <VBox fx:id="resultBox" spacing="8" styleClass="card" visible="false" managed="false"/>
+
+        <!-- Watched folder -->
+        <HBox spacing="14" alignment="CENTER_LEFT" styleClass="card">
+            <Region styleClass="folder-icon" minWidth="28" minHeight="28" maxWidth="28" maxHeight="28"/>
+            <VBox spacing="2" HBox.hgrow="ALWAYS">
+                <Label text="Statements folder" styleClass="card-title"/>
+                <Label fx:id="folderLabel" text="Not set — pick the folder where you save your statements and new ones will be imported every time the app opens."
+                       styleClass="muted-text" wrapText="true"/>
             </VBox>
+            <Button fx:id="scanNowButton" text="Check now" styleClass="secondary-button" onAction="#handleScanNow"/>
+            <Button fx:id="chooseFolderButton" text="Choose folder…" styleClass="secondary-button" onAction="#handleChooseFolder"/>
+            <Button fx:id="clearFolderButton" text="Stop" styleClass="ghost-button" onAction="#handleClearFolder">
+                <tooltip><Tooltip text="Stop importing from this folder automatically"/></tooltip>
+            </Button>
         </HBox>
 
-        <!-- Auto-Categorization Rules -->
-        <VBox spacing="8" styleClass="panel-box">
-            <Label text="Auto-Categorization Rules" styleClass="section-title"/>
-            <Label text="Keywords matched against transaction descriptions to auto-assign categories." styleClass="form-label"/>
-            <TableView fx:id="rulesTable" styleClass="table-view" prefHeight="250">
+        <!-- Imported statements -->
+        <VBox spacing="10" styleClass="card">
+            <HBox alignment="CENTER_LEFT" spacing="10">
+                <Label text="Imported statements" styleClass="card-title"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button fx:id="deleteImportButton" text="Remove import" styleClass="ghost-danger-button" onAction="#handleDeleteImport"/>
+            </HBox>
+            <TableView fx:id="statementsTable" styleClass="table-view" prefHeight="260">
+                <columnResizePolicy><TableView fx:constant="CONSTRAINED_RESIZE_POLICY"/></columnResizePolicy>
                 <columns>
-                    <TableColumn text="Keyword" prefWidth="250">
-                        <cellValueFactory><PropertyValueFactory property="keyword"/></cellValueFactory>
-                    </TableColumn>
-                    <TableColumn text="Category" prefWidth="250">
-                        <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
-                    </TableColumn>
+                    <TableColumn fx:id="periodColumn" text="Period" prefWidth="190"/>
+                    <TableColumn fx:id="accountColumn" text="Account" prefWidth="170"/>
+                    <TableColumn fx:id="countColumn" text="Transactions" prefWidth="100"/>
+                    <TableColumn fx:id="checkColumn" text="Balance check" prefWidth="130"/>
+                    <TableColumn fx:id="closingColumn" text="Closing balance" prefWidth="130"/>
+                    <TableColumn fx:id="fileColumn" text="File" prefWidth="200"/>
                 </columns>
             </TableView>
-            <HBox spacing="10">
-                <Button text="Add Rule" styleClass="success-button" onAction="#handleAddRule"/>
-                <Button text="Remove Rule" styleClass="danger-button" onAction="#handleRemoveRule"/>
-                <Region HBox.hgrow="ALWAYS"/>
-                <Button text="Re-categorize" styleClass="primary-button" onAction="#handleRecategorize">
-                    <tooltip><Tooltip text="Re-run rules on all uncategorized expenses"/></tooltip>
-                </Button>
-            </HBox>
         </VBox>
-        <Label fx:id="importErrorLabel" styleClass="error-label"/>
+
+        <!-- Receipts -->
+        <HBox spacing="14" alignment="CENTER_LEFT" styleClass="card">
+            <VBox spacing="2" HBox.hgrow="ALWAYS">
+                <Label text="Receipts" styleClass="card-title"/>
+                <Label text="Photograph a till slip to add its line items (uses on-device text recognition)." styleClass="muted-text" wrapText="true"/>
+            </VBox>
+            <Button text="Scan receipt…" styleClass="secondary-button" onAction="#handleScanReceipt"/>
+        </HBox>
+
+        <!-- Rules -->
+        <TitledPane fx:id="rulesPane" text="Categorisation rules" expanded="false" styleClass="card-titled-pane">
+            <VBox spacing="10">
+                <Label text="Your rules override the built-in merchant list. They're learned automatically whenever you change a transaction's category, and you can add or remove them here."
+                       styleClass="muted-text" wrapText="true"/>
+                <TableView fx:id="rulesTable" styleClass="table-view" prefHeight="240">
+                    <columnResizePolicy><TableView fx:constant="CONSTRAINED_RESIZE_POLICY"/></columnResizePolicy>
+                    <columns>
+                        <TableColumn text="When the description contains" prefWidth="260">
+                            <cellValueFactory><PropertyValueFactory property="keyword"/></cellValueFactory>
+                        </TableColumn>
+                        <TableColumn text="Category" prefWidth="200">
+                            <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                        </TableColumn>
+                    </columns>
+                </TableView>
+                <HBox spacing="10">
+                    <Button text="Add rule…" styleClass="secondary-button" onAction="#handleAddRule"/>
+                    <Button text="Remove" styleClass="ghost-danger-button" onAction="#handleRemoveRule"/>
+                    <Region HBox.hgrow="ALWAYS"/>
+                    <Button text="Re-apply to uncategorised" styleClass="secondary-button" onAction="#handleRecategorize">
+                        <tooltip><Tooltip text="Run your rules and the built-in merchant list over every uncategorised transaction"/></tooltip>
+                    </Button>
+                </HBox>
+            </VBox>
+        </TitledPane>
+
+        <Label fx:id="importErrorLabel" styleClass="error-label" wrapText="true"/>
     </VBox>
 </ScrollPane>

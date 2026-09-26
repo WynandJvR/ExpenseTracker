@@ -12,13 +12,13 @@ public class GenericPdfParser implements BankStatementParser {
 
     // Common date patterns found in bank statements
     private static final DateTimeFormatter[] DATE_FORMATS = {
-        DateTimeFormatter.ofPattern("dd/MM/yyyy"),
-        DateTimeFormatter.ofPattern("yyyy-MM-dd"),
-        DateTimeFormatter.ofPattern("dd-MM-yyyy"),
-        DateTimeFormatter.ofPattern("MM/dd/yyyy"),
-        DateTimeFormatter.ofPattern("yyyy/MM/dd"),
-        DateTimeFormatter.ofPattern("dd MMM yyyy"),
-        DateTimeFormatter.ofPattern("dd MMMM yyyy"),
+        DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("dd-MM-yyyy", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("yyyy/MM/dd", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.ENGLISH),
     };
 
     // "DD Mon" without year (e.g. FNB-style: "27 Nov")
@@ -78,45 +78,160 @@ public class GenericPdfParser implements BankStatementParser {
 
     @Override
     public List<ImportItem> parse(String text) {
+        return parseStatement(text).getItems();
+    }
+
+    private static final Pattern SIGNED_AMOUNT = Pattern.compile(
+        "(?<![\\d.])(-?\\d{1,3}(?:[, ]\\d{3})*\\.\\d{2}|-?\\d+\\.\\d{2})\\s?(Cr|Dr|CR|DR|-)?(?![\\d])");
+    private static final Pattern OPENING = Pattern.compile(
+        "(?i)(?:opening|previous|brought forward)\\s+balance[^\\d-]*(-?[\\d, ]+\\.\\d{2})\\s?(Cr|Dr)?");
+    private static final Pattern CLOSING = Pattern.compile(
+        "(?i)(?:closing|current|carried forward)\\s+balance[^\\d-]*(-?[\\d, ]+\\.\\d{2})\\s?(Cr|Dr)?");
+
+    /**
+     * Reads "date … description … amount … balance" lines. When the statement prints a
+     * running balance, each line is checked against the previous one to decide whether
+     * money came in or went out (and to skip lines that don't move the balance);
+     * otherwise a minus sign, a "Cr"/"Dr" marker next to the amount, or wording decides.
+     */
+    public StatementParseResult parseStatement(String text) {
         List<ImportItem> items = new ArrayList<>();
+        StatementParseResult result = new StatementParseResult(getBankName(), items);
         int inferredYear = inferYear(text);
 
-        String[] lines = text.split("\\r?\\n");
-        for (String line : lines) {
-            line = line.trim();
-            if (line.isEmpty()) continue;
-            if (SKIP_LINE.matcher(line).find()) continue;
+        Matcher om = OPENING.matcher(text);
+        if (om.find()) result.setOpeningBalance(signedValue(om.group(1), om.group(2)));
+        Matcher cm = CLOSING.matcher(text);
+        Double closing = null;
+        while (cm.find()) closing = signedValue(cm.group(1), cm.group(2)); // last one wins
+        result.setClosingBalance(closing);
+
+        Double prevBalance = result.getOpeningBalance();
+        int memo = 0;
+        // Items whose date had no year of its own; their years are assigned at the end.
+        Set<ImportItem> yearless = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (String rawLine : text.split("\\r?\\n")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || SKIP_LINE.matcher(line).find()) continue;
 
             LocalDate date = extractDate(line, inferredYear);
             if (date == null) continue;
+            boolean hasYear = FULL_DATE.matcher(line).find();
 
-            List<Double> amounts = extractAmounts(line);
+            // Only look for amounts after the date so day/month digits aren't mistaken for money.
+            String afterDate = line;
+            Matcher dm = FULL_DATE.matcher(line);
+            if (dm.find()) {
+                afterDate = line.substring(dm.end());
+            } else {
+                Matcher sm = SHORT_DATE.matcher(line);
+                if (sm.find()) afterDate = line.substring(sm.end());
+            }
+
+            List<double[]> amounts = new ArrayList<>(); // {signedValue, hasExplicitMarker}
+            Matcher m = SIGNED_AMOUNT.matcher(afterDate);
+            while (m.find()) {
+                Double v = signedValue(m.group(1), m.group(2));
+                if (v != null && Math.abs(v) < 10_000_000) amounts.add(new double[]{v, m.group(2) != null || v < 0 ? 1 : 0});
+            }
             if (amounts.isEmpty()) continue;
 
-            boolean isCredit = CREDIT_INDICATOR.matcher(line).find();
-
-            // The first amount is typically the transaction amount
-            // If there are multiple, the last is usually the balance
-            double amount = amounts.get(0);
+            double first = amounts.get(0)[0];
+            double amount = Amounts.round2(Math.abs(first));
             if (amount <= 0) continue;
+            Double balance = amounts.size() >= 2 ? Amounts.round2(amounts.get(amounts.size() - 1)[0]) : null;
 
-            // Extract description: text between the date and the first amount
+            boolean credit;
+            if (amounts.get(0)[1] == 1) {
+                credit = first > 0;
+            } else {
+                credit = CREDIT_INDICATOR.matcher(line).find();
+            }
+            if (prevBalance != null && balance != null) {
+                if (Math.abs(prevBalance + amount - balance) < 0.005) credit = true;
+                else if (Math.abs(prevBalance - amount - balance) < 0.005) credit = false;
+                else if (Math.abs(prevBalance - balance) < 0.005) {
+                    memo++;
+                    continue;
+                }
+            }
+            if (balance != null) prevBalance = balance;
+
             String description = extractDescription(line);
-            if (description.isEmpty()) {
-                description = "Bank transaction";
-            }
-
+            if (description.isEmpty()) description = "Bank transaction";
             ImportItem item = new ImportItem(amount, description, date);
-            if (isCredit) {
-                item.setDescription("[CREDIT] " + description);
-                item.setIncome(true);
-                item.setSelected(false);
-            }
-            item.setStatus("Uncategorized");
+            item.setCredit(credit);
+            item.setBalance(balance);
             items.add(item);
+            if (!hasYear) yearless.add(item);
         }
+        result.setSkippedMemoLines(memo);
+        assignYears(yearless, statementEnd(text, yearless, inferredYear));
+        return result;
+    }
 
-        return items;
+    /**
+     * The date the statement runs up to. A full date printed anywhere (statement date,
+     * period end, dated lines) wins — the latest one that isn't in the future. Otherwise:
+     * the yearless "dd Mon" dates cover less than a year, so the biggest gap between them
+     * (going round the calendar) is where the period starts; the date just before that gap
+     * is the end, placed in the year from the header (and never after today).
+     */
+    static LocalDate statementEnd(String text, Collection<ImportItem> yearless, int inferredYear) {
+        LocalDate today = LocalDate.now();
+        LocalDate latest = null;
+        Matcher m = FULL_DATE.matcher(text);
+        while (m.find()) {
+            LocalDate d = parseFullDate(m.group(1));
+            if (d != null && !d.isAfter(today.plusDays(7)) && (latest == null || d.isAfter(latest))) latest = d;
+        }
+        if (latest != null) return latest;
+        if (yearless.isEmpty()) return today;
+
+        List<Integer> days = new ArrayList<>();
+        for (ImportItem i : yearless) days.add(i.getDate().getDayOfYear());
+        Collections.sort(days);
+        int endDay = days.get(days.size() - 1);
+        int biggestGap = 366 - days.get(days.size() - 1) + days.get(0); // wrap-around gap
+        for (int k = 1; k < days.size(); k++) {
+            int gap = days.get(k) - days.get(k - 1);
+            if (gap > biggestGap) {
+                biggestGap = gap;
+                endDay = days.get(k - 1);
+            }
+        }
+        LocalDate end = LocalDate.ofYearDay(inferredYear, Math.min(endDay, LocalDate.of(inferredYear, 12, 31).getDayOfYear()));
+        while (end.isAfter(today.plusDays(7))) end = end.minusYears(1);
+        return end;
+    }
+
+    /** Gives each yearless date the latest year that doesn't put it after the statement end. */
+    static void assignYears(Collection<ImportItem> yearless, LocalDate end) {
+        LocalDate limit = end.plusDays(7);
+        for (ImportItem i : yearless) {
+            LocalDate d = i.getDate();
+            LocalDate candidate = d.withYear(limit.getYear());
+            if (candidate.isAfter(limit)) candidate = candidate.minusYears(1);
+            i.setDate(candidate);
+        }
+    }
+
+    private static LocalDate parseFullDate(String s) {
+        for (DateTimeFormatter fmt : DATE_FORMATS) {
+            try {
+                return LocalDate.parse(s, fmt);
+            } catch (DateTimeParseException ignored) {
+                // try next
+            }
+        }
+        return null;
+    }
+
+    private static Double signedValue(String number, String marker) {
+        Double v = Amounts.parse(number.replace(" ", ""));
+        if (v == null) return null;
+        if (marker != null && (marker.equalsIgnoreCase("Dr") || marker.equals("-"))) v = -Math.abs(v);
+        return v;
     }
 
     private boolean hasDate(String line) {

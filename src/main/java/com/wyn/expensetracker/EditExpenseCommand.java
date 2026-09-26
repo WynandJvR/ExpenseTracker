@@ -18,6 +18,7 @@ public class EditExpenseCommand implements Command {
 
     @Override
     public void undo() {
-        manager.replaceExpense(newExpense, oldExpense);
+        // Restoring the original record: don't re-validate it (it may be legacy data).
+        manager.replaceExpenseUnchecked(newExpense, oldExpense);
     }
 }

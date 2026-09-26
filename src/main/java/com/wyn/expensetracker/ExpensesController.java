@@ -57,6 +57,19 @@ public class ExpensesController {
     @FXML private HBox detailBar;
     @FXML private TextField detailText;
     @FXML private Label expenseErrorLabel;
+    @FXML private Label viewSummaryLabel;
+    @FXML private Button toggleAddButton;
+    @FXML private ToggleButton scopeMonthToggle;
+    @FXML private ToggleButton scopeAllToggle;
+    @FXML private ComboBox<String> filterKindCombo;
+
+    private static final String KIND_ALL = "Everything";
+    private static final String KIND_SPEND = "Spending";
+    private static final String KIND_INCOME = "Income";
+    private static final String KIND_REFUND = "Refunds";
+    private static final String KIND_TRANSFER = "Transfers";
+    /** Descriptions too generic to learn a rule from. */
+    private static final Set<String> UNLEARNABLE = Set.of("card purchase", "bank charges", "bank transaction", "bank fee");
 
     // --- State ---
     private SharedState state;
@@ -116,25 +129,16 @@ public class ExpensesController {
                 @Override
                 protected void updateItem(Expense item, boolean empty) {
                     super.updateItem(item, empty);
-                    getStyleClass().removeAll("excluded-row", "income-row", "refund-row");
-                    if (empty || item == null) {
-                        setOpacity(1.0);
-                        setStyle("");
-                    } else if (item.isExcluded()) {
+                    getStyleClass().removeAll("excluded-row", "income-row", "refund-row", "uncategorized-row");
+                    if (empty || item == null) return;
+                    if (item.isExcluded()) {
                         getStyleClass().add("excluded-row");
-                        setOpacity(0.45);
-                        setStyle("");
                     } else if (item.isRefund()) {
                         getStyleClass().add("refund-row");
-                        setOpacity(1.0);
-                        setStyle("-fx-background-color: rgba(171, 71, 188, 0.12);");
                     } else if (item.isIncome()) {
                         getStyleClass().add("income-row");
-                        setOpacity(1.0);
-                        setStyle("-fx-background-color: rgba(76, 175, 80, 0.12);");
-                    } else {
-                        setOpacity(1.0);
-                        setStyle("");
+                    } else if (TransactionClassifier.UNCATEGORIZED.equals(item.getCategory())) {
+                        getStyleClass().add("uncategorized-row");
                     }
                 }
             };
@@ -171,11 +175,15 @@ public class ExpensesController {
                 Expense item = row.getItem();
                 if (item != null) {
                     boolean prev = item.isIncome();
+                    boolean prevRefund = item.isRefund();
                     item.setIncome(!prev);
+                    if (item.isIncome()) item.setRefund(false);
+                    state.invalidateSpendCache();
                     try {
                         state.saveExpenses();
                     } catch (IOException ex) {
                         item.setIncome(prev);
+                        item.setRefund(prevRefund);
                         showMsg("Failed to save: " + ex.getMessage(), true);
                     }
                     state.requestRefresh();
@@ -189,11 +197,13 @@ public class ExpensesController {
                     boolean prevRefund = item.isRefund();
                     boolean prevIncome = item.isIncome();
                     item.setRefund(!prevRefund);
-                    if (item.isRefund() && !item.isIncome()) {
-                        item.setIncome(true);
-                    } else if (!item.isRefund() && prevRefund) {
-                        item.setIncome(prevIncome && !prevRefund);
+                    // A refund is money back for a purchase: it nets against spend in its
+                    // category and is never income. Clear any legacy income flag either way
+                    // (older versions set income=true alongside refund).
+                    if (item.isRefund() || prevRefund) {
+                        item.setIncome(false);
                     }
+                    state.invalidateSpendCache();
                     try {
                         state.saveExpenses();
                     } catch (IOException ex) {
@@ -289,12 +299,20 @@ public class ExpensesController {
                 }
             });
 
+            MenuItem ownAccount = new MenuItem("This is one of my own accounts");
+            ownAccount.setOnAction(e -> {
+                Expense item = row.getItem();
+                if (item != null) markAsOwnAccount(item);
+            });
+
             menu.setOnShowing(e -> {
                 Expense item = row.getItem();
+                ownAccount.setVisible(item != null && !item.isExcluded() && item.getRecurringId() == null
+                        && learnableKeyword(item) != null);
                 if (item != null && item.isExcluded()) {
-                    toggleExclude.setText("Include in Analytics");
+                    toggleExclude.setText("Count in totals again");
                 } else {
-                    toggleExclude.setText("Exclude from Analytics");
+                    toggleExclude.setText("Leave out of totals");
                 }
                 if (item != null && item.isIncome()) {
                     toggleIncome.setText("Mark as Expense");
@@ -320,7 +338,7 @@ public class ExpensesController {
             });
 
             menu.getItems().addAll(copyItem, new SeparatorMenuItem(),
-                    toggleExclude, toggleIncome, toggleRefund,
+                    ownAccount, toggleExclude, toggleIncome, toggleRefund,
                     new SeparatorMenuItem(), manageTags,
                     occurrenceSeparator, editOccurrenceItem, skipOccurrenceItem, resetOccurrenceItem,
                     new SeparatorMenuItem(), attachReceiptItem, viewReceiptItem, removeReceiptItem,
@@ -351,6 +369,23 @@ public class ExpensesController {
             searchDebounce.setOnFinished(e -> updateFiltering());
             searchDebounce.playFromStart();
         });
+
+        // "This month" / "All time" scope
+        ToggleGroup scopeGroup = new ToggleGroup();
+        scopeMonthToggle.setToggleGroup(scopeGroup);
+        scopeAllToggle.setToggleGroup(scopeGroup);
+        scopeGroup.selectedToggleProperty().addListener((obs, oldT, newT) -> {
+            if (newT == null) {
+                if (oldT != null) oldT.setSelected(true); // keep one selected
+                return;
+            }
+            updateFiltering();
+        });
+
+        // Kind of transaction
+        filterKindCombo.setItems(FXCollections.observableArrayList(KIND_ALL, KIND_SPEND, KIND_INCOME, KIND_REFUND, KIND_TRANSFER));
+        filterKindCombo.setValue(KIND_ALL);
+        filterKindCombo.valueProperty().addListener((obs, oldVal, newVal) -> updateFiltering());
 
         // Filter category combo
         updateFilterCategoryCombo();
@@ -396,6 +431,16 @@ public class ExpensesController {
     public void refresh() {
         updateFilterCategoryCombo();
         updateFilterTagCombo();
+        // Only show the currency and tag columns once they carry information.
+        String base = state.getCurrencyManager().getBaseCurrency();
+        boolean foreign = false, tagged = false;
+        for (Expense e : state.getExpenseList()) {
+            if (e.getCurrency() != null && !e.getCurrency().equalsIgnoreCase(base)) foreign = true;
+            if (!e.getTags().isEmpty()) tagged = true;
+            if (foreign && tagged) break;
+        }
+        currencyColumn.setVisible(foreign);
+        tagsColumn.setVisible(tagged);
         updateFiltering();
     }
 
@@ -434,8 +479,18 @@ public class ExpensesController {
         final double fMin = minAmount;
         final double fMax = maxAmount;
 
+        boolean allTime = scopeAllToggle.isSelected();
+        String kind = filterKindCombo.getValue() == null ? KIND_ALL : filterKindCombo.getValue();
+
         state.getFilteredData().setPredicate(expense -> {
-            if (!YearMonth.from(expense.getDate()).equals(selectedYearMonth)) return false;
+            if (!allTime && !YearMonth.from(expense.getDate()).equals(selectedYearMonth)) return false;
+            switch (kind) {
+                case KIND_SPEND -> { if (!state.countsAsSpend(expense)) return false; }
+                case KIND_INCOME -> { if (!SharedState.isIncomeItem(expense)) return false; }
+                case KIND_REFUND -> { if (!expense.isRefund() || expense.isExcluded()) return false; }
+                case KIND_TRANSFER -> { if (!expense.isExcluded()) return false; }
+                default -> { }
+            }
             if (filterByCategory && !expense.getCategory().equals(selectedCategory)) return false;
             if (filterByTag && !expense.hasTag(selectedTag)) return false;
             if (expense.getAmount() < fMin || expense.getAmount() > fMax) return false;
@@ -449,13 +504,17 @@ public class ExpensesController {
                     matchesTags;
         });
 
+        updateViewSummary(allTime ? "All time" : selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH) + " " + selectedYear);
+
         // Update empty state message dynamically
         if (state.getFilteredData().isEmpty()) {
             String message;
-            if (lowerCaseFilter != null) {
-                message = "No expenses match your search.";
+            if (lowerCaseFilter != null || filterByCategory || !KIND_ALL.equals(kind)) {
+                message = "Nothing matches these filters.";
+            } else if (allTime) {
+                message = "No transactions yet — import a bank statement to get started.";
             } else {
-                message = String.format("No expenses recorded for %s %d.",
+                message = String.format("No transactions in %s %d.",
                         selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear);
             }
             Label placeholder = new Label(message);
@@ -501,12 +560,192 @@ public class ExpensesController {
     private void setupEmptyState() {
         VBox expenseEmptyState = new VBox(6);
         expenseEmptyState.setAlignment(Pos.CENTER);
-        Label expenseMsg = new Label("No expenses for this period.");
+        Label expenseMsg = new Label("No transactions for this period.");
         expenseMsg.getStyleClass().add("empty-state-label");
-        Label expenseHint = new Label("Press Ctrl+N to add one, or import from the Import tab.");
+        Label expenseHint = new Label("Import a bank statement, or press Ctrl+N to add one by hand.");
         expenseHint.getStyleClass().add("empty-state-hint");
         expenseEmptyState.getChildren().addAll(expenseMsg, expenseHint);
         expenseTable.setPlaceholder(expenseEmptyState);
+    }
+
+    /** One line describing what's on screen: count, money in and money out. */
+    private void updateViewSummary(String scopeLabel) {
+        if (viewSummaryLabel == null) return;
+        int count = state.getFilteredData().size();
+        double out = 0, in = 0;
+        for (Expense e : state.getFilteredData()) {
+            // Same rules as the Overview: transfers and bills already covered by an import don't count.
+            if (e.isExcluded() || (e.getRecurringId() != null && state.getRecurringCoverage().coveredRecurringIds.contains(e.getRecurringId()))) continue;
+            if (SharedState.isIncomeItem(e)) in += state.toBase(e);
+            else out += state.spendContribution(e);
+        }
+        viewSummaryLabel.setText(String.format("%s · %d transaction%s · in %s · out %s",
+            scopeLabel, count, count == 1 ? "" : "s", fmt(in), fmt(out)));
+    }
+
+    /** Opens every uncategorised transaction, across all months (used by "Sort them"). */
+    public void showUncategorized() {
+        showCategoryAllTime(TransactionClassifier.UNCATEGORIZED);
+    }
+
+    /** Opens every transaction in {@code category}, across all months. */
+    public void showCategoryAllTime(String category) {
+        suppressFilterListener = true;
+        try {
+            searchField.clear();
+            filterKindCombo.setValue(KIND_ALL);
+            if (!filterCategoryCombo.getItems().contains(category)) {
+                filterCategoryCombo.getItems().add(category);
+            }
+            filterCategoryCombo.setValue(category);
+            scopeAllToggle.setSelected(true);
+        } finally {
+            suppressFilterListener = false;
+        }
+        updateFiltering();
+        // Group repeat merchants together so one change sorts the whole group.
+        descriptionColumn.setSortType(TableColumn.SortType.ASCENDING);
+        expenseTable.getSortOrder().setAll(List.of(descriptionColumn));
+        showMsg("Double-click a category to change it — similar transactions follow automatically.", false);
+    }
+
+    @FXML
+    private void handleToggleAddForm() {
+        boolean show = !addExpensePane.isVisible();
+        addExpensePane.setVisible(show);
+        addExpensePane.setManaged(show);
+        addExpensePane.setExpanded(show);
+        toggleAddButton.setText(show ? "Close" : "+ Add transaction");
+        if (show) amountField.requestFocus();
+    }
+
+    /**
+     * After the user changes a transaction's category: remember it as a rule and move
+     * similar transactions (same merchant/payee, still on the old or no category) too.
+     * Returns how many other transactions were moved, or -1 when nothing could be learned
+     * (e.g. a bare "Card purchase"). One Ctrl+Z undoes the rule and the moves.
+     */
+    private int learnFromCategoryChange(Expense edited, String oldCategory, String newCategory) {
+        if (edited.getRecurringId() != null || newCategory.equals(oldCategory)) return -1;
+        String keyword = learnableKeyword(edited);
+        if (keyword == null) return -1;
+
+        CategorizationRules rules = new CategorizationRules();
+        rules.addRule(keyword, newCategory); // just this rule, to find what it would match
+        // Moving to Transfers says "this is my own account": money both in and out, whatever
+        // category it had. Other categories only move same-direction rows that were on the
+        // old category or uncategorised.
+        boolean ownAccount = TransactionClassifier.TRANSFERS.equals(newCategory);
+        List<Expense> similar = new ArrayList<>();
+        for (Expense e : state.getManager().getExpenses()) {
+            if (e == edited || e.getRecurringId() != null || e.isExcluded()) continue;
+            if (!ownAccount) {
+                if (e.isIncome() != edited.isIncome()) continue;
+                String cat = e.getCategory();
+                if (!oldCategory.equals(cat) && !TransactionClassifier.UNCATEGORIZED.equals(cat)) continue;
+            }
+            if (newCategory.equals(rules.categorize(e.getDescription()))) similar.add(e);
+        }
+        return teach(keyword, newCategory, similar) ? similar.size() : -1;
+    }
+
+    /** The keyword a rule would be learned from, or null for generic descriptions. */
+    private static String learnableKeyword(Expense e) {
+        String keyword = CategorizationRules.keywordFor(e.getDescription());
+        return keyword == null || UNLEARNABLE.contains(keyword.toLowerCase()) ? null : keyword;
+    }
+
+    /**
+     * The user says this payee/description is one of their own accounts (e.g. a savings
+     * account or their credit card): every matching transaction becomes a transfer, left
+     * out of spending and income, and future imports are treated the same way.
+     */
+    private void markAsOwnAccount(Expense item) {
+        String keyword = learnableKeyword(item);
+        if (keyword == null) return;
+        CategorizationRules rules = new CategorizationRules();
+        rules.addRule(keyword, TransactionClassifier.TRANSFERS);
+        List<Expense> matches = new ArrayList<>();
+        for (Expense e : state.getManager().getExpenses()) {
+            if (e.getRecurringId() != null || e.isExcluded()) continue;
+            if (e == item || TransactionClassifier.TRANSFERS.equals(rules.categorize(e.getDescription()))) matches.add(e);
+        }
+        if (teach(keyword, TransactionClassifier.TRANSFERS, matches)) {
+            state.requestRefresh();
+            Toast.show(matches.size() + " transaction" + (matches.size() == 1 ? "" : "s") + " with \"" + keyword
+                + "\" now count as transfers between your accounts");
+        }
+    }
+
+    /**
+     * One undoable step: add the rule keyword → category (replacing any older rule for that
+     * keyword) and move {@code rows} to the category. Moving to Transfers also takes the rows
+     * out of the totals. Undo restores the previous rule and every row. Returns false if saving failed.
+     */
+    private boolean teach(String keyword, String category, List<Expense> rows) {
+        CategorizationRules rules = state.getCategorizationRules();
+        String previousRuleKey = null, previousRuleCategory = null;
+        for (Map.Entry<String, String> r : rules.getRules().entrySet()) {
+            if (r.getKey().equalsIgnoreCase(keyword)) {
+                previousRuleKey = r.getKey();
+                previousRuleCategory = r.getValue();
+            }
+        }
+        final String prevKey = previousRuleKey, prevCat = previousRuleCategory;
+        boolean toTransfers = TransactionClassifier.TRANSFERS.equals(category);
+        Map<Expense, String> prevCategory = new IdentityHashMap<>();
+        Map<Expense, boolean[]> prevFlags = new IdentityHashMap<>();
+        for (Expense e : rows) {
+            prevCategory.put(e, e.getCategory());
+            prevFlags.put(e, new boolean[]{e.isExcluded(), e.isIncome(), e.isRefund()});
+        }
+        if (!state.getCategories().contains(category)) state.getCategories().add(category);
+
+        state.getManager().executeCommand(new Command() {
+            @Override public void execute() {
+                rules.addRule(keyword, category);
+                for (Expense e : rows) {
+                    e.setCategory(category);
+                    if (toTransfers) {
+                        e.setExcluded(true);
+                        e.setIncome(false);
+                        e.setRefund(false);
+                    }
+                }
+                saveRulesQuietly();
+                state.invalidateSpendCache();
+            }
+            @Override public void undo() {
+                rules.removeRule(keyword);
+                if (prevKey != null) rules.addRule(prevKey, prevCat);
+                for (Expense e : rows) {
+                    e.setCategory(prevCategory.get(e));
+                    boolean[] f = prevFlags.get(e);
+                    e.setExcluded(f[0]);
+                    e.setIncome(f[1]);
+                    e.setRefund(f[2]);
+                }
+                saveRulesQuietly();
+                state.invalidateSpendCache();
+            }
+        });
+        try {
+            state.saveExpenses();
+            state.getStorage().saveCategories(state.getCategories());
+        } catch (IOException ex) {
+            state.getManager().rollbackLastCommand();
+            showMsg("Couldn't save: " + ex.getMessage(), true);
+            return false;
+        }
+        return true;
+    }
+
+    private void saveRulesQuietly() {
+        try {
+            state.getStorage().saveCategorizationRules(state.getCategorizationRules().getRules());
+        } catch (IOException ex) {
+            System.err.println("Failed to save rules: " + ex.getMessage());
+        }
     }
 
     // ======================== FXML HANDLERS ========================
@@ -608,11 +847,13 @@ public class ExpensesController {
         boolean showing = filterFieldsBox.isVisible();
         filterFieldsBox.setVisible(!showing);
         filterFieldsBox.setManaged(!showing);
-        filterToggleButton.setText(showing ? "Filters" : "Hide Filters");
+        filterToggleButton.setText(showing ? "More" : "Less");
     }
 
     @FXML
     private void handleClearFilters() {
+        filterKindCombo.setValue(KIND_ALL);
+        scopeMonthToggle.setSelected(true);
         filterCategoryCombo.setValue("All Categories");
         filterTagCombo.setValue("All Tags");
         filterMinAmount.clear();
@@ -620,7 +861,7 @@ public class ExpensesController {
         searchField.clear();
         filterFieldsBox.setVisible(false);
         filterFieldsBox.setManaged(false);
-        filterToggleButton.setText("Filters");
+        filterToggleButton.setText("More");
     }
 
     @FXML
@@ -927,7 +1168,23 @@ public class ExpensesController {
                     updated.setTags(old.getTags());
                     updated.setCurrency(old.getCurrency());
                     updated.setReceiptPath(old.getReceiptPath());
+                    if (TransactionClassifier.TRANSFERS.equals(newCategory)) {
+                        // A transfer between your own accounts is neither spending nor income.
+                        updated.setExcluded(true);
+                        updated.setIncome(false);
+                        updated.setRefund(false);
+                    }
+                    String oldCategory = old.getCategory();
                     handleInlineEdit(old, updated);
+                    if (state.getManager().getExpenses().contains(updated)) {
+                        int moved = learnFromCategoryChange(updated, oldCategory, newCategory);
+                        state.requestRefresh();
+                        if (moved > 0) {
+                            Toast.show("Moved " + moved + " similar transaction" + (moved == 1 ? "" : "s") + " to " + newCategory + " too");
+                        } else if (moved == 0) {
+                            Toast.show("Saved — future imports will use " + newCategory);
+                        }
+                    }
                 } catch (Exception ex) {
                     System.err.println("Error in category commitInlineEdit: " + ex.getMessage());
                     cancelInlineEdit();
@@ -1471,7 +1728,7 @@ public class ExpensesController {
     // ======================== PUBLIC HELPERS ========================
 
     public void focusAddForm() {
-        addExpensePane.setExpanded(true);
+        if (!addExpensePane.isVisible()) handleToggleAddForm();
         Platform.runLater(() -> amountField.requestFocus());
     }
 

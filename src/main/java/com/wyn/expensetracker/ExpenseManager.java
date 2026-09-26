@@ -35,10 +35,15 @@ public class ExpenseManager {
         redoStack.clear();
     }
 
+    /**
+     * Undoes the most recent command. The command only leaves the undo stack once its
+     * undo() succeeds, so a failure (exception propagates) leaves history intact.
+     */
     public void undo() {
         if (!undoStack.isEmpty()) {
-            Command command = undoStack.pop();
+            Command command = undoStack.peek();
             command.undo();
+            undoStack.pop();
             redoStack.push(command);
         }
     }
@@ -51,15 +56,18 @@ public class ExpenseManager {
      */
     public void rollbackLastCommand() {
         if (!undoStack.isEmpty()) {
-            Command command = undoStack.pop();
+            Command command = undoStack.peek();
             command.undo();
+            undoStack.pop();
         }
     }
 
+    /** Re-applies the most recently undone command; it stays on the redo stack if execute() throws. */
     public void redo() {
         if (!redoStack.isEmpty()) {
-            Command command = redoStack.pop();
+            Command command = redoStack.peek();
             command.execute();
+            redoStack.pop();
             undoStack.push(command);
         }
     }
@@ -123,6 +131,16 @@ public class ExpenseManager {
 
     public void addExpense(Expense expense) {
         validateExpense(expense);
+        addExpenseUnchecked(expense);
+    }
+
+    /**
+     * Adds without re-validating. For undo paths only: the expense was already in the
+     * ledger (possibly loaded from disk, where legacy data may not meet today's input
+     * rules), so rejecting it now would make the undo fail and lose the record.
+     */
+    void addExpenseUnchecked(Expense expense) {
+        if (expense == null) throw new IllegalArgumentException("Expense cannot be null");
         if (expense instanceof RecurringExpense) {
             baseRecurringExpenses.add((RecurringExpense) expense);
             regenerateExpenses();
@@ -131,11 +149,48 @@ public class ExpenseManager {
         }
     }
 
+    /**
+     * Atomic bulk add: validates every expense first and only then adds them, so a
+     * validation failure leaves the ledger untouched (no partial import).
+     */
+    public void addExpenses(List<Expense> list) {
+        if (list == null || list.isEmpty()) return;
+        for (int i = 0; i < list.size(); i++) {
+            try {
+                validateExpense(list.get(i));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                    (list.size() > 1 ? "Item " + (i + 1) + " of " + list.size() + ": " : "") + e.getMessage(), e);
+            }
+        }
+        boolean anyRecurring = false;
+        for (Expense expense : list) {
+            if (expense instanceof RecurringExpense rec) {
+                baseRecurringExpenses.add(rec);
+                anyRecurring = true;
+            } else {
+                expenses.add(expense);
+            }
+        }
+        if (anyRecurring) regenerateExpenses();
+    }
+
     public void replaceExpense(Expense oldExpense, Expense newExpense) {
         if (oldExpense == null || newExpense == null) {
             throw new IllegalArgumentException("Expenses cannot be null");
         }
         validateExpense(newExpense);
+        replaceExpenseUnchecked(oldExpense, newExpense);
+    }
+
+    /**
+     * Replace without validating {@code newExpense}. For undo paths only, where
+     * {@code newExpense} is the original record being restored (see {@link #addExpenseUnchecked}).
+     */
+    void replaceExpenseUnchecked(Expense oldExpense, Expense newExpense) {
+        if (oldExpense == null || newExpense == null) {
+            throw new IllegalArgumentException("Expenses cannot be null");
+        }
         // Editing a generated recurring instance would be wiped on the next
         // regenerateExpenses() pass — route the user to the Recurring tab instead.
         if (oldExpense.getRecurringId() != null) {
@@ -147,7 +202,7 @@ public class ExpenseManager {
                 throw new IllegalArgumentException(
                     "Replacement for a RecurringExpense must also be a RecurringExpense");
             }
-            updateRecurringExpense(oldRec, newRec);
+            updateRecurringExpenseUnchecked(oldRec, newRec);
             return;
         }
         int index = expenses.indexOf(oldExpense);
@@ -167,6 +222,11 @@ public class ExpenseManager {
 
     public void updateRecurringExpense(RecurringExpense oldExpense, RecurringExpense newExpense) {
         validateExpense(newExpense);
+        updateRecurringExpenseUnchecked(oldExpense, newExpense);
+    }
+
+    /** Template swap without validation — undo paths only (see {@link #addExpenseUnchecked}). */
+    void updateRecurringExpenseUnchecked(RecurringExpense oldExpense, RecurringExpense newExpense) {
         int index = baseRecurringExpenses.indexOf(oldExpense);
         if (index != -1) {
             // Preserve the series identity so per-occurrence overrides stay attached.
@@ -208,14 +268,32 @@ public class ExpenseManager {
                 r.setCategory(newCategory);
             }
         }
+        // Per-occurrence overrides carry their own category; left alone they would
+        // resurrect the old name on the next regeneration.
+        for (OccurrenceOverride o : occurrenceOverrides.values()) {
+            if (oldCategory.equals(o.getCategory())) {
+                o.setCategory(newCategory);
+            }
+        }
         return updated;
     }
 
-    /** Snapshots every expense/template's current category (by object identity), for rollback. */
+    /** Category snapshot that also remembers per-occurrence override categories (by key). */
+    private static final class CategorySnapshot extends IdentityHashMap<Expense, String> {
+        final Map<String, String> overrideCategories = new HashMap<>();
+    }
+
+    /**
+     * Snapshots every expense/template's current category (by object identity), plus the
+     * category of every per-occurrence override, for rollback via {@link #restoreCategories}.
+     */
     public Map<Expense, String> snapshotCategories() {
-        Map<Expense, String> snapshot = new IdentityHashMap<>();
+        CategorySnapshot snapshot = new CategorySnapshot();
         for (Expense e : expenses) snapshot.put(e, e.getCategory());
         for (RecurringExpense r : baseRecurringExpenses) snapshot.put(r, r.getCategory());
+        for (OccurrenceOverride o : occurrenceOverrides.values()) {
+            snapshot.overrideCategories.put(o.key(), o.getCategory());
+        }
         return snapshot;
     }
 
@@ -224,6 +302,31 @@ public class ExpenseManager {
         for (Map.Entry<Expense, String> entry : snapshot.entrySet()) {
             entry.getKey().setCategory(entry.getValue());
         }
+        if (snapshot instanceof CategorySnapshot cs) {
+            for (Map.Entry<String, String> entry : cs.overrideCategories.entrySet()) {
+                OccurrenceOverride o = occurrenceOverrides.get(entry.getKey());
+                if (o != null) o.setCategory(entry.getValue());
+            }
+        }
+    }
+
+    /**
+     * Sets {@code currencyCode} on every expense and recurring template (including generated
+     * occurrences) whose currency is null, i.e. "the base currency". Call this with the OLD
+     * base before changing the base currency so those records keep their meaning.
+     * Returns the records that were changed, so a failed save can be rolled back by
+     * setting their currency back to null.
+     */
+    public List<Expense> stampMissingCurrency(String currencyCode) {
+        List<Expense> stamped = new ArrayList<>();
+        if (currencyCode == null || currencyCode.isBlank()) return stamped;
+        for (RecurringExpense r : baseRecurringExpenses) {
+            if (r.getCurrency() == null) { r.setCurrency(currencyCode); stamped.add(r); }
+        }
+        for (Expense e : expenses) {
+            if (e.getCurrency() == null) { e.setCurrency(currencyCode); stamped.add(e); }
+        }
+        return stamped;
     }
 
     public List<Expense> getExpensesForSave() {
@@ -275,6 +378,7 @@ public class ExpenseManager {
                     if (recurringExpense.isRefund()) generated.setRefund(true);
                     if (recurringExpense.isExcluded()) generated.setExcluded(true);
                     if (recurringExpense.getCurrency() != null) generated.setCurrency(recurringExpense.getCurrency());
+                    generated.setTags(recurringExpense.getTags());
                     generatedExpenses.add(generated);
                     generatedRecurringIds.add(recurringId);
                 }
@@ -301,6 +405,41 @@ public class ExpenseManager {
     /** Live overrides, for persistence. */
     public List<OccurrenceOverride> getOverrides() {
         return new ArrayList<>(occurrenceOverrides.values());
+    }
+
+    /**
+     * Copies of the overrides belonging to one recurring series. Used to snapshot a
+     * series' overrides before deleting it (deletion prunes them) so undo can restore them.
+     */
+    public List<OccurrenceOverride> getOverridesFor(String templateId) {
+        List<OccurrenceOverride> result = new ArrayList<>();
+        if (templateId == null) return result;
+        for (OccurrenceOverride o : occurrenceOverrides.values()) {
+            if (templateId.equals(o.getTemplateId())) result.add(copyOf(o));
+        }
+        return result;
+    }
+
+    /**
+     * Re-installs previously snapshotted overrides (e.g. on undo of a series delete) and
+     * regenerates occurrences. Overrides whose series doesn't exist are pruned as usual,
+     * so call this after the owning template is back in the ledger.
+     */
+    public void restoreOverrides(Collection<OccurrenceOverride> overrides) {
+        if (overrides == null || overrides.isEmpty()) return;
+        for (OccurrenceOverride o : overrides) {
+            if (o != null && !o.isEmpty()) occurrenceOverrides.put(o.key(), copyOf(o));
+        }
+        regenerateExpenses();
+    }
+
+    private static OccurrenceOverride copyOf(OccurrenceOverride o) {
+        OccurrenceOverride c = new OccurrenceOverride(o.getTemplateId(), o.getDate());
+        c.setSkipped(o.isSkipped());
+        c.setAmount(o.getAmount());
+        c.setCategory(o.getCategory());
+        c.setDescription(o.getDescription());
+        return c;
     }
 
     private RecurringExpense sourceTemplateOf(Expense instance) {
@@ -402,6 +541,7 @@ public class ExpenseManager {
                     if (rec.isRefund()) e.setRefund(true);
                     if (rec.isExcluded()) e.setExcluded(true);
                     if (rec.getCurrency() != null) e.setCurrency(rec.getCurrency());
+                    e.setTags(rec.getTags());
                     result.add(e);
                 }
                 cur = getNextRecurringDate(rec, cur);
@@ -409,16 +549,6 @@ public class ExpenseManager {
         }
         result.sort(java.util.Comparator.comparing(Expense::getDate));
         return result;
-    }
-
-    public double getTotalByCategory(String category) {
-        if (category == null) {
-            return 0.0;
-        }
-        return expenses.stream()
-            .filter(e -> e.getCategory().equalsIgnoreCase(category))
-            .mapToDouble(Expense::getAmount)
-            .sum();
     }
 
     private void regenerateExpenses() {

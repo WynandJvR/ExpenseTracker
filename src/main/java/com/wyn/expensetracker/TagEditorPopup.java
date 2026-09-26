@@ -94,11 +94,9 @@ public class TagEditorPopup {
 
         boolean isSelected = selectedTags.contains(tag);
         Label label = new Label(tag);
-        label.setStyle("-fx-text-fill: " + (isSelected ? "#FFFFFF" : "#9FA8DA") + "; -fx-font-size: 12px;");
-
-        chip.setStyle(isSelected
-            ? "-fx-background-color: #5C6BC0; -fx-padding: 5 12; -fx-background-radius: 16; -fx-cursor: hand;"
-            : "-fx-background-color: rgba(92, 107, 192, 0.15); -fx-padding: 5 12; -fx-background-radius: 16; -fx-border-color: rgba(92, 107, 192, 0.3); -fx-border-radius: 16; -fx-border-width: 1; -fx-cursor: hand;");
+        label.getStyleClass().add("tag-chip-label");
+        chip.getStyleClass().add("tag-chip");
+        setChipSelected(chip, isSelected);
 
         chip.getChildren().add(label);
         chip.setOnMouseClicked(e -> {
@@ -117,14 +115,14 @@ public class TagEditorPopup {
     private void refreshChips(FlowPane tagFlow) {
         for (javafx.scene.Node node : tagFlow.getChildren()) {
             if (node instanceof HBox chip && chip.getUserData() instanceof String tag) {
-                boolean isSelected = selectedTags.contains(tag);
-                Label label = (Label) chip.getChildren().get(0);
-                label.setStyle("-fx-text-fill: " + (isSelected ? "#FFFFFF" : "#9FA8DA") + "; -fx-font-size: 12px;");
-                chip.setStyle(isSelected
-                    ? "-fx-background-color: #5C6BC0; -fx-padding: 5 12; -fx-background-radius: 16; -fx-cursor: hand;"
-                    : "-fx-background-color: rgba(92, 107, 192, 0.15); -fx-padding: 5 12; -fx-background-radius: 16; -fx-border-color: rgba(92, 107, 192, 0.3); -fx-border-radius: 16; -fx-border-width: 1; -fx-cursor: hand;");
+                setChipSelected(chip, selectedTags.contains(tag));
             }
         }
+    }
+
+    private static void setChipSelected(HBox chip, boolean selected) {
+        chip.getStyleClass().remove("tag-chip-selected");
+        if (selected) chip.getStyleClass().add("tag-chip-selected");
     }
 
     public Set<String> showAndWait() {

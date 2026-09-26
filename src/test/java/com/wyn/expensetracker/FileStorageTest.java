@@ -477,17 +477,6 @@ class FileStorageTest {
     // ======================== SETTINGS (currency, recurring income) ========================
 
     @Test
-    void saveAndLoadCurrencySymbol() throws IOException {
-        storage.saveCurrencySymbol("$");
-        assertEquals("$", storage.loadCurrencySymbol());
-    }
-
-    @Test
-    void loadCurrencySymbolDefaultsToR() {
-        assertEquals("R", storage.loadCurrencySymbol());
-    }
-
-    @Test
     void saveAndLoadRecurringIncome() throws IOException {
         storage.saveRecurringIncome(15000.50);
         assertEquals(15000.50, storage.loadRecurringIncome(), 0.001);
@@ -500,10 +489,10 @@ class FileStorageTest {
 
     @Test
     void multipleSettingsCoexist() throws IOException {
-        storage.saveCurrencySymbol("€");
+        storage.saveBaseCurrency("EUR");
         storage.saveRecurringIncome(8000.0);
 
-        assertEquals("€", storage.loadCurrencySymbol());
+        assertEquals("EUR", storage.loadBaseCurrency());
         assertEquals(8000.0, storage.loadRecurringIncome(), 0.001);
     }
 
@@ -598,7 +587,7 @@ class FileStorageTest {
         storage.saveImportLogs(List.of(
             new ImportLog("ID1", LocalDateTime.now(), "f.pdf", "PDF", 3)
         ));
-        storage.saveCurrencySymbol("$");
+        storage.saveBaseCurrency("USD");
         storage.saveRecurringIncome(10000.0);
 
         assertEquals(1, storage.loadExpenses().size());
@@ -607,7 +596,7 @@ class FileStorageTest {
         assertEquals(1, storage.loadBudgets().size());
         assertEquals(1, storage.loadCategorizationRules().size());
         assertEquals(1, storage.loadImportLogs().size());
-        assertEquals("$", storage.loadCurrencySymbol());
+        assertEquals("USD", storage.loadBaseCurrency());
         assertEquals(10000.0, storage.loadRecurringIncome(), 0.001);
     }
 

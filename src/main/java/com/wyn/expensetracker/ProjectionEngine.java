@@ -16,10 +16,21 @@ public class ProjectionEngine {
         public final double recurringIncome;
         public final Map<String, Double> budgets;
         public final CurrencyManager currencyManager;
+        /** Skip/edit overrides for recurring occurrences (applied to projected months). */
+        public final List<OccurrenceOverride> overrides;
 
         public ProjectionInput(List<Expense> allExpenses, List<RecurringExpense> recurringExpenses,
                                Map<YearMonth, Double> incomes, double recurringIncome,
                                Map<String, Double> budgets, CurrencyManager currencyManager) {
+            this(allExpenses, recurringExpenses, incomes, recurringIncome, budgets, currencyManager,
+                 Collections.emptyList());
+        }
+
+        public ProjectionInput(List<Expense> allExpenses, List<RecurringExpense> recurringExpenses,
+                               Map<YearMonth, Double> incomes, double recurringIncome,
+                               Map<String, Double> budgets, CurrencyManager currencyManager,
+                               Collection<OccurrenceOverride> overrides) {
+            this.overrides = overrides != null ? new ArrayList<>(overrides) : new ArrayList<>();
             this.allExpenses = new ArrayList<>(allExpenses);
             this.recurringExpenses = new ArrayList<>(recurringExpenses);
             this.incomes = new HashMap<>(incomes);
@@ -41,6 +52,12 @@ public class ProjectionEngine {
         public Map<String, Double> categoryBreakdown = new LinkedHashMap<>();
         public Map<String, Double> categoryRecurring = new LinkedHashMap<>();
         public Map<String, Double> categoryVariable = new LinkedHashMap<>();
+        /**
+         * Variable spend per category before leftover recurring refunds are netted in.
+         * The Overview adds the refund occurrences itself and clamps per month x category,
+         * so it must start from this gross figure to avoid subtracting the refund twice.
+         */
+        public Map<String, Double> categoryVariableGross = new LinkedHashMap<>();
 
         public MonthProjection(YearMonth month) {
             this.month = month;
@@ -71,47 +88,80 @@ public class ProjectionEngine {
     }
 
     public ProjectionResult project(ProjectionInput input) {
-        YearMonth now = YearMonth.now();
+        return project(input, YearMonth.now());
+    }
+
+    /** Signed spend contribution: +amount for spend, -amount for a refund, 0 otherwise. */
+    private static double signedSpend(Expense e, CurrencyManager cm) {
+        if (e.isExcluded()) return 0;
+        if (e.isRefund()) return -toBase(e, cm);
+        if (e.isIncome()) return 0;
+        return toBase(e, cm);
+    }
+
+    /**
+     * Projection reusing an already-computed coverage of {@code input.allExpenses} (e.g.
+     * {@link SharedState#getRecurringCoverage()}), so the matching is not redone.
+     */
+    public ProjectionResult project(ProjectionInput input, SharedState.RecurringCoverage coverage) {
+        return project(input, YearMonth.now(), coverage);
+    }
+
+    /** Projection relative to an explicit "current month" (package-visible for tests). */
+    ProjectionResult project(ProjectionInput input, YearMonth now) {
+        return project(input, now, null);
+    }
+
+    /**
+     * @param precomputed coverage of {@code input.allExpenses}; null computes it here
+     */
+    ProjectionResult project(ProjectionInput input, YearMonth now, SharedState.RecurringCoverage precomputed) {
         CurrencyManager cm = input.currencyManager;
 
-        // Separate actual (non-excluded, non-income, non-refund) expenses
-        List<Expense> actualExpenses = input.allExpenses.stream()
-                .filter(e -> !e.isExcluded() && !e.isIncome() && !e.isRefund())
+        // One-to-one coverage of generated recurring occurrences by imported transactions.
+        SharedState.RecurringCoverage coverage = precomputed != null ? precomputed
+                : SharedState.computeRecurringCoverage(input.allExpenses, cm);
+
+        // Spend-relevant items: spend (minus covered recurring occurrences) and refunds.
+        List<Expense> spendItems = input.allExpenses.stream()
+                .filter(e -> !e.isExcluded())
+                .filter(e -> e.isRefund() || !e.isIncome())
+                .filter(e -> e.getRecurringId() == null
+                        || !coverage.coveredRecurringIds.contains(e.getRecurringId()))
                 .collect(Collectors.toList());
 
-        // Variable expenses = actual expenses that are NOT generated from recurring
-        List<Expense> variableExpenses = actualExpenses.stream()
+        // Variable expenses = spend not generated from recurring and not an import that
+        // stands in for a recurring occurrence (those are projected via Algorithm 1).
+        List<Expense> variableExpenses = spendItems.stream()
                 .filter(e -> e.getRecurringId() == null)
+                .filter(e -> !coverage.coveringImports.contains(e))
                 .collect(Collectors.toList());
 
-        // Monthly totals for variable expenses (for trend & seasonal)
-        Map<YearMonth, Double> monthlyVariableTotals = variableExpenses.stream()
-                .collect(Collectors.groupingBy(
-                        e -> YearMonth.from(e.getDate()),
-                        Collectors.summingDouble(e -> toBase(e, cm))));
+        // Variable spend net of refunds, clamped at month x category (the app-wide rule);
+        // monthly totals are the sum of the clamped cells.
+        Map<YearMonth, Map<String, Double>> variableCells =
+                SharedState.clampedSpendCells(variableExpenses, e -> signedSpend(e, cm));
+        Map<YearMonth, Double> monthlyVariableTotals = new HashMap<>();
+        Map<String, Map<YearMonth, Double>> categoryMonthlyVariable = new HashMap<>();
+        variableCells.forEach((ym, cats) -> cats.forEach((cat, v) -> {
+            monthlyVariableTotals.merge(ym, v, Double::sum);
+            categoryMonthlyVariable.computeIfAbsent(cat, k -> new HashMap<>()).put(ym, v);
+        }));
 
-        // Per-category monthly variable totals
-        Map<String, Map<YearMonth, Double>> categoryMonthlyVariable = variableExpenses.stream()
-                .collect(Collectors.groupingBy(
-                        Expense::getCategory,
-                        Collectors.groupingBy(
-                                e -> YearMonth.from(e.getDate()),
-                                Collectors.summingDouble(e -> toBase(e, cm)))));
-
-        // Sorted months with data
+        // Sorted COMPLETE months with data: the current month is still partial, so it
+        // would drag the trend/average down; only months strictly before now are used.
         List<YearMonth> dataMonths = monthlyVariableTotals.keySet().stream()
-                .filter(ym -> !ym.isAfter(now))
+                .filter(ym -> ym.isBefore(now))
                 .sorted()
                 .collect(Collectors.toList());
 
         int dataMonthsAvailable = dataMonths.size();
 
-        // Compute current balance (historical income - historical expenses)
-        double totalHistoricalIncome = computeHistoricalIncome(input, now, cm);
-        double totalHistoricalExpenses = actualExpenses.stream()
+        // Compute current balance (historical income - historical net spend)
+        double totalHistoricalIncome = computeHistoricalIncome(input, now, cm, coverage);
+        double totalHistoricalExpenses = SharedState.clampedNetSpend(spendItems.stream()
                 .filter(e -> !YearMonth.from(e.getDate()).isAfter(now))
-                .mapToDouble(e -> toBase(e, cm))
-                .sum();
+                .collect(Collectors.toList()), e -> signedSpend(e, cm));
         double currentBalance = totalHistoricalIncome - totalHistoricalExpenses;
 
         // Algorithm 3: Linear trend
@@ -125,9 +175,18 @@ public class ProjectionEngine {
         double stddev = computeStdDev(monthlyVariableTotals, dataMonths);
         boolean hasConfidenceBand = dataMonthsAvailable >= 2;
 
+        // Actual recurring occurrences (with skip/edit overrides) in the projected window,
+        // the same source the Overview uses for future months.
+        Map<YearMonth, List<Expense>> occurrencesByMonth = upcomingOccurrencesByMonth(input, now);
+
         // All categories present in recurring + variable
         Set<String> allCategories = new LinkedHashSet<>();
-        input.recurringExpenses.forEach(r -> allCategories.add(r.getCategory()));
+        input.recurringExpenses.stream()
+                .filter(ProjectionEngine::isRecurringSpend)
+                .forEach(r -> allCategories.add(r.getCategory()));
+        occurrencesByMonth.values().forEach(list -> list.stream()
+                .filter(ProjectionEngine::isOccurrenceSpend)
+                .forEach(e -> allCategories.add(e.getCategory())));
         categoryMonthlyVariable.keySet().forEach(allCategories::add);
 
         // Build 6 month projections
@@ -136,8 +195,17 @@ public class ProjectionEngine {
             YearMonth targetMonth = now.plusMonths(n);
             MonthProjection mp = new MonthProjection(targetMonth);
 
-            // Algorithm 1: Deterministic recurring per category
-            Map<String, Double> recurringByCategory = computeRecurringForMonth(input.recurringExpenses, targetMonth, cm);
+            // Algorithm 1: Deterministic recurring per category, net of recurring refunds
+            // (e.g. a monthly cashback). A negative net offsets that category's variable
+            // spend below, so the month x category cell is clamped like everywhere else.
+            Map<String, Double> recurringNet = computeRecurringForMonth(
+                    occurrencesByMonth.getOrDefault(targetMonth, Collections.emptyList()), cm);
+            Map<String, Double> recurringByCategory = new LinkedHashMap<>();
+            Map<String, Double> recurringCredit = new HashMap<>();
+            recurringNet.forEach((cat, v) -> {
+                if (v > 1e-9) recurringByCategory.put(cat, v);
+                else if (v < -1e-9) recurringCredit.put(cat, -v);
+            });
             double totalRecurring = recurringByCategory.values().stream().mapToDouble(Double::doubleValue).sum();
 
             // Algorithm 2: WMA per category + seasonal + trend
@@ -171,6 +239,13 @@ public class ProjectionEngine {
                 }
             }
 
+            variableByCategory.forEach((cat, v) -> mp.categoryVariableGross.put(cat, Math.max(0, v)));
+
+            // Recurring refunds left over after netting against recurring spend reduce the
+            // category's variable spend, clamped at 0 (month x category rule).
+            recurringCredit.forEach((cat, credit) -> variableByCategory.computeIfPresent(cat,
+                    (c, v) -> Math.max(0, v - credit)));
+
             // Recompute totalVariable from clamped category values to stay consistent
             totalVariable = variableByCategory.values().stream().mapToDouble(Double::doubleValue).sum();
 
@@ -188,7 +263,10 @@ public class ProjectionEngine {
             }
 
             // Income
-            mp.projectedIncome = input.incomes.getOrDefault(targetMonth, input.recurringIncome);
+            mp.projectedIncome = SharedState.resolveMonthlyIncome(
+                    computeRecurringIncomeForMonth(
+                            occurrencesByMonth.getOrDefault(targetMonth, Collections.emptyList()), cm),
+                    plannedIncome(input, targetMonth), targetMonth, now);
 
             // Net savings
             mp.netSavings = mp.projectedIncome - mp.projectedExpenses;
@@ -210,30 +288,56 @@ public class ProjectionEngine {
 
     // ======================== ALGORITHM 1: DETERMINISTIC RECURRING ========================
 
-    private Map<String, Double> computeRecurringForMonth(List<RecurringExpense> recurringExpenses,
-                                                            YearMonth targetMonth, CurrencyManager cm) {
+    /**
+     * Recurring occurrences (skip/edit overrides applied) in months now+1 .. now+6, grouped
+     * by month, generated by the same ExpenseManager logic the Overview uses.
+     */
+    static Map<YearMonth, List<Expense>> upcomingOccurrencesByMonth(ProjectionInput input, YearMonth now) {
+        Map<YearMonth, List<Expense>> byMonth = new HashMap<>();
+        if (input.recurringExpenses.isEmpty()) return byMonth;
+        ExpenseManager scratch = new ExpenseManager();
+        scratch.setOverrides(input.overrides);
+        List<Expense> templates = new ArrayList<>(input.recurringExpenses);
+        scratch.loadExpenses(templates);
+        for (Expense e : scratch.getUpcomingRecurring(now.plusMonths(1).atDay(1), now.plusMonths(6).atEndOfMonth())) {
+            byMonth.computeIfAbsent(YearMonth.from(e.getDate()), k -> new ArrayList<>()).add(e);
+        }
+        return byMonth;
+    }
+
+    /**
+     * Signed recurring spend per category for a month: that month's spend occurrences minus
+     * its refund occurrences (unclamped; the caller clamps the month x category cell).
+     */
+    private Map<String, Double> computeRecurringForMonth(List<Expense> occurrences, CurrencyManager cm) {
         Map<String, Double> result = new LinkedHashMap<>();
-        LocalDate monthStart = targetMonth.atDay(1);
-        LocalDate monthEnd = targetMonth.atEndOfMonth();
-
-        for (RecurringExpense re : recurringExpenses) {
-            // Check if recurring is active during this month
-            if (re.getDate().isAfter(monthEnd)) continue;
-            if (re.getEndDate() != null && re.getEndDate().isBefore(monthStart)) continue;
-
-            double baseAmount = toBase(re, cm);
-            double monthlyEquivalent = switch (re.getFrequency()) {
-                case DAILY -> baseAmount * targetMonth.lengthOfMonth();
-                case WEEKLY -> baseAmount * targetMonth.lengthOfMonth() / 7.0;
-                case BIWEEKLY -> baseAmount * targetMonth.lengthOfMonth() / 14.0;
-                case MONTHLY -> baseAmount;
-                case QUARTERLY -> baseAmount / 3.0;
-                case YEARLY -> baseAmount / 12.0;
-            };
-
-            result.merge(re.getCategory(), monthlyEquivalent, Double::sum);
+        for (Expense e : occurrences) {
+            if (isOccurrenceSpend(e)) result.merge(e.getCategory(), toBase(e, cm), Double::sum);
+            else if (SharedState.isRefundCredit(e)) result.merge(e.getCategory(), -toBase(e, cm), Double::sum);
         }
         return result;
+    }
+
+    static boolean isRecurringSpend(RecurringExpense re) {
+        return !re.isIncome() && !re.isRefund() && !re.isExcluded();
+    }
+
+    private static boolean isOccurrenceSpend(Expense e) {
+        return !e.isIncome() && !e.isRefund() && !e.isExcluded();
+    }
+
+    /** Scheduled recurring income (income occurrences, not refunds/excluded) for a month. */
+    private double computeRecurringIncomeForMonth(List<Expense> occurrences, CurrencyManager cm) {
+        double total = 0;
+        for (Expense e : occurrences) {
+            if (SharedState.isIncomeItem(e)) total += toBase(e, cm);
+        }
+        return total;
+    }
+
+    private static double plannedIncome(ProjectionInput input, YearMonth ym) {
+        Double v = input.incomes.get(ym);
+        return v != null ? v : input.recurringIncome;
     }
 
     // ======================== ALGORITHM 2: WEIGHTED MOVING AVERAGE ========================
@@ -340,44 +444,40 @@ public class ProjectionEngine {
 
     // ======================== HELPER ========================
 
-    private double computeHistoricalIncome(ProjectionInput input, YearMonth upTo, CurrencyManager cm) {
+    /**
+     * Historical income through {@code upTo}, one figure per month via
+     * {@link SharedState#resolveMonthlyIncome} (actual income transactions when present,
+     * otherwise planned) — never both. Only months that have ledger data (any non-excluded
+     * expense, refund or income) contribute: a gap month with no data at all adds nothing,
+     * since its spend is unknown too. Generated recurring income occurrences that an
+     * imported credit already covers are not counted twice. Refunds are not income.
+     */
+    double computeHistoricalIncome(ProjectionInput input, YearMonth upTo, CurrencyManager cm) {
+        return computeHistoricalIncome(input, upTo, cm, null);
+    }
+
+    /** @param precomputed coverage of {@code input.allExpenses}; null computes it here */
+    double computeHistoricalIncome(ProjectionInput input, YearMonth upTo, CurrencyManager cm,
+                                   SharedState.RecurringCoverage precomputed) {
+        SharedState.RecurringCoverage coverage = precomputed != null ? precomputed
+                : SharedState.computeRecurringCoverage(input.allExpenses, cm);
+        Map<YearMonth, Double> actualByMonth = new HashMap<>();
+        Set<YearMonth> dataMonths = new HashSet<>();
+        for (Expense e : input.allExpenses) {
+            if (e.isExcluded() || e.getDate() == null) continue;
+            YearMonth ym = YearMonth.from(e.getDate());
+            if (ym.isAfter(upTo)) continue;
+            dataMonths.add(ym);
+            if (SharedState.isIncomeItem(e)) {
+                if (e.getRecurringId() != null && coverage.coveredRecurringIds.contains(e.getRecurringId())) continue;
+                actualByMonth.merge(ym, toBase(e, cm), Double::sum);
+            }
+        }
         double total = 0;
-
-        // Sum up explicit income entries
-        for (Map.Entry<YearMonth, Double> entry : input.incomes.entrySet()) {
-            if (!entry.getKey().isAfter(upTo)) {
-                total += entry.getValue();
-            }
+        for (YearMonth cur : dataMonths) {
+            total += SharedState.resolveMonthlyIncome(
+                    actualByMonth.getOrDefault(cur, 0.0), plannedIncome(input, cur), cur, upTo);
         }
-
-        // For months without explicit income, use recurring income if set
-        if (input.recurringIncome > 0) {
-            // Find range of expense data
-            Optional<YearMonth> earliest = input.allExpenses.stream()
-                    .filter(e -> !e.isExcluded())
-                    .map(e -> YearMonth.from(e.getDate()))
-                    .min(Comparator.naturalOrder());
-
-            if (earliest.isPresent()) {
-                YearMonth start = earliest.get();
-                YearMonth end = upTo;
-                YearMonth current = start;
-                while (!current.isAfter(end)) {
-                    if (!input.incomes.containsKey(current)) {
-                        total += input.recurringIncome;
-                    }
-                    current = current.plusMonths(1);
-                }
-            }
-        }
-
-        // Also add income/refund flagged expenses
-        total += input.allExpenses.stream()
-                .filter(e -> (e.isIncome() || e.isRefund()) && !e.isExcluded())
-                .filter(e -> !YearMonth.from(e.getDate()).isAfter(upTo))
-                .mapToDouble(e -> toBase(e, cm))
-                .sum();
-
         return total;
     }
 }

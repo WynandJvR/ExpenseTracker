@@ -77,9 +77,10 @@ public class GoalManagementDialog {
                     double pct = goal.getTargetAmount() > 0 ? saved / goal.getTargetAmount() : 0;
                     ProgressBar bar = new ProgressBar(Math.min(pct, 1.0));
                     bar.setPrefWidth(80);
-                    bar.setStyle(pct >= 1.0 ? "-fx-accent: #43A047;" : "-fx-accent: #5C6BC0;");
+                    bar.getStyleClass().add("goal-progress");
+                    if (pct >= 1.0) bar.getStyleClass().add("goal-progress-done");
                     Label lbl = new Label(String.format("%.0f%%", pct * 100));
-                    lbl.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 11px;");
+                    lbl.getStyleClass().add("goal-progress-label");
                     HBox box = new HBox(6, bar, lbl);
                     box.setAlignment(Pos.CENTER_LEFT);
                     setGraphic(box);

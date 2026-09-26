@@ -46,52 +46,143 @@ public class CsvStatementParser {
 
     public static List<ImportItem> parse(String text, char delimiter, int dateCol, int amountCol,
                                           int descCol, String dateFormat, boolean negativeIsExpense) {
+        return parse(text, delimiter, dateCol, amountCol, -1, descCol, -1, dateFormat, negativeIsExpense, 1);
+    }
+
+    /**
+     * Parses rows using an explicit column mapping. {@code creditCol} >= 0 means the
+     * file has separate debit ({@code amountCol}) and credit columns; {@code balanceCol}
+     * >= 0 records the running balance for exact duplicate detection.
+     */
+    static List<ImportItem> parse(String text, char delimiter, int dateCol, int amountCol, int creditCol,
+                                  int descCol, int balanceCol, String dateFormat,
+                                  boolean negativeIsExpense, int firstDataLine) {
         List<ImportItem> items = new ArrayList<>();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern(dateFormat);
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern(dateFormat, Locale.ENGLISH);
         String[] lines = text.split("\\r?\\n");
 
-        for (int i = 1; i < lines.length; i++) {
+        for (int i = firstDataLine; i < lines.length; i++) {
             String line = lines[i].trim();
             if (line.isEmpty()) continue;
 
             String[] fields = splitLine(line, delimiter);
-            if (fields.length <= Math.max(dateCol, Math.max(amountCol, descCol))) continue;
+            if (fields.length <= Math.max(dateCol, amountCol)) continue;
 
             try {
-                String dateStr = fields[dateCol].trim().replaceAll("^\"|\"$", "");
-                LocalDate date = LocalDate.parse(dateStr, formatter);
+                LocalDate date = LocalDate.parse(unquote(fields[dateCol]), formatter);
 
-                String amountStr = fields[amountCol].trim().replaceAll("^\"|\"$", "")
-                    .replace(",", "").replace(" ", "");
-                double amount = Double.parseDouble(amountStr);
-
-                boolean isExpense;
-                if (negativeIsExpense) {
-                    isExpense = amount < 0;
-                    amount = Math.abs(amount);
+                double signed;
+                if (creditCol >= 0) {
+                    Double debit = Amounts.parse(field(fields, amountCol));
+                    Double credit = Amounts.parse(field(fields, creditCol));
+                    double d = debit != null ? Math.abs(debit) : 0;
+                    double c = credit != null ? Math.abs(credit) : 0;
+                    signed = c - d;
                 } else {
-                    isExpense = amount > 0;
+                    Double amount = Amounts.parse(field(fields, amountCol));
+                    if (amount == null) continue;
+                    // negativeIsExpense: "-100" is money out. Otherwise positive values are money out.
+                    signed = negativeIsExpense ? amount : -amount;
                 }
+                double abs = Amounts.round2(Math.abs(signed));
+                if (abs <= 0) continue;
 
-                if (amount <= 0) continue;
-
-                String description = descCol >= 0 && descCol < fields.length
-                    ? fields[descCol].trim().replaceAll("^\"|\"$", "")
-                    : "";
-
-                ImportItem item = new ImportItem(amount, description, date);
-                if (!isExpense) {
-                    item.setDescription("[CREDIT] " + description);
-                    item.setIncome(true);
-                    item.setSelected(false);
+                String description = descCol >= 0 ? field(fields, descCol) : "";
+                ImportItem item = new ImportItem(abs, description, date);
+                item.setCredit(signed > 0);
+                if (balanceCol >= 0) {
+                    item.setBalance(Amounts.parse(field(fields, balanceCol)));
                 }
-                item.setStatus("Uncategorized");
                 items.add(item);
             } catch (DateTimeParseException | NumberFormatException e) {
-                // Skip unparseable lines
+                // Skip unparseable lines (totals, footers)
             }
         }
         return items;
+    }
+
+    /**
+     * Works out the column layout by itself: finds the header row, the date,
+     * description, amount (or debit + credit) and balance columns, and the date format.
+     * Returns null when it can't confidently identify at least a date and an amount.
+     */
+    public static StatementParseResult autoParse(String text) {
+        char delimiter = detectDelimiter(text);
+        String[] lines = text.split("\\r?\\n");
+        for (int h = 0; h < Math.min(lines.length, 15); h++) {
+            String[] headers = splitLine(lines[h], delimiter);
+            int date = -1, desc = -1, amount = -1, debit = -1, credit = -1, balance = -1;
+            for (int i = 0; i < headers.length; i++) {
+                String x = unquote(headers[i]).toLowerCase();
+                if (x.isEmpty()) continue;
+                if (date < 0 && x.contains("date") && !x.contains("value date")) date = i;
+                else if (balance < 0 && x.contains("balance")) balance = i;
+                else if (debit < 0 && (x.contains("debit") || x.equals("money out") || x.contains("withdrawal") || x.equals("paid out"))) debit = i;
+                else if (credit < 0 && (x.contains("credit") || x.equals("money in") || x.contains("deposit") || x.equals("paid in"))) credit = i;
+                else if (amount < 0 && (x.contains("amount") || x.equals("value"))) amount = i;
+                else if (desc < 0 && (x.contains("desc") || x.contains("narr") || x.contains("detail")
+                    || x.contains("reference") || x.contains("payee") || x.contains("memo") || x.contains("transaction"))) desc = i;
+            }
+            if (date < 0) {
+                for (int i = 0; i < headers.length; i++) {
+                    if (unquote(headers[i]).equalsIgnoreCase("date")) date = i;
+                }
+            }
+            boolean split = debit >= 0 && credit >= 0;
+            int amountCol = split ? debit : amount >= 0 ? amount : debit >= 0 ? debit : -1;
+            if (date < 0 || amountCol < 0) continue;
+
+            String format = detectDateFormat(lines, h + 1, date, delimiter);
+            if (format == null) continue;
+
+            // A lone "Debit" column holds positive money-out values.
+            boolean negativeIsExpense = !(amount < 0 && debit >= 0 && !split);
+            List<ImportItem> items = parse(text, delimiter, date, amountCol, split ? credit : -1,
+                desc, balance, format, negativeIsExpense, h + 1);
+            if (items.isEmpty()) continue;
+            return new StatementParseResult("CSV", items);
+        }
+        return null;
+    }
+
+    /** Picks the date pattern that parses every sample row; prefers day-first when ambiguous. */
+    static String detectDateFormat(String[] lines, int from, int dateCol, char delimiter) {
+        String[] candidates = {"yyyy-MM-dd", "yyyy/MM/dd", "dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy", "dd.MM.yyyy",
+            "MM/dd/yyyy", "M/d/yyyy", "dd MMM yyyy", "d MMM yyyy", "dd-MMM-yyyy", "MMM dd, yyyy", "yyyyMMdd",
+            "dd/MM/yy", "yyyy-MM-dd HH:mm:ss"};
+        List<String> samples = new ArrayList<>();
+        for (int i = from; i < lines.length && samples.size() < 200; i++) {
+            String[] f = splitLine(lines[i], delimiter);
+            if (f.length > dateCol && !unquote(f[dateCol]).isEmpty()) samples.add(unquote(f[dateCol]));
+        }
+        if (samples.isEmpty()) return null;
+        // The format that parses the most rows wins; candidate order (day-first) breaks ties.
+        String best = null;
+        int bestOk = 0;
+        for (String c : candidates) {
+            DateTimeFormatter fmt = DateTimeFormatter.ofPattern(c, Locale.ENGLISH);
+            int ok = 0;
+            for (String s : samples) {
+                try {
+                    LocalDate.parse(s, fmt);
+                    ok++;
+                } catch (DateTimeParseException ignored) {}
+            }
+            if (ok > bestOk) {
+                best = c;
+                bestOk = ok;
+            }
+        }
+        // Allow a footer row or two to fail
+        return best != null && bestOk >= samples.size() - 2 ? best : null;
+    }
+
+    private static String unquote(String s) {
+        return s == null ? "" : s.trim().replaceAll("^\"|\"$", "").trim();
+    }
+
+    private static String field(String[] fields, int idx) {
+        return idx >= 0 && idx < fields.length ? unquote(fields[idx]) : "";
     }
 
     private static String[] splitLine(String line, char delimiter) {

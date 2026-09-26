@@ -19,6 +19,12 @@ public class DrillDownDialog {
 
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("dd MMM yyyy");
 
+    /** Amount in base currency; refunds are negative because they reduce spend. */
+    public static double signedBaseAmount(Expense e, CurrencyManager cm) {
+        double base = cm != null ? cm.toBase(e.getAmount(), e.getCurrency()) : e.getAmount();
+        return e.isRefund() ? -base : base;
+    }
+
     public static void show(Stage owner, String title, List<Expense> expenses,
                                String currencySymbol) {
         show(owner, title, expenses, currencySymbol, null);
@@ -39,8 +45,10 @@ public class DrillDownDialog {
         TableView<Expense> table = new TableView<>(FXCollections.observableArrayList(expenses));
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
 
+        // Amounts are shown in base currency (refunds negative) so rows sum to the total.
         TableColumn<Expense, Double> amountCol = new TableColumn<>("Amount");
-        amountCol.setCellValueFactory(new PropertyValueFactory<>("amount"));
+        amountCol.setCellValueFactory(cd -> new javafx.beans.property.SimpleObjectProperty<>(
+            signedBaseAmount(cd.getValue(), cm)));
         amountCol.setCellFactory(col -> new TableCell<>() {
             @Override
             protected void updateItem(Double item, boolean empty) {
@@ -71,7 +79,7 @@ public class DrillDownDialog {
         table.setPrefHeight(400);
 
         double total = expenses.stream()
-            .mapToDouble(e -> cm != null ? cm.toBase(e.getAmount(), e.getCurrency()) : e.getAmount())
+            .mapToDouble(e -> signedBaseAmount(e, cm))
             .sum();
         Label summary = new Label(String.format("%d transactions  |  Total: %s",
             expenses.size(), UIUtils.fmt(total, currencySymbol)));

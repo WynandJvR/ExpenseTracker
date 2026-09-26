@@ -85,7 +85,7 @@ public class ImportReviewDialog {
         recurringItems = FXCollections.observableArrayList();
         for (ImportItem item : items) {
             if (item.isIncome()) {
-                item.setSelected(true); // Select income items by default
+                item.setSelected(!item.isDuplicate()); // select income unless it was already imported
                 incomeItems.add(item);
             } else if ("Recurring".equals(item.getStatus())) {
                 item.setSelected(true); // Select so actual values get recorded
@@ -162,8 +162,8 @@ public class ImportReviewDialog {
         }
 
         // Style income tab header
-        incomeTab.setStyle("-fx-text-base-color: #4CAF50;");
-        recurringTab.setStyle("-fx-text-base-color: #FF9800;");
+        incomeTab.getStyleClass().add("tab-income");
+        recurringTab.getStyleClass().add("tab-recurring");
 
         // Buttons
         HBox buttonBar = createButtonBar();
@@ -674,9 +674,11 @@ public class ImportReviewDialog {
                     }
                     Expense exp = new Expense(item.getAmount(), cat, item.getDate(),
                         item.getDescription());
-                    exp.setIncome(true);
+                    // A refund reduces spending; it isn't income.
                     if ("Refund".equals(item.getStatus())) {
                         exp.setRefund(true);
+                    } else {
+                        exp.setIncome(true);
                     }
                     result.add(exp);
                 }

@@ -18,6 +18,7 @@ public class UpdateRecurringExpenseCommand implements Command {
 
     @Override
     public void undo() {
-        manager.updateRecurringExpense(newExpense, oldExpense);
+        // Restoring the original template: don't re-validate it (it may be legacy data).
+        manager.updateRecurringExpenseUnchecked(newExpense, oldExpense);
     }
 }

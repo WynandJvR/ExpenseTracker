@@ -4,7 +4,11 @@ import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.chart.BarChart;
+import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.XYChart;
 import javafx.scene.control.*;
+import javafx.util.StringConverter;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.*;
 
@@ -17,20 +21,26 @@ import java.util.stream.Collectors;
 
 public class DashboardController {
 
-    // --- Dashboard cards ---
-    @FXML private TextField dashTotalSpent;
-    @FXML private TextField dashTopCategory;
-    @FXML private TextField dashTopCategoryAmount;
-    @FXML private TextField dashBudgetStatus;
-    @FXML private TextField dashBudgetSubtitle;
-    @FXML private TextField dashMonthChange;
+    // --- Header and headline numbers ---
+    @FXML private Label overviewTitle;
+    @FXML private Label overviewSubtitle;
+    @FXML private VBox attentionBox;
+    @FXML private Label kpiInValue;
+    @FXML private Label kpiInSub;
+    @FXML private Label kpiOutValue;
+    @FXML private Label kpiOutSub;
+    @FXML private Label kpiNetValue;
+    @FXML private Label kpiNetSub;
+    @FXML private Label kpiBalanceValue;
+    @FXML private Label kpiBalanceSub;
 
-    // --- Budget / totals ---
-    @FXML private Label totalLabel;
-    @FXML private Label moneySavedLabel;
+    // --- Spending by category and trend ---
+    @FXML private VBox categoryBars;
+    @FXML private Label categorySummaryLabel;
+    @FXML private BarChart<String, Number> trendChart;
+    @FXML private TitledPane incomePane;
 
     // --- Income fields ---
-    @FXML private Button toggleIncomeButton;
     @FXML private VBox incomeFieldsBox;
     @FXML private TextField recurringIncomeField;
     @FXML private TextField incomeField;
@@ -39,13 +49,6 @@ public class DashboardController {
     @FXML private TableView<Expense> incomeTable;
     @FXML private Label incomeTabSummary;
     @FXML private Label incomeErrorLabel;
-
-    // --- Category table ---
-    @FXML private TableView<CategoryTotal> categoryTable;
-    @FXML private TableColumn<CategoryTotal, String> categoryNameColumn;
-    @FXML private TableColumn<CategoryTotal, Double> categoryTotalColumn;
-    @FXML private TableColumn<CategoryTotal, Double> budgetColumn;
-    @FXML private TableColumn<CategoryTotal, Double> progressColumn;
 
     // --- Budget alerts ---
     @FXML private VBox budgetAlertBox;
@@ -71,6 +74,10 @@ public class DashboardController {
     @FXML private Label errorLabel;
 
     private SharedState state;
+    private Runnable onReviewUncategorized = () -> {};
+    private Runnable onGoToImport = () -> {};
+    private java.util.function.Consumer<String> onShowCategory = c -> {};
+    private String summaryText = "";
     private boolean suppressIncomeListener = false;
     private boolean suppressRecurringIncomeListener = false;
     private boolean initialized = false;
@@ -85,14 +92,27 @@ public class DashboardController {
         if (initialized) return;
         initialized = true;
 
-        setupCategoryTable();
-        setupCategoryTableContextMenu();
         setupIncomeTable();
         setupIncomeFieldListeners();
-
-        UIUtils.makeLabelCopyable(totalLabel);
-        UIUtils.makeLabelCopyable(moneySavedLabel);
+        ((NumberAxis) trendChart.getYAxis()).setTickLabelFormatter(new StringConverter<Number>() {
+            @Override public String toString(Number n) { return compact(n.doubleValue()); }
+            @Override public Number fromString(String s) { return 0; }
+        });
     }
+
+    /** Lets the Overview send the user to the right place from its "needs attention" notes. */
+    public void setNavigation(Runnable reviewUncategorized, Runnable goToImport) {
+        if (reviewUncategorized != null) this.onReviewUncategorized = reviewUncategorized;
+        if (goToImport != null) this.onGoToImport = goToImport;
+    }
+
+    /** Opens the Transactions screen filtered to one category, across all months. */
+    public void setOnShowCategory(java.util.function.Consumer<String> showCategory) {
+        if (showCategory != null) this.onShowCategory = showCategory;
+    }
+
+    /** Plain-text summary of the headline numbers, for "copy summary". */
+    public String getSummaryText() { return summaryText; }
 
     // ======================== REFRESH ========================
 
@@ -105,100 +125,6 @@ public class DashboardController {
         updateAnomalyAlerts();
         updateDebtSummary();
         updateExchangeRatesPanel();
-    }
-
-    // ======================== CATEGORY TABLE SETUP ========================
-
-    private void setupCategoryTable() {
-        categoryTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        categoryTable.setItems(state.getCategoryTotals());
-
-        Label categoryPlaceholder = new Label("No category data for this period.");
-        categoryPlaceholder.getStyleClass().add("empty-state-label");
-        categoryTable.setPlaceholder(categoryPlaceholder);
-
-        // Color-coded name column
-        categoryNameColumn.setCellFactory(tc -> new TableCell<CategoryTotal, String>() {
-            @Override
-            protected void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) {
-                    setText(null);
-                    setStyle("");
-                } else {
-                    setText(item);
-                    String color = UIUtils.getCategoryColor(item);
-                    setStyle("-fx-background-color: " + color + "33; -fx-border-color: " + color
-                            + " transparent transparent transparent; -fx-border-width: 0 0 0 3;");
-                }
-            }
-        });
-
-        // Currency-formatted total column
-        categoryTotalColumn.setCellFactory(tc -> new TableCell<CategoryTotal, Double>() {
-            @Override
-            protected void updateItem(Double item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? null : fmt(item));
-            }
-        });
-
-        // Budget column
-        budgetColumn.setCellFactory(tc -> new TableCell<CategoryTotal, Double>() {
-            @Override
-            protected void updateItem(Double item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null || item <= 0) {
-                    setText(empty ? null : "-");
-                } else {
-                    setText(fmt(item));
-                }
-            }
-        });
-
-        // Progress bar column
-        progressColumn.setCellFactory(tc -> new TableCell<CategoryTotal, Double>() {
-            private final ProgressBar bar = new ProgressBar(0);
-            private final Label label = new Label();
-            private final StackPane pane = new StackPane(bar, label);
-            {
-                bar.setMaxWidth(Double.MAX_VALUE);
-                bar.setPrefHeight(18);
-                label.setStyle("-fx-text-fill: white; -fx-font-size: 11px; -fx-font-weight: bold;");
-            }
-
-            @Override
-            protected void updateItem(Double progress, boolean empty) {
-                super.updateItem(progress, empty);
-                if (empty || progress == null || progress == 0) {
-                    setGraphic(null);
-                    setText(empty ? null : "-");
-                } else {
-                    bar.setProgress(Math.min(progress, 1.0));
-                    label.setText(String.format("%.0f%%", progress * 100));
-                    if (progress < 0.8) {
-                        bar.setStyle("-fx-accent: #4CAF50;");
-                    } else if (progress <= 1.0) {
-                        bar.setStyle("-fx-accent: #FF9800;");
-                    } else {
-                        bar.setStyle("-fx-accent: #E53935;");
-                        bar.setProgress(1.0);
-                    }
-                    setGraphic(pane);
-                    setText(null);
-                }
-            }
-        });
-    }
-
-    private void setupCategoryTableContextMenu() {
-        ContextMenu budgetMenu = new ContextMenu();
-        MenuItem setBudgetItem = new MenuItem("Set Budget...");
-        setBudgetItem.setOnAction(e -> handleSetBudget());
-        MenuItem clearBudgetItem = new MenuItem("Clear Budget");
-        clearBudgetItem.setOnAction(e -> handleClearBudget());
-        budgetMenu.getItems().addAll(setBudgetItem, clearBudgetItem);
-        categoryTable.setContextMenu(budgetMenu);
     }
 
     // ======================== INCOME TABLE SETUP ========================
@@ -333,78 +259,33 @@ public class DashboardController {
         Month selectedMonth = state.getSelectedMonth();
 
         if (selectedYear == null || selectedMonth == null) {
-            totalLabel.setText("Total Expenses: " + fmt(0));
-            moneySavedLabel.setText("Money Saved: " + fmt(0));
+            categoryBars.getChildren().clear();
             state.getCategoryTotals().clear();
-            dashTotalSpent.setText(fmt(0));
-            dashTopCategory.setText("-");
-            dashTopCategoryAmount.setText("");
-            dashBudgetStatus.setText("-");
-            dashBudgetStatus.getStyleClass().setAll("dashboard-card-value-field");
-            dashBudgetSubtitle.setText("");
-            dashMonthChange.setText("-");
-            dashMonthChange.getStyleClass().setAll("dashboard-card-value-field");
             return;
         }
 
         YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
-        ObservableList<Expense> expenseList = state.getExpenseList();
+        YearMonth nowYm = YearMonth.now();
         Map<String, Double> budgets = state.getBudgets();
 
         // Check if this month has real imported data (drives the "Projected" labeling below)
         boolean hasImportedData = state.monthHasImportedData(selectedYearMonth);
 
-        // Shared spend filter — same source of truth the analytics charts use, so the
-        // dashboard total reconciles with the analytics pie for the same month.
-        Set<YearMonth> imported = state.importedMonths();
+        // Ledger items for the month; future months also include scheduled recurring
+        // bills (the ledger only generates occurrences up to today).
+        List<Expense> monthExpenses = state.monthItemsWithProjection(selectedYearMonth);
 
-        // Filter expenses for the selected month (dashboard computes its own totals
-        // by streaming over expenseList directly)
-        List<Expense> monthExpenses = expenseList.stream()
-                .filter(e -> YearMonth.from(e.getDate()).equals(selectedYearMonth))
-                .collect(Collectors.toList());
+        // Shared net-spend helpers — same source of truth as analytics and the status bar.
+        Map<String, Double> categoryMap = state.spendByCategory(monthExpenses);
+        double total = categoryMap.values().stream().mapToDouble(Double::doubleValue).sum();
 
-        double total = monthExpenses.stream()
-                .filter(e -> state.countsAsSpend(e, imported))
-                .mapToDouble(this::toBase)
-                .sum();
+        double income = state.incomeForMonth(selectedYearMonth);
+        boolean hasActualIncome = state.actualIncome(selectedYearMonth) > 0;
 
-        double actualIncome = monthExpenses.stream()
-                .filter(e -> !e.isExcluded() && e.isIncome())
-                .mapToDouble(this::toBase)
-                .sum();
-        double projectedIncome = state.getIncomes().getOrDefault(selectedYearMonth, state.getRecurringIncome());
-
-        // Use actual income when available, otherwise fall back to projected
-        boolean hasActualIncome = actualIncome > 0;
-        double income = hasActualIncome ? actualIncome : projectedIncome;
-
-        boolean isProjected = !hasImportedData && !hasActualIncome;
+        boolean isProjected = selectedYearMonth.isAfter(nowYm) || (!hasImportedData && !hasActualIncome);
         String prefix = isProjected ? "Projected " : "";
 
-        totalLabel.setText(String.format("%sExpenses for %s %d: %s", prefix,
-                selectedMonth.getDisplayName(TextStyle.FULL, Locale.ENGLISH), selectedYear, fmt(total)));
-
-        double monthlyDebtPayments = computeMonthlyDebtObligations();
-        double moneySaved = income - total - monthlyDebtPayments;
-        String debtSuffix = monthlyDebtPayments > 0
-                ? String.format(" (incl. %s debt)", fmt(monthlyDebtPayments)) : "";
-        if (moneySaved >= 0) {
-            String label = isProjected ? "Projected Savings: " : "Money Saved: ";
-            moneySavedLabel.setText(label + fmt(moneySaved) + debtSuffix);
-            moneySavedLabel.getStyleClass().setAll("saved-label");
-        } else {
-            String label = isProjected ? "Projected Overspend: " : "Overspent: ";
-            moneySavedLabel.setText(label + fmt(Math.abs(moneySaved)) + debtSuffix);
-            moneySavedLabel.getStyleClass().setAll("saved-label", "overspent-label");
-        }
-
-        Map<String, Double> categoryMap = monthExpenses.stream()
-                .filter(e -> state.countsAsSpend(e, imported))
-                .collect(Collectors.groupingBy(
-                        Expense::getCategory,
-                        Collectors.summingDouble(this::toBase))
-                );
+        double moneySaved = income - total;
 
         state.getCategoryTotals().setAll(categoryMap.entrySet().stream()
                 .map(entry -> new CategoryTotal(entry.getKey(), entry.getValue(),
@@ -412,77 +293,285 @@ public class DashboardController {
                 .sorted(Comparator.comparing(CategoryTotal::getCategory))
                 .collect(Collectors.toList()));
 
-        // Compute previous month total for month-over-month comparison
+        // Month-over-month comparison. For the current (partial) month compare
+        // month-to-date against the same day range of last month.
         YearMonth prevYearMonth = selectedYearMonth.minusMonths(1);
-        double prevTotal = expenseList.stream()
-                .filter(e -> state.countsAsSpend(e, imported))
-                .filter(e -> YearMonth.from(e.getDate()).equals(prevYearMonth))
-                .mapToDouble(this::toBase)
-                .sum();
+        double compareTotal = total;
+        double prevTotal;
+        if (selectedYearMonth.equals(nowYm)) {
+            int today = java.time.LocalDate.now().getDayOfMonth();
+            compareTotal = state.netSpend(monthExpenses.stream()
+                    .filter(e -> e.getDate().getDayOfMonth() <= today)
+                    .collect(Collectors.toList()));
+            int prevCutoff = Math.min(today, prevYearMonth.lengthOfMonth());
+            prevTotal = state.netSpend(state.expensesInMonth(prevYearMonth).stream()
+                    .filter(e -> e.getDate().getDayOfMonth() <= prevCutoff)
+                    .collect(Collectors.toList()));
+        } else {
+            prevTotal = state.netSpendForMonth(prevYearMonth);
+        }
 
-        updateDashboardCards(total, categoryMap, prevTotal);
+        updateHeadline(selectedYearMonth, isProjected, income, total, moneySaved, compareTotal, prevTotal);
+        renderCategoryBars(categoryMap, total);
+        updateTrendChart(selectedYearMonth);
+        updateAttention();
+        double payments = categoryMap.getOrDefault(TransactionClassifier.PAYMENTS, 0.0);
+        if (total > 0 && payments / total > 0.2) {
+            attentionBox.getChildren().add(notice("info", String.format("%.0f%% of this month's spending is \"Payments\"", payments / total * 100),
+                "These are transfers to other people or accounts. Give the regular ones a category (rent, internet…) "
+                    + "and the rest follow automatically.",
+                "Review payments", () -> onShowCategory.accept(TransactionClassifier.PAYMENTS)));
+        }
         updateBudgetAlerts(categoryMap);
     }
 
-    private void updateDashboardCards(double total, Map<String, Double> categoryMap, double prevTotal) {
+    private void updateHeadline(YearMonth ym, boolean isProjected, double income, double spend,
+                                double leftOver, double compareSpend, double prevSpend) {
+        String monthName = ym.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH) + " " + ym.getYear();
+        overviewTitle.setText(monthName);
+
+        double actualIn = state.actualIncome(ym);
+        kpiInValue.setText(fmt(income));
+        if (actualIn > 0) {
+            long count = state.expensesInMonth(ym).stream().filter(SharedState::isIncomeItem).count();
+            kpiInSub.setText(count + " payment" + (count == 1 ? "" : "s") + " received");
+        } else if (income > 0) {
+            kpiInSub.setText("Planned — no income in your statements yet");
+        } else {
+            kpiInSub.setText("Nothing received");
+        }
+
+        kpiOutValue.setText(fmt(spend));
+        if (prevSpend > 0) {
+            double pct = (compareSpend - prevSpend) / prevSpend * 100;
+            boolean partial = ym.equals(YearMonth.now());
+            kpiOutSub.setText(String.format("%s %.0f%% vs %s%s", pct >= 0 ? "▲" : "▼", Math.abs(pct),
+                ym.minusMonths(1).getMonth().getDisplayName(TextStyle.SHORT, Locale.ENGLISH),
+                partial ? " (same days)" : ""));
+        } else {
+            kpiOutSub.setText(isProjected ? "Scheduled bills plus your typical spending" : "Spending after refunds");
+        }
+
+        kpiNetValue.setText((leftOver < 0 ? "−" : "") + fmt(Math.abs(leftOver)));
+        kpiNetValue.getStyleClass().removeAll("kpi-good", "kpi-bad");
+        kpiNetValue.getStyleClass().add(leftOver >= 0 ? "kpi-good" : "kpi-bad");
+        if (income > 0) {
+            kpiNetSub.setText(leftOver >= 0
+                ? String.format("You kept %.0f%% of what came in", leftOver / income * 100)
+                : "You spent more than came in");
+        } else {
+            kpiNetSub.setText(spend > 0 ? "No income this month" : "");
+        }
+
+        ImportRegistry registry = state.getImportRegistry();
+        ImportRegistry.StatementRecord latest = registry != null ? registry.latestWithBalance() : null;
+        if (latest != null) {
+            kpiBalanceValue.setText((latest.closingBalance < 0 ? "−" : "") + fmt(Math.abs(latest.closingBalance)));
+            kpiBalanceValue.getStyleClass().removeAll("kpi-bad");
+            if (latest.closingBalance < 0) kpiBalanceValue.getStyleClass().add("kpi-bad");
+            kpiBalanceSub.setText("On " + latest.coverageEnd().format(DAY_FMT)
+                + (latest.account != null ? " · " + latest.account : ""));
+        } else {
+            kpiBalanceValue.setText("—");
+            kpiBalanceSub.setText("Shown once you import a statement");
+        }
+
+        int statements = registry != null ? registry.getStatements().size() : 0;
+        String basis = statements == 0 ? "Import a bank statement to see where your money goes."
+            : "Based on " + statements + " imported statement" + (statements == 1 ? "" : "s")
+              + ". Transfers between your own accounts are left out.";
+        if (isProjected) basis = "Projected from planned income and scheduled bills. " + basis;
+        overviewSubtitle.setText(basis);
+
+        summaryText = monthName + "\nMoney in: " + fmt(income) + "\nMoney out: " + fmt(spend)
+            + "\nLeft over: " + (leftOver < 0 ? "-" : "") + fmt(Math.abs(leftOver))
+            + (latest != null ? "\nBalance: " + fmt(latest.closingBalance) : "") + "\n";
+    }
+
+    private static final java.time.format.DateTimeFormatter DAY_FMT =
+        java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH);
+
+    /** Horizontal bars, largest first, each with its share and (when set) its budget. */
+    private void renderCategoryBars(Map<String, Double> categoryMap, double total) {
+        categoryBars.getChildren().clear();
         Map<String, Double> budgets = state.getBudgets();
-
-        // Total spent
-        dashTotalSpent.setText(fmt(total));
-
-        // Top category
-        if (categoryMap.isEmpty()) {
-            dashTopCategory.setText("-");
-            dashTopCategoryAmount.setText("");
-        } else {
-            Map.Entry<String, Double> top = categoryMap.entrySet().stream()
-                    .max(Map.Entry.comparingByValue()).orElse(null);
-            if (top != null) {
-                dashTopCategory.setText(top.getKey());
-                int topPct = total > 0 ? (int) Math.round((top.getValue() / total) * 100) : 0;
-                dashTopCategoryAmount.setText(fmt(top.getValue()) + " (" + topPct + "%)");
-            }
-        }
-
-        // Budget status
-        double totalBudget = 0;
-        double totalBudgeted = 0;
-        for (Map.Entry<String, Double> entry : categoryMap.entrySet()) {
-            double budget = budgets.getOrDefault(entry.getKey(), 0.0);
-            if (budget > 0) {
-                totalBudget += budget;
-                totalBudgeted += entry.getValue();
-            }
-        }
+        double totalBudget = budgets.values().stream().filter(Objects::nonNull).mapToDouble(Double::doubleValue).sum();
         if (totalBudget > 0) {
-            double remaining = totalBudget - totalBudgeted;
-            int pctUsed = (int) Math.round((totalBudgeted / totalBudget) * 100);
-            if (remaining >= 0) {
-                dashBudgetStatus.setText(fmt(remaining) + " left");
-                dashBudgetStatus.getStyleClass().setAll("dashboard-card-value-field", "dashboard-positive");
-            } else {
-                dashBudgetStatus.setText(fmt(Math.abs(remaining)) + " over");
-                dashBudgetStatus.getStyleClass().setAll("dashboard-card-value-field", "dashboard-negative");
-            }
-            dashBudgetSubtitle.setText(String.format("%d%% of %s budget used", pctUsed, fmt(totalBudget)));
+            double budgeted = budgets.keySet().stream().mapToDouble(c -> categoryMap.getOrDefault(c, 0.0)).sum();
+            double left = totalBudget - budgeted;
+            categorySummaryLabel.setText(left >= 0 ? fmt(left) + " of " + fmt(totalBudget) + " budget left"
+                : fmt(-left) + " over your " + fmt(totalBudget) + " budget");
         } else {
-            dashBudgetStatus.setText("No budgets");
-            dashBudgetStatus.getStyleClass().setAll("dashboard-card-value-field");
-            dashBudgetSubtitle.setText("");
+            categorySummaryLabel.setText(total > 0 ? fmt(total) + " total" : "");
         }
 
-        // Month-over-month change
-        if (prevTotal > 0) {
-            double change = total - prevTotal;
-            double pct = (change / prevTotal) * 100;
-            String arrow = change >= 0 ? "\u25B2" : "\u25BC";
-            dashMonthChange.setText(String.format("%s %.0f%%", arrow, Math.abs(pct)));
-            dashMonthChange.getStyleClass().setAll("dashboard-card-value-field",
-                    change <= 0 ? "dashboard-positive" : "dashboard-negative");
-        } else {
-            dashMonthChange.setText("-");
-            dashMonthChange.getStyleClass().setAll("dashboard-card-value-field");
+        List<Map.Entry<String, Double>> entries = categoryMap.entrySet().stream()
+            .filter(e -> e.getValue() > 0.005)
+            .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+            .collect(Collectors.toList());
+        if (entries.isEmpty()) {
+            Label empty = new Label("No spending recorded for this month.");
+            empty.getStyleClass().add("empty-state-hint");
+            categoryBars.getChildren().add(empty);
+            return;
         }
+        double max = entries.get(0).getValue();
+        for (Map.Entry<String, Double> e : entries) {
+            String category = e.getKey();
+            double spent = e.getValue();
+            double budget = budgets.getOrDefault(category, 0.0);
+
+            Label name = new Label(category);
+            name.getStyleClass().add("bar-name");
+            Label amount = new Label(fmt(spent));
+            amount.getStyleClass().add("bar-amount");
+            Label share = new Label(total > 0 ? String.format("%.0f%%", spent / total * 100) : "");
+            share.getStyleClass().add("bar-share");
+            Region spacer = new Region();
+            HBox.setHgrow(spacer, Priority.ALWAYS);
+            HBox top = new HBox(8, name, spacer, amount, share);
+            top.setAlignment(Pos.BASELINE_LEFT);
+
+            // Track + fill. Width is relative to the largest category, or to the budget when one is set.
+            double ratio = budget > 0 ? Math.min(spent / budget, 1.0) : spent / max;
+            Region fill = new Region();
+            fill.getStyleClass().add("bar-fill");
+            if (budget > 0) {
+                double used = spent / budget;
+                fill.getStyleClass().add(used > 1 ? "bar-fill-over" : used >= 0.8 ? "bar-fill-near" : "bar-fill-ok");
+            }
+            StackPane track = new StackPane(fill);
+            track.getStyleClass().add("bar-track");
+            StackPane.setAlignment(fill, Pos.CENTER_LEFT);
+            fill.maxWidthProperty().bind(track.widthProperty().multiply(Math.max(ratio, 0.01)));
+            fill.prefWidthProperty().bind(fill.maxWidthProperty());
+
+            VBox row = new VBox(5, top, track);
+            row.getStyleClass().add("bar-row");
+            if (budget > 0) {
+                double left = budget - spent;
+                Label note = new Label(left >= 0 ? fmt(left) + " left of " + fmt(budget)
+                    : "⚠ " + fmt(-left) + " over the " + fmt(budget) + " budget");
+                note.getStyleClass().addAll("bar-note", left >= 0 ? "bar-note-ok" : "bar-note-over");
+                row.getChildren().add(note);
+            }
+
+            ContextMenu menu = new ContextMenu();
+            MenuItem setBudget = new MenuItem(budget > 0 ? "Change budget…" : "Set a monthly budget…");
+            setBudget.setOnAction(ev -> handleSetBudget(category));
+            menu.getItems().add(setBudget);
+            if (budget > 0) {
+                MenuItem clear = new MenuItem("Remove budget");
+                clear.setOnAction(ev -> handleClearBudget(category));
+                menu.getItems().add(clear);
+            }
+            row.setOnContextMenuRequested(ev -> menu.show(row, ev.getScreenX(), ev.getScreenY()));
+            Tooltip.install(row, new Tooltip(category + ": " + fmt(spent)
+                + (budget > 0 ? " of " + fmt(budget) + " budget" : "") + "\nRight-click to set a budget"));
+            categoryBars.getChildren().add(row);
+        }
+    }
+
+    /** Six months of money in vs money out, ending at the selected month. */
+    private void updateTrendChart(YearMonth end) {
+        XYChart.Series<String, Number> in = new XYChart.Series<>();
+        in.setName("Money in");
+        XYChart.Series<String, Number> out = new XYChart.Series<>();
+        out.setName("Money out");
+        java.time.format.DateTimeFormatter label = java.time.format.DateTimeFormatter.ofPattern("MMM yy", Locale.ENGLISH);
+        YearMonth now = YearMonth.now();
+        Set<YearMonth> withData = new HashSet<>();
+        for (Expense e : state.getExpenseList()) {
+            if (e.getRecurringId() == null) withData.add(YearMonth.from(e.getDate()));
+        }
+        for (int i = 5; i >= 0; i--) {
+            YearMonth ym = end.minusMonths(i);
+            // Future months and months with no transactions would show misleading zeros.
+            if (ym.isAfter(now) || !withData.contains(ym)) continue;
+            String key = ym.format(label);
+            in.getData().add(new XYChart.Data<>(key, state.actualIncome(ym)));
+            out.getData().add(new XYChart.Data<>(key, Math.max(0, state.netSpendForMonth(ym))));
+        }
+        trendChart.getData().setAll(List.of(in, out));
+        for (XYChart.Series<String, Number> s : trendChart.getData()) {
+            for (XYChart.Data<String, Number> d : s.getData()) {
+                if (d.getNode() != null) {
+                    Tooltip.install(d.getNode(), new Tooltip(s.getName() + " · " + d.getXValue() + "\n"
+                        + fmt(d.getYValue().doubleValue())));
+                }
+            }
+        }
+    }
+
+    /** Short notes about things the user should act on: uncategorised items, stale or unbalanced statements. */
+    private void updateAttention() {
+        attentionBox.getChildren().clear();
+        ImportRegistry registry = state.getImportRegistry();
+        int statements = registry != null ? registry.getStatements().size() : 0;
+
+        if (statements == 0 && state.getExpenseList().isEmpty()) {
+            attentionBox.getChildren().add(notice("info", "Start by importing a bank statement",
+                "Drop your PDF, CSV, OFX or QIF statements on the Import screen. Everything is categorised for you.",
+                "Import statements", onGoToImport));
+            return;
+        }
+
+        long uncategorized = state.getManager().getExpenses().stream()
+            .filter(e -> e.getRecurringId() == null && !e.isExcluded())
+            .filter(e -> TransactionClassifier.UNCATEGORIZED.equals(e.getCategory()))
+            .count();
+        if (uncategorized > 0) {
+            attentionBox.getChildren().add(notice("info", uncategorized + " transaction" + (uncategorized == 1 ? "" : "s")
+                    + " need a category",
+                "Pick a category once and similar transactions are sorted automatically from then on.",
+                "Sort them", onReviewUncategorized));
+        }
+        if (registry != null) {
+            long unbalanced = registry.getStatements().stream()
+                .filter(s -> s.openingBalance != null && !s.reconciled).count();
+            if (unbalanced > 0) {
+                attentionBox.getChildren().add(notice("warn", unbalanced + " statement"
+                        + (unbalanced == 1 ? " doesn't" : "s don't") + " add up",
+                    "Some lines may not have been read correctly, so totals could be off.", "See imports", onGoToImport));
+            }
+            ImportRegistry.StatementRecord latest = registry.getStatements().stream()
+                .max(Comparator.comparing(ImportRegistry.StatementRecord::coverageEnd)).orElse(null);
+            if (latest != null && latest.periodEnd != null
+                    && latest.periodEnd.isBefore(java.time.LocalDate.now().minusDays(35))) {
+                attentionBox.getChildren().add(notice("info", "Your latest statement ends "
+                        + latest.periodEnd.format(DAY_FMT),
+                    "Import a newer one to keep this overview up to date.", "Import", onGoToImport));
+            }
+        }
+    }
+
+    private HBox notice(String kind, String title, String body, String actionText, Runnable action) {
+        Label icon = new Label("warn".equals(kind) ? "⚠" : "ℹ");
+        icon.getStyleClass().addAll("notice-icon", "notice-icon-" + kind);
+        Label t = new Label(title);
+        t.getStyleClass().add("notice-title");
+        Label b = new Label(body);
+        b.getStyleClass().add("notice-body");
+        b.setWrapText(true);
+        VBox text = new VBox(2, t, b);
+        HBox.setHgrow(text, Priority.ALWAYS);
+        HBox box = new HBox(12, icon, text);
+        box.setAlignment(Pos.CENTER_LEFT);
+        box.getStyleClass().addAll("notice", "notice-" + kind);
+        if (actionText != null) {
+            Button btn = new Button(actionText);
+            btn.getStyleClass().add("secondary-button");
+            btn.setOnAction(e -> action.run());
+            box.getChildren().add(btn);
+        }
+        return box;
+    }
+
+    private static String compact(double v) {
+        double a = Math.abs(v);
+        if (a >= 1_000_000) return String.format("%.1fm", v / 1_000_000);
+        if (a >= 1_000) return String.format("%.0fk", v / 1_000);
+        return String.format("%.0f", v);
     }
 
     // ======================== ANOMALY DETECTION ========================
@@ -492,64 +581,61 @@ public class DashboardController {
         YearMonth ym = state.getSelectedYearMonth();
         if (ym == null) return;
 
-        List<Anomaly> anomalies = AnomalyDetector.detect(
-            new ArrayList<>(state.getExpenseList()), ym, state.getCurrencySymbol(),
-            state.getCurrencyManager());
-
-        // Filter out dismissed
-        anomalies.removeIf(a -> state.getDismissedAnomalyKeys().contains(a.getDismissKey()));
-
+        List<Anomaly> anomalies = anomaliesToShow(state, ym);
         if (anomalies.isEmpty()) return;
 
-        // Show max 5 anomalies
+        VBox card = new VBox(8);
+        card.getStyleClass().add("card");
+        Label title = new Label("Worth a look");
+        title.getStyleClass().add("card-title");
+        card.getChildren().add(title);
+
         int shown = 0;
         for (Anomaly anomaly : anomalies) {
-            if (shown >= 5) break;
+            if (shown >= 3) break;
+            Label icon = new Label(anomaly.getType() == Anomaly.AnomalyType.NEW_CATEGORY ? "\u2605" : "\u26A0");
+            icon.getStyleClass().addAll("list-row-icon", anomaly.getSeverity() > 0.6 ? "list-row-icon-bad" : "list-row-icon-warn");
+            Label msg = new Label(anomaly.getMessage());
+            msg.getStyleClass().add("list-row-text");
+            msg.setWrapText(true);
+            HBox.setHgrow(msg, Priority.ALWAYS);
+            msg.setMaxWidth(Double.MAX_VALUE);
 
-            String borderColor = anomaly.getSeverity() > 0.6 ? "#E53935" : "#FF9800";
-            String bgColor = anomaly.getSeverity() > 0.6 ? "rgba(229, 57, 53, 0.1)" : "rgba(255, 152, 0, 0.1)";
-            String textColor = anomaly.getSeverity() > 0.6 ? "#EF5350" : "#FFB74D";
-
-            HBox alertBox = new HBox(8);
-            alertBox.setAlignment(Pos.CENTER_LEFT);
-            alertBox.setPadding(new Insets(6, 10, 6, 10));
-            alertBox.setStyle(String.format(
-                "-fx-background-color: %s; -fx-border-color: %s; -fx-border-width: 0 0 0 3; "
-                + "-fx-background-radius: 6; -fx-border-radius: 6;", bgColor, borderColor));
-
-            String icon = switch (anomaly.getType()) {
-                case AMOUNT_OUTLIER -> "\u26A0";
-                case LARGE_TRANSACTION -> "\u25B2";
-                case SPENDING_SPIKE -> "\u26A1";
-                case NEW_CATEGORY -> "\u2605";
-            };
-
-            Label iconLabel = new Label(icon);
-            iconLabel.setStyle("-fx-text-fill: " + textColor + "; -fx-font-size: 13px;");
-
-            Label msgLabel = new Label(anomaly.getMessage());
-            msgLabel.setStyle("-fx-text-fill: " + textColor + "; -fx-font-size: 11px;");
-            msgLabel.setWrapText(true);
-            HBox.setHgrow(msgLabel, Priority.ALWAYS);
-
-            Button dismissBtn = new Button("\u2715");
-            dismissBtn.setStyle("-fx-background-color: transparent; -fx-text-fill: " + textColor
-                + "; -fx-font-size: 11px; -fx-cursor: hand; -fx-padding: 2 6;");
+            Button dismiss = new Button("Dismiss");
+            dismiss.getStyleClass().add("ghost-button");
+            HBox row = new HBox(10, icon, msg, dismiss);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.getStyleClass().add("list-row");
             final Anomaly a = anomaly;
-            dismissBtn.setOnAction(e -> {
+            dismiss.setOnAction(e -> {
                 state.getDismissedAnomalyKeys().add(a.getDismissKey());
                 try {
                     state.getStorage().saveDismissedAnomalies(state.getDismissedAnomalyKeys());
                 } catch (java.io.IOException ex) {
                     System.err.println("Failed to save dismissed anomalies: " + ex.getMessage());
                 }
-                anomalyBox.getChildren().remove(alertBox);
+                card.getChildren().remove(row);
+                if (card.getChildren().size() == 1) anomalyBox.getChildren().clear();
             });
-
-            alertBox.getChildren().addAll(iconLabel, msgLabel, dismissBtn);
-            anomalyBox.getChildren().add(alertBox);
+            card.getChildren().add(row);
             shown++;
         }
+        anomalyBox.getChildren().add(card);
+    }
+
+    /** The unusual-spending notes the Overview shows for {@code ym} (not yet dismissed). */
+    static List<Anomaly> anomaliesToShow(SharedState state, YearMonth ym) {
+        // The full ledger: the detector needs the recurring occurrences to recognise the
+        // imports that pay them (and not flag your rent as "large" every month).
+        List<Anomaly> anomalies = AnomalyDetector.detect(
+            new ArrayList<>(state.getExpenseList()),
+            ym, state.getCurrencySymbol(),
+            state.getCurrencyManager(), state.getRecurringCoverage());
+        anomalies.removeIf(a -> state.getDismissedAnomalyKeys().contains(a.getDismissKey()));
+        // "Uncategorized is unusually high" repeats the needs-a-category note.
+        anomalies.removeIf(a -> a.getExpense() != null
+            && TransactionClassifier.UNCATEGORIZED.equals(a.getExpense().getCategory()));
+        return anomalies;
     }
 
     // ======================== UPCOMING BILL REMINDERS ========================
@@ -561,7 +647,7 @@ public class DashboardController {
         java.time.LocalDate today = java.time.LocalDate.now();
         List<Expense> upcoming = state.getManager().getUpcomingRecurring(
             today.plusDays(1), today.plusDays(REMINDER_WINDOW_DAYS));
-        // Bills are money going out — drop income, refunds, and analytics-excluded series.
+        // Bills are money going out — drop income, refunds, and excluded series.
         upcoming.removeIf(e -> e.isIncome() || e.isRefund() || e.isExcluded());
         if (upcoming.isEmpty()) return;
 
@@ -569,28 +655,24 @@ public class DashboardController {
             .mapToDouble(e -> state.getCurrencyManager().toBase(e.getAmount(), e.getCurrency()))
             .sum();
 
-        HBox headerRow = new HBox(8);
-        headerRow.setAlignment(Pos.CENTER_LEFT);
-        headerRow.setPadding(new Insets(6, 10, 6, 10));
-        headerRow.setStyle("-fx-background-color: rgba(92, 107, 192, 0.12); -fx-border-color: #5C6BC0; "
-            + "-fx-border-width: 0 0 0 3; -fx-background-radius: 6; -fx-border-radius: 6;");
-        Label icon = new Label("📅");
-        icon.setStyle("-fx-font-size: 13px;");
-        Label headerLabel = new Label(String.format("%d upcoming bill%s in the next %d days — %s",
-            upcoming.size(), upcoming.size() == 1 ? "" : "s", REMINDER_WINDOW_DAYS, fmt(totalBase)));
-        headerLabel.setStyle("-fx-text-fill: #9FA8DA; -fx-font-size: 12px; -fx-font-weight: bold;");
-        headerLabel.setWrapText(true);
-        HBox.setHgrow(headerLabel, Priority.ALWAYS);
-        headerRow.getChildren().addAll(icon, headerLabel);
-        remindersBox.getChildren().add(headerRow);
+        VBox card = new VBox(8);
+        card.getStyleClass().add("card");
+        Label title = new Label("Coming up in the next " + REMINDER_WINDOW_DAYS + " days");
+        title.getStyleClass().add("card-title");
+        Label total = new Label(upcoming.size() + " bill" + (upcoming.size() == 1 ? "" : "s") + " · " + fmt(totalBase));
+        total.getStyleClass().add("muted-text");
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        HBox header = new HBox(8, title, spacer, total);
+        header.setAlignment(Pos.BASELINE_LEFT);
+        card.getChildren().add(header);
 
         int shown = 0;
         for (Expense bill : upcoming) {
             if (shown >= 6) {
-                Label more = new Label(String.format("+%d more…", upcoming.size() - shown));
-                more.setStyle("-fx-text-fill: #757575; -fx-font-size: 11px; -fx-font-style: italic;");
-                more.setPadding(new Insets(0, 0, 0, 14));
-                remindersBox.getChildren().add(more);
+                Label more = new Label("+" + (upcoming.size() - shown) + " more");
+                more.getStyleClass().add("faint-text");
+                card.getChildren().add(more);
                 break;
             }
             long days = java.time.temporal.ChronoUnit.DAYS.between(today, bill.getDate());
@@ -598,24 +680,25 @@ public class DashboardController {
             String name = bill.getDescription() != null && !bill.getDescription().isEmpty()
                 ? bill.getDescription() : bill.getCategory();
 
-            HBox row = new HBox(8);
-            row.setAlignment(Pos.CENTER_LEFT);
-            row.setPadding(new Insets(2, 10, 2, 14));
-            Label dot = new Label("•");
-            dot.setStyle("-fx-text-fill: #9FA8DA; -fx-font-size: 12px;");
-            Label text = new Label(String.format("%s — due %s (%s)", name, due,
-                bill.getDate().format(java.time.format.DateTimeFormatter.ofPattern("d MMM"))));
-            text.setStyle("-fx-text-fill: #B0BEC5; -fx-font-size: 11px;");
-            text.setWrapText(true);
-            HBox.setHgrow(text, Priority.ALWAYS);
+            Label when = new Label(bill.getDate().format(java.time.format.DateTimeFormatter.ofPattern("d MMM")));
+            when.getStyleClass().add("list-row-date");
+            Label text = new Label(name);
+            text.getStyleClass().add("list-row-text");
+            Label dueLabel = new Label(due);
+            dueLabel.getStyleClass().add("faint-text");
+            VBox textBox = new VBox(1, text, dueLabel);
+            HBox.setHgrow(textBox, Priority.ALWAYS);
             String code = bill.getCurrency() != null ? bill.getCurrency()
                 : state.getCurrencyManager().getBaseCurrency();
             Label amt = new Label(UIUtils.fmt(bill.getAmount(), CurrencyManager.getSymbol(code)));
-            amt.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 11px; -fx-font-weight: bold;");
-            row.getChildren().addAll(dot, text, amt);
-            remindersBox.getChildren().add(row);
+            amt.getStyleClass().add("list-row-amount");
+            HBox row = new HBox(12, when, textBox, amt);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.getStyleClass().add("list-row");
+            card.getChildren().add(row);
             shown++;
         }
+        remindersBox.getChildren().add(card);
     }
 
     // ======================== SAVINGS GOALS ========================
@@ -625,8 +708,9 @@ public class DashboardController {
         List<SavingsGoal> goals = state.getSavingsGoals();
 
         if (goals.isEmpty()) {
-            Label hint = new Label("No savings goals yet. Click \"Manage Goals\" to create one.");
-            hint.setStyle("-fx-text-fill: #757575; -fx-font-size: 12px; -fx-font-style: italic;");
+            Label hint = new Label("Saving for something? Add a goal with Manage and track it here.");
+            hint.getStyleClass().add("empty-state-hint");
+            hint.setWrapText(true);
             goalsProgressBox.getChildren().add(hint);
             return;
         }
@@ -641,21 +725,21 @@ public class DashboardController {
             row.setAlignment(Pos.CENTER_LEFT);
 
             Label nameLabel = new Label(goal.getName());
-            nameLabel.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 13px; -fx-font-weight: bold;");
+            nameLabel.getStyleClass().add("bar-name");
             nameLabel.setMinWidth(120);
 
             ProgressBar bar = new ProgressBar(Math.min(pct, 1.0));
             bar.setPrefWidth(200);
             bar.setPrefHeight(16);
-            bar.setStyle(pct >= 1.0 ? "-fx-accent: #43A047;" : "-fx-accent: #5C6BC0;");
+            if (pct >= 1.0) bar.getStyleClass().add("progress-done");
             HBox.setHgrow(bar, Priority.ALWAYS);
 
             Label pctLabel = new Label(String.format("%.0f%%", pct * 100));
-            pctLabel.setStyle("-fx-text-fill: " + (pct >= 1.0 ? "#43A047" : "#E0E0E0") + "; -fx-font-size: 12px; -fx-font-weight: bold;");
+            pctLabel.getStyleClass().addAll("bar-amount", pct >= 1.0 ? "kpi-good" : "bar-amount");
             pctLabel.setMinWidth(45);
 
             Label amountLabel = new Label(fmt(saved) + " / " + fmt(goal.getTargetAmount()));
-            amountLabel.setStyle("-fx-text-fill: #A0A0A0; -fx-font-size: 11px;");
+            amountLabel.getStyleClass().add("muted-text");
 
             row.getChildren().addAll(nameLabel, bar, pctLabel, amountLabel);
 
@@ -663,7 +747,7 @@ public class DashboardController {
                 long daysLeft = java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.now(), goal.getDeadline());
                 String deadlineText = daysLeft > 0 ? daysLeft + " days left" : (daysLeft == 0 ? "Due today" : Math.abs(daysLeft) + " days overdue");
                 Label deadlineLabel = new Label(deadlineText);
-                deadlineLabel.setStyle("-fx-text-fill: " + (daysLeft < 0 ? "#EF5350" : "#A0A0A0") + "; -fx-font-size: 10px;");
+                deadlineLabel.getStyleClass().add(daysLeft < 0 ? "bar-note-over" : "faint-text");
                 row.getChildren().add(deadlineLabel);
             }
 
@@ -679,132 +763,74 @@ public class DashboardController {
 
     // ======================== BUDGET ALERTS ========================
 
+    /** One note listing categories that went over budget (the bars show the rest). */
     private void updateBudgetAlerts(Map<String, Double> categoryMap) {
         budgetAlertBox.getChildren().clear();
         Map<String, Double> budgets = state.getBudgets();
         if (budgets.isEmpty()) return;
 
-        List<BudgetAlert> alerts = new ArrayList<>();
+        List<BudgetAlert> over = new ArrayList<>();
         for (Map.Entry<String, Double> entry : categoryMap.entrySet()) {
             double budget = budgets.getOrDefault(entry.getKey(), 0.0);
-            if (budget > 0) {
-                double spent = entry.getValue();
-                double pct = (spent / budget) * 100;
-                if (pct >= 80) {
-                    alerts.add(new BudgetAlert(entry.getKey(), spent, budget));
-                }
+            if (budget > 0 && entry.getValue() > budget) {
+                over.add(new BudgetAlert(entry.getKey(), entry.getValue(), budget));
             }
         }
+        if (over.isEmpty()) return;
+        over.sort(Comparator.comparingDouble(BudgetAlert::getPercentUsed).reversed());
 
-        if (alerts.isEmpty()) return;
-
-        alerts.sort(Comparator.comparingDouble(BudgetAlert::getPercentUsed).reversed());
-
-        for (BudgetAlert alert : alerts) {
-            boolean isDanger = alert.getSeverity() == BudgetAlert.Severity.DANGER;
-            String borderColor = isDanger ? "#E53935" : "#FF9800";
-            String bgColor = isDanger ? "rgba(229, 57, 53, 0.1)" : "rgba(255, 152, 0, 0.1)";
-            String textColor = isDanger ? "#EF5350" : "#FFB74D";
-
-            HBox alertBox = new HBox(8);
-            alertBox.setAlignment(Pos.CENTER_LEFT);
-            alertBox.setPadding(new Insets(8, 12, 8, 12));
-            alertBox.setStyle(String.format(
-                "-fx-background-color: %s; -fx-border-color: %s; -fx-border-width: 0 0 0 3; "
-                + "-fx-background-radius: 6; -fx-border-radius: 6;", bgColor, borderColor));
-
-            String icon = isDanger ? "\u26A0" : "\u25CF";
-            Label iconLabel = new Label(icon);
-            iconLabel.setStyle("-fx-text-fill: " + textColor + "; -fx-font-size: 14px;");
-
-            String message;
-            if (isDanger) {
-                double over = alert.getSpentAmount() - alert.getBudgetAmount();
-                message = String.format("%s: Budget exceeded by %s (%.0f%% used)",
-                    alert.getCategory(), fmt(over), alert.getPercentUsed());
-            } else {
-                double remaining = alert.getBudgetAmount() - alert.getSpentAmount();
-                message = String.format("%s: %.0f%% of %s budget used (%s remaining)",
-                    alert.getCategory(), alert.getPercentUsed(), fmt(alert.getBudgetAmount()), fmt(remaining));
-            }
-
-            Label msgLabel = new Label(message);
-            msgLabel.setStyle("-fx-text-fill: " + textColor + "; -fx-font-size: 12px; -fx-font-weight: bold;");
-            msgLabel.setWrapText(true);
-            HBox.setHgrow(msgLabel, Priority.ALWAYS);
-
-            alertBox.getChildren().addAll(iconLabel, msgLabel);
-            budgetAlertBox.getChildren().add(alertBox);
+        List<String> parts = new ArrayList<>();
+        for (BudgetAlert a : over) {
+            parts.add(a.getCategory() + " by " + fmt(a.getSpentAmount() - a.getBudgetAmount()));
         }
+        String title = over.size() == 1 ? over.get(0).getCategory() + " is over budget"
+            : over.size() + " categories are over budget";
+        budgetAlertBox.getChildren().add(notice("warn", title, "Over: " + String.join(" · ", parts) + ".", null, null));
     }
 
     // ======================== BUDGET HANDLERS ========================
 
-    private void handleSetBudget() {
-        CategoryTotal selected = categoryTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            UIUtils.showMessage("Please select a category to set a budget for", true, errorLabel);
-            return;
-        }
-
-        TextInputDialog dialog = new TextInputDialog(
-                selected.getBudget() > 0 ? String.format("%.2f", selected.getBudget()) : "");
+    private void handleSetBudget(String category) {
+        Double current = state.getBudgets().get(category);
+        TextInputDialog dialog = new TextInputDialog(current != null && current > 0 ? String.format("%.2f", current) : "");
         dialog.initOwner(state.getStage());
-        dialog.setTitle("Set Budget");
-        dialog.setHeaderText("Set monthly budget for: " + selected.getCategory());
-        dialog.setContentText("Budget amount:");
-        dialog.getDialogPane().getStylesheets().add(
-                getClass().getResource("/styles.css").toExternalForm());
+        dialog.setTitle("Monthly budget");
+        dialog.setHeaderText("Monthly budget for " + category);
+        dialog.setContentText("Amount:");
+        UIUtils.applyStylesheet(dialog.getDialogPane());
 
         dialog.showAndWait().ifPresent(input -> {
+            Double parsed = input.isBlank() ? Double.valueOf(0.0) : Amounts.parse(input);
+            if (parsed == null || parsed < 0) {
+                UIUtils.showMessage("Enter a positive amount", true, errorLabel);
+                return;
+            }
+            Map<String, Double> budgets = state.getBudgets();
+            if (parsed > 0) budgets.put(category, parsed); else budgets.remove(category);
             try {
-                double budget = input.isEmpty() ? 0.0 : Double.parseDouble(input);
-                if (budget < 0) {
-                    UIUtils.showMessage("Budget cannot be negative", true, errorLabel);
-                    return;
-                }
-                Map<String, Double> budgets = state.getBudgets();
-                if (budget > 0) {
-                    budgets.put(selected.getCategory(), budget);
-                } else {
-                    budgets.remove(selected.getCategory());
-                }
                 state.getStorage().saveBudgets(budgets);
-                updateTotalExpenses();
-                UIUtils.showMessage("Budget set for " + selected.getCategory(), false, errorLabel);
-            } catch (NumberFormatException ex) {
-                UIUtils.showMessage("Invalid budget amount", true, errorLabel);
             } catch (IOException ex) {
                 UIUtils.showMessage("Error saving budget: " + ex.getMessage(), true, errorLabel);
+                return;
             }
+            updateTotalExpenses();
+            Toast.show(parsed > 0 ? "Budget set for " + category : "Budget removed for " + category);
         });
     }
 
-    private void handleClearBudget() {
-        CategoryTotal selected = categoryTable.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            UIUtils.showMessage("Please select a category", true, errorLabel);
-            return;
-        }
-        state.getBudgets().remove(selected.getCategory());
+    private void handleClearBudget(String category) {
+        state.getBudgets().remove(category);
         try {
             state.getStorage().saveBudgets(state.getBudgets());
-            updateTotalExpenses();
-            UIUtils.showMessage("Budget cleared for " + selected.getCategory(), false, errorLabel);
         } catch (IOException ex) {
             UIUtils.showMessage("Error saving budget: " + ex.getMessage(), true, errorLabel);
+            return;
         }
+        updateTotalExpenses();
+        Toast.show("Budget removed for " + category);
     }
 
     // ======================== INCOME HANDLERS ========================
-
-    @FXML
-    private void handleToggleIncome() {
-        boolean show = !incomeFieldsBox.isVisible();
-        incomeFieldsBox.setVisible(show);
-        incomeFieldsBox.setManaged(show);
-        toggleIncomeButton.setText(show ? "Hide" : "Edit");
-    }
 
     @FXML
     private void handleDeleteIncome() {
@@ -850,7 +876,7 @@ public class DashboardController {
         }
         YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
         List<Expense> monthIncome = state.getManager().getExpenses().stream()
-                .filter(e -> e.isIncome() && YearMonth.from(e.getDate()).equals(selectedYearMonth))
+                .filter(e -> SharedState.isIncomeItem(e) && YearMonth.from(e.getDate()).equals(selectedYearMonth))
                 .sorted(Comparator.comparing(Expense::getDate).reversed())
                 .collect(Collectors.toList());
         state.getIncomeList().setAll(monthIncome);
@@ -908,21 +934,6 @@ public class DashboardController {
         return state.getCurrencyManager().toBase(e.getAmount(), e.getCurrency());
     }
 
-    private double computeMonthlyDebtObligations() {
-        double total = 0;
-        for (Debt debt : state.getDebts()) {
-            double paid = state.getDebtPayments().stream()
-                .filter(p -> p.getDebtId().equals(debt.getId()))
-                .mapToDouble(DebtPayment::getAmount).sum();
-            double balance = debt.getRemainingBalance(paid);
-            if (balance > 0.01) {
-                double payment = debt.getMonthlyPayment() > 0 ? debt.getMonthlyPayment() : debt.calculateMonthlyPayment();
-                total += state.getCurrencyManager().toBase(payment, debt.getCurrency());
-            }
-        }
-        return total;
-    }
-
     // ======================== DEBT SUMMARY ========================
 
     private void updateDebtSummary() {
@@ -939,39 +950,45 @@ public class DashboardController {
         double totalMonthly = 0;
 
         for (Debt debt : state.getDebts()) {
-            double paid = state.getDebtPayments().stream()
-                .filter(p -> p.getDebtId().equals(debt.getId()))
-                .mapToDouble(DebtPayment::getAmount).sum();
-            double balance = debt.getRemainingBalance(paid);
+            // Manual payments + imported payments matching the debt's keyword; with none,
+            // the scheduled balance (estimated). Amounts are in the debt's own currency.
+            Debt.BalanceStatus status = state.debtStatus(debt);
+            double balance = status.balance;
             double payment = debt.getMonthlyPayment() > 0 ? debt.getMonthlyPayment() : debt.calculateMonthlyPayment();
-            double totalCost = debt.getTotalCost();
-            double progress = totalCost > 0 ? Math.min(paid / totalCost, 1.0) : 0;
+            double progress = debt.getPrincipal() > 0
+                ? Math.max(0, Math.min(1, (debt.getPrincipal() - balance) / debt.getPrincipal()))
+                : (balance <= 0.01 ? 1 : 0);
 
-            totalBalance += balance;
-            if (balance > 0.01) totalMonthly += payment;
+            // Totals mix debts in different currencies, so sum in the base currency.
+            totalBalance += state.debtToBase(debt, balance);
+            if (balance > 0.01) totalMonthly += state.debtToBase(debt, payment);
 
             javafx.scene.layout.HBox row = new javafx.scene.layout.HBox(10);
             row.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
 
             Label nameLabel = new Label(debt.getName());
-            nameLabel.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 13px; -fx-min-width: 120;");
+            nameLabel.getStyleClass().add("bar-name");
+            nameLabel.setMinWidth(120);
 
             javafx.scene.control.ProgressBar bar = new javafx.scene.control.ProgressBar(progress);
             bar.setPrefWidth(120);
             bar.setPrefHeight(14);
-            bar.setStyle(balance <= 0.01 ? "-fx-accent: #26DE81;" : "-fx-accent: #5C6BC0;");
+            if (balance <= 0.01) bar.getStyleClass().add("progress-done");
 
-            Label balLabel = new Label(UIUtils.fmt(balance, state.getCurrencySymbol()) + " remaining");
-            balLabel.setStyle("-fx-text-fill: #B0B0B0; -fx-font-size: 12px;");
+            String balText = debt.getCurrency() != null && CurrencyManager.CURRENCIES.containsKey(debt.getCurrency())
+                ? CurrencyManager.fmt(balance, debt.getCurrency())
+                : UIUtils.fmt(balance, state.getCurrencySymbol());
+            Label balLabel = new Label(balText + " remaining" + (status.estimated ? " (est.)" : ""));
+            balLabel.getStyleClass().add("muted-text");
 
             row.getChildren().addAll(nameLabel, bar, balLabel);
             debtSummaryContent.getChildren().add(row);
         }
 
-        Label totalLine = new Label(String.format("Total: %s debt  |  %s/month in payments",
+        Label totalLine = new Label(String.format("%s owed in total · %s a month in repayments",
             UIUtils.fmt(totalBalance, state.getCurrencySymbol()),
             UIUtils.fmt(totalMonthly, state.getCurrencySymbol())));
-        totalLine.setStyle("-fx-text-fill: #FF6F61; -fx-font-size: 13px; -fx-font-weight: bold; -fx-padding: 6 0 0 0;");
+        totalLine.getStyleClass().add("card-footer");
         debtSummaryContent.getChildren().add(totalLine);
     }
 
@@ -995,18 +1012,18 @@ public class DashboardController {
         exchangeRatesBox.setManaged(true);
 
         Label baseLabel = new Label("Base: " + CurrencyManager.getDisplayName(baseCurrency));
-        baseLabel.setStyle("-fx-text-fill: #B0B0B0; -fx-font-size: 12px;");
+        baseLabel.getStyleClass().add("muted-text");
         exchangeRatesContent.getChildren().add(baseLabel);
 
         for (Map.Entry<String, Double> entry : rates.entrySet()) {
             Label rateLabel = new Label(String.format("1 %s = %.4f %s", entry.getKey(), entry.getValue(), baseCurrency));
-            rateLabel.setStyle("-fx-text-fill: #E0E0E0; -fx-font-size: 13px;");
+            rateLabel.getStyleClass().add("list-row-text");
             exchangeRatesContent.getChildren().add(rateLabel);
         }
 
         if (rates.isEmpty()) {
-            Label hint = new Label("No rates configured. Click 'Edit Rates' to add exchange rates.");
-            hint.setStyle("-fx-text-fill: #888888; -fx-font-size: 12px; -fx-font-style: italic;");
+            Label hint = new Label("No rates yet. Use Edit to add them.");
+            hint.getStyleClass().add("empty-state-hint");
             exchangeRatesContent.getChildren().add(hint);
         }
     }
@@ -1077,7 +1094,7 @@ public class DashboardController {
         javafx.scene.control.ScrollPane scrollPane = new javafx.scene.control.ScrollPane(content);
         scrollPane.setFitToWidth(true);
         scrollPane.setPrefSize(450, 400);
-        scrollPane.setStyle("-fx-background-color: #1E1E1E;");
+        scrollPane.setStyle("-fx-background-color: transparent; -fx-background: #191c20;");
 
         javafx.scene.control.Alert dialog = new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.NONE);
         dialog.initOwner(state.getStage());
@@ -1138,8 +1155,4 @@ public class DashboardController {
 
     // --- Public accessors for MainController's copyable view content ---
 
-    public String getTotalSpentText() { return dashTotalSpent.getText(); }
-    public String getTopCategoryText() { return dashTopCategory.getText() + "  " + dashTopCategoryAmount.getText(); }
-    public String getBudgetStatusText() { return dashBudgetStatus.getText() + "  " + dashBudgetSubtitle.getText(); }
-    public String getMonthChangeText() { return dashMonthChange.getText(); }
 }

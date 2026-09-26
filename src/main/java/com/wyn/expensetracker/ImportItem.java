@@ -12,8 +12,13 @@ public class ImportItem {
     private final StringProperty status = new SimpleStringProperty("Uncategorized");
     private final BooleanProperty duplicate = new SimpleBooleanProperty(false);
     private final BooleanProperty income = new SimpleBooleanProperty(false);
+    private final BooleanProperty transfer = new SimpleBooleanProperty(false);
+    private final BooleanProperty refund = new SimpleBooleanProperty(false);
     private Expense duplicateMatch;
     private String sourceFile;
+    private boolean credit;
+    private Double balance;      // running balance after this line, when the statement shows one
+    private String fingerprint;  // stable identity used to skip re-imported transactions
 
     public ImportItem(double amount, String description, LocalDate date) {
         this.amount.set(amount);
@@ -63,6 +68,27 @@ public class ImportItem {
     public boolean isIncome() { return income.get(); }
     public void setIncome(boolean val) { income.set(val); }
     public BooleanProperty incomeProperty() { return income; }
+
+    // Transfer between the user's own accounts: imported for completeness but
+    // excluded from spend and income totals.
+    public boolean isTransfer() { return transfer.get(); }
+    public void setTransfer(boolean val) { transfer.set(val); }
+    public BooleanProperty transferProperty() { return transfer; }
+
+    // Money back for an earlier purchase: reduces spend rather than counting as income.
+    public boolean isRefund() { return refund.get(); }
+    public void setRefund(boolean val) { refund.set(val); }
+    public BooleanProperty refundProperty() { return refund; }
+
+    /** Direction of the money as printed on the statement: true = into the account. */
+    public boolean isCredit() { return credit; }
+    public void setCredit(boolean val) { this.credit = val; }
+
+    public Double getBalance() { return balance; }
+    public void setBalance(Double val) { this.balance = val; }
+
+    public String getFingerprint() { return fingerprint; }
+    public void setFingerprint(String val) { this.fingerprint = val; }
 
     // Source file tracking (for per-file import logs)
     public String getSourceFile() { return sourceFile; }

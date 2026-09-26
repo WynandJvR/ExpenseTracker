@@ -76,7 +76,7 @@ public class ProfileManager {
     public String getActiveProfile() {
         File file = new File(rootDir + File.separator + ACTIVE_PROFILE_FILE);
         if (!file.exists()) return DEFAULT_PROFILE;
-        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+        try (BufferedReader reader = FileStorage.openReader(file)) {
             String line = reader.readLine();
             if (line != null && !line.trim().isEmpty()) {
                 File profileDir = new File(getProfileDir(line.trim()));
@@ -90,7 +90,22 @@ public class ProfileManager {
 
     public void setActiveProfile(String name) throws IOException {
         Path target = Path.of(rootDir + File.separator + ACTIVE_PROFILE_FILE);
-        Files.writeString(target, name);
+        Path dir = target.toAbsolutePath().getParent();
+        if (dir != null) Files.createDirectories(dir);
+        // Write to a temp file in the same directory, then atomically replace, so a crash
+        // mid-write can never leave an empty/partial active-profile file.
+        Path tmp = Files.createTempFile(dir, ACTIVE_PROFILE_FILE, ".tmp");
+        try {
+            Files.writeString(tmp, name, java.nio.charset.StandardCharsets.UTF_8);
+            try {
+                Files.move(tmp, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(tmp);
+        }
     }
 
     /**

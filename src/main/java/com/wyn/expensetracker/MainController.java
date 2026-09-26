@@ -153,6 +153,22 @@ public class MainController {
         // Install the global toast overlay for transient confirmations
         Toast.init(contentArea);
 
+        // Cross-screen shortcuts: "Sort them" / "Review uncategorised" and "Import" buttons
+        Runnable reviewUncategorized = () -> {
+            navExpenses.setSelected(true);
+            expensesController.showUncategorized();
+        };
+        dashboardController.setNavigation(reviewUncategorized, () -> navImport.setSelected(true));
+        dashboardController.setOnShowCategory(category -> {
+            navExpenses.setSelected(true);
+            expensesController.showCategoryAllTime(category);
+        });
+        importTabController.setOnReviewUncategorized(reviewUncategorized);
+        importTabController.setOnImported(latestImported -> {
+            // Show the newest imported month right away (unless it's in the future).
+            if (latestImported != null && !latestImported.isAfter(YearMonth.now())) showMonth(latestImported);
+        });
+
         // Initialize sub-controllers
         dashboardController.init(state);
         expensesController.init(state);
@@ -170,6 +186,7 @@ public class MainController {
 
         // Restore UI state from previous session
         restoreUIState();
+        showLatestMonthWithDataIfEmpty();
 
         // Track floating (non-maximized) bounds so a session closed while maximized still
         // restores to a usable size rather than snapping to the default.
@@ -305,6 +322,7 @@ public class MainController {
     }
 
     private void refreshAllViews() {
+        updateStatusBar();
         expensesController.refresh();
         dashboardController.refresh();
         analyticsController.refresh();
@@ -348,13 +366,17 @@ public class MainController {
     }
 
     private void updateStatusBar() {
-        statusSaveLabel.setText("Last saved: just now");
+        statusSaveLabel.setText("All changes saved");
 
         int total = state.getExpenseList().size();
-        long thisMonth = state.getFilteredData().size();
-        double monthTotal = state.getFilteredData().stream()
-            .filter(e -> !e.isExcluded() && !e.isIncome() && !e.isRefund())
-            .mapToDouble(e -> state.getCurrencyManager().toBase(e.getAmount(), e.getCurrency())).sum();
+        YearMonth shown = state.getSelectedYearMonth();
+        long thisMonth = shown == null ? 0 : state.getExpenseList().stream()
+            .filter(e -> YearMonth.from(e.getDate()).equals(shown)).count();
+        YearMonth selectedYm = state.getSelectedYearMonth();
+        // Same net-spend definition as the dashboard (countsAsSpend + refund netting).
+        double monthTotal = selectedYm != null
+            ? state.netSpendForMonth(selectedYm)
+            : state.netSpend(state.getFilteredData());
 
         String monthLabel = "this month";
         if (yearCombo.getValue() != null && monthCombo.getValue() != null) {
@@ -363,16 +385,15 @@ public class MainController {
         }
 
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("%d expenses (%d in %s)", total, thisMonth, monthLabel));
-        sb.append(String.format("  |  Month total: %s", UIUtils.fmt(monthTotal, state.getCurrencySymbol())));
+        sb.append(String.format(Locale.US, "%,d transactions  ·  %s: %d, spent %s", total, monthLabel, thisMonth,
+            UIUtils.fmt(monthTotal, state.getCurrencySymbol())));
 
-        YearMonth ym = state.getSelectedYearMonth();
+        YearMonth ym = selectedYm;
         if (ym != null) {
-            Double monthIncome = state.getIncomes().get(ym);
-            double effectiveIncome = (monthIncome != null && monthIncome > 0) ? monthIncome : state.getRecurringIncome();
+            double effectiveIncome = state.incomeForMonth(ym);
             if (effectiveIncome > 0) {
                 double remaining = effectiveIncome - monthTotal;
-                sb.append(String.format("  |  Remaining: %s", UIUtils.fmt(remaining, state.getCurrencySymbol())));
+                sb.append(String.format(", left %s", UIUtils.fmt(remaining, state.getCurrencySymbol())));
             }
         }
 
@@ -413,6 +434,33 @@ public class MainController {
     @FXML
     private void handleNextMonth() {
         navigateMonth(1);
+    }
+
+    /**
+     * If the selected month has no real transactions (e.g. the newest statement ends last
+     * month), move to the most recent month that has some, so the Overview isn't empty.
+     */
+    private void showLatestMonthWithDataIfEmpty() {
+        YearMonth selected = state.getSelectedYearMonth();
+        YearMonth latest = null;
+        boolean selectedHasData = false;
+        LocalDate today = LocalDate.now();
+        for (Expense e : state.getManager().getExpenses()) {
+            if (e.getRecurringId() != null || e.getDate().isAfter(today)) continue;
+            YearMonth ym = YearMonth.from(e.getDate());
+            if (ym.equals(selected)) selectedHasData = true;
+            if (latest == null || ym.isAfter(latest)) latest = ym;
+        }
+        if (!selectedHasData && latest != null) showMonth(latest);
+    }
+
+    private void showMonth(YearMonth ym) {
+        if (!state.getYearList().contains(ym.getYear())) {
+            state.getYearList().add(ym.getYear());
+            FXCollections.sort(state.getYearList());
+        }
+        yearCombo.setValue(ym.getYear());
+        monthCombo.setValue(ym.getMonth());
     }
 
     @FXML
@@ -726,6 +774,13 @@ public class MainController {
         state.setCurrencySymbol(CurrencyManager.getSymbol(baseCurr));
         state.setRecurringIncome(state.getStorage().loadRecurringIncome());
 
+        // Persist the switch first: the Import screen loads the active profile's import history.
+        try {
+            state.getProfileManager().setActiveProfile(profileName);
+        } catch (Exception e) {
+            System.err.println("Error saving active profile: " + e.getMessage());
+        }
+
         // Re-init sub-controllers with updated state
         dashboardController.init(state);
         expensesController.init(state);
@@ -735,12 +790,6 @@ public class MainController {
         debtsTabController.init(state);
         settingsController.init(state);
         settingsController.refresh();
-
-        try {
-            state.getProfileManager().setActiveProfile(profileName);
-        } catch (Exception e) {
-            System.err.println("Error saving active profile: " + e.getMessage());
-        }
 
         state.getStage().setTitle("Expense Tracker - " + profileName);
         state.setProjectionsNeedUpdate(true);
@@ -896,11 +945,8 @@ public class MainController {
 
         switch (state.getCurrentViewName()) {
             case "dashboard" -> {
-                sb.append("=== Dashboard ===\n\n");
-                sb.append("Total Spent: ").append(dashboardController.getTotalSpentText()).append("\n");
-                sb.append("Top Category: ").append(dashboardController.getTopCategoryText()).append("\n");
-                sb.append("Budget Status: ").append(dashboardController.getBudgetStatusText()).append("\n");
-                sb.append("vs Last Month: ").append(dashboardController.getMonthChangeText()).append("\n");
+                sb.append("=== Overview ===\n\n");
+                sb.append(dashboardController.getSummaryText());
             }
             case "expenses" -> {
                 sb.append("=== Expenses ===\n\n");

@@ -8,11 +8,13 @@ import java.util.List;
 public class QifStatementParser implements BankStatementParser {
 
     private static final DateTimeFormatter[] DATE_FORMATS = {
-        DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+        // Day-first before month-first: an ambiguous "03/04/2024" is 3 April in South Africa.
         DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+        DateTimeFormatter.ofPattern("MM/dd/yyyy"),
         DateTimeFormatter.ofPattern("yyyy-MM-dd"),
-        DateTimeFormatter.ofPattern("MM-dd-yyyy"),
         DateTimeFormatter.ofPattern("dd-MM-yyyy"),
+        DateTimeFormatter.ofPattern("MM-dd-yyyy"),
+        DateTimeFormatter.ofPattern("d/M/yyyy"),
         DateTimeFormatter.ofPattern("M/d/yyyy"),
     };
 
@@ -23,6 +25,7 @@ public class QifStatementParser implements BankStatementParser {
 
     @Override
     public List<ImportItem> parse(String text) {
+        chooseFormat(text);
         List<ImportItem> items = new ArrayList<>();
         String[] lines = text.split("\\r?\\n");
 
@@ -64,20 +67,19 @@ public class QifStatementParser implements BankStatementParser {
         if (amountStr == null || dateStr == null) return null;
 
         try {
-            double amount = Double.parseDouble(amountStr.replace(",", "").trim());
+            Double parsed = Amounts.parse(amountStr);
+            if (parsed == null) return null;
+            double amount = parsed;
             LocalDate date = parseDate(dateStr);
             if (date == null) return null;
 
             String description = buildDescription(payee, memo);
 
-            boolean isIncome = amount > 0;
-            double absAmount = Math.abs(amount);
+            double absAmount = Amounts.round2(Math.abs(amount));
             if (absAmount <= 0) return null;
 
-            String desc = isIncome ? "[CREDIT] " + description : description;
-            ImportItem item = new ImportItem(absAmount, desc, date);
-            item.setCategory("Uncategorized");
-            item.setIncome(isIncome);
+            ImportItem item = new ImportItem(absAmount, description, date);
+            item.setCredit(amount > 0);
             item.setStatus("Uncategorized");
             return item;
         } catch (Exception e) {
@@ -85,7 +87,36 @@ public class QifStatementParser implements BankStatementParser {
         }
     }
 
+    /** Chosen once per file so every record uses the same day/month order. */
+    private DateTimeFormatter fileFormat;
+
+    private static String cleanDate(String dateStr) {
+        dateStr = dateStr.replace(" ", "");
+        return dateStr.contains("'") ? dateStr.replace("'", "/20") : dateStr;
+    }
+
+    private void chooseFormat(String text) {
+        List<String> dates = new ArrayList<>();
+        for (String line : text.split("\\r?\\n")) {
+            if (line.startsWith("D")) dates.add(cleanDate(line.substring(1).trim()));
+        }
+        fileFormat = null;
+        int best = 0;
+        for (DateTimeFormatter fmt : DATE_FORMATS) {
+            int ok = 0;
+            for (String d : dates) {
+                try { LocalDate.parse(d, fmt); ok++; } catch (Exception ignored) {}
+            }
+            if (ok > best) { best = ok; fileFormat = fmt; }
+        }
+    }
+
     private LocalDate parseDate(String dateStr) {
+        if (fileFormat != null) {
+            try { return LocalDate.parse(cleanDate(dateStr), fileFormat); } catch (Exception ignored) {}
+        }
+        // Quicken pads single digits with spaces ("1/ 5'24")
+        dateStr = dateStr.replace(" ", "");
         // Handle QIF short date format: M/D'YY -> expand to M/D/20YY
         if (dateStr.contains("'")) {
             dateStr = dateStr.replace("'", "/20");

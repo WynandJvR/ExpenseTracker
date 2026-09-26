@@ -25,3 +25,9 @@ IMPLEMENTATION_PLAN.md
 
 # Tesseract OCR data (large binary)
 src/main/resources/tessdata/
+
+# Never commit bank statements or exports
+*.pdf
+*.ofx
+*.qfx
+*.qif

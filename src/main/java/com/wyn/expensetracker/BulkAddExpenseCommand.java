@@ -15,9 +15,9 @@ public class BulkAddExpenseCommand implements Command {
 
     @Override
     public void execute() {
-        for (Expense expense : expenses) {
-            manager.addExpense(expense);
-        }
+        // Atomic: validates everything before adding anything, so a bad row
+        // leaves no partial import behind.
+        manager.addExpenses(expenses);
     }
 
     @Override

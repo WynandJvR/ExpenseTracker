@@ -13,7 +13,7 @@
         <HBox styleClass="toolbar" alignment="CENTER_LEFT" spacing="10">
             <padding><Insets top="6" right="15" bottom="6" left="15"/></padding>
             <ComboBox fx:id="profileCombo" styleClass="profile-combo" promptText="Profile"/>
-            <MenuButton text="Manage" styleClass="profile-gear-button">
+            <MenuButton text="Profiles" styleClass="profile-gear-button">
                 <tooltip><Tooltip text="Manage Profiles"/></tooltip>
                 <items>
                     <MenuItem text="New Profile..." onAction="#handleCreateProfile"/>
@@ -23,10 +23,10 @@
                 </items>
             </MenuButton>
             <Separator orientation="VERTICAL" styleClass="toolbar-separator"/>
-            <Button fx:id="undoButton" text="Undo" styleClass="primary-button" disable="true" onAction="#handleUndo">
+            <Button fx:id="undoButton" text="Undo" styleClass="ghost-button" disable="true" onAction="#handleUndo">
                 <tooltip><Tooltip text="Undo (Ctrl+Z)"/></tooltip>
             </Button>
-            <Button fx:id="redoButton" text="Redo" styleClass="primary-button" disable="true" onAction="#handleRedo">
+            <Button fx:id="redoButton" text="Redo" styleClass="ghost-button" disable="true" onAction="#handleRedo">
                 <tooltip><Tooltip text="Redo (Ctrl+Y)"/></tooltip>
             </Button>
             <Button text="?" styleClass="help-button" onAction="#handleShowShortcuts">
@@ -44,35 +44,37 @@
             <Button text="&#x25B6;" styleClass="nav-arrow" onAction="#handleNextMonth">
                 <tooltip><Tooltip text="Next Month (Alt+Right)"/></tooltip>
             </Button>
-            <Button text="Today" styleClass="today-button" onAction="#handleThisMonth"/>
+            <Button text="This month" styleClass="today-button" onAction="#handleThisMonth"/>
             <Region HBox.hgrow="ALWAYS"/>
         </HBox>
     </top>
 
     <left>
         <VBox styleClass="sidebar-nav">
-            <padding><Insets top="12" bottom="12" left="4" right="4"/></padding>
-            <ToggleButton fx:id="navDashboard" text="Dashboard" styleClass="sidebar-nav-button" maxWidth="Infinity">
-                <graphic><Region styleClass="nav-icon nav-icon-dashboard"/></graphic>
+            <padding><Insets top="18" bottom="12" left="10" right="10"/></padding>
+            <Label text="Expense Tracker" styleClass="app-brand"/>
+            <ToggleButton fx:id="navDashboard" text="Overview" styleClass="sidebar-nav-button" maxWidth="Infinity">
+                <graphic><Region styleClass="nav-icon,nav-icon-dashboard"/></graphic>
             </ToggleButton>
-            <ToggleButton fx:id="navExpenses" text="Expenses" styleClass="sidebar-nav-button" maxWidth="Infinity">
-                <graphic><Region styleClass="nav-icon nav-icon-expenses"/></graphic>
-            </ToggleButton>
-            <ToggleButton fx:id="navRecurring" text="Recurring" styleClass="sidebar-nav-button" maxWidth="Infinity">
-                <graphic><Region styleClass="nav-icon nav-icon-recurring"/></graphic>
+            <ToggleButton fx:id="navExpenses" text="Transactions" styleClass="sidebar-nav-button" maxWidth="Infinity">
+                <graphic><Region styleClass="nav-icon,nav-icon-expenses"/></graphic>
             </ToggleButton>
             <ToggleButton fx:id="navImport" text="Import" styleClass="sidebar-nav-button" maxWidth="Infinity">
-                <graphic><Region styleClass="nav-icon nav-icon-import"/></graphic>
+                <graphic><Region styleClass="nav-icon,nav-icon-import"/></graphic>
+            </ToggleButton>
+            <Label text="PLAN" styleClass="nav-section"/>
+            <ToggleButton fx:id="navRecurring" text="Recurring" styleClass="sidebar-nav-button" maxWidth="Infinity">
+                <graphic><Region styleClass="nav-icon,nav-icon-recurring"/></graphic>
             </ToggleButton>
             <ToggleButton fx:id="navAnalytics" text="Analytics" styleClass="sidebar-nav-button" maxWidth="Infinity">
-                <graphic><Region styleClass="nav-icon nav-icon-analytics"/></graphic>
+                <graphic><Region styleClass="nav-icon,nav-icon-analytics"/></graphic>
             </ToggleButton>
             <ToggleButton fx:id="navDebts" text="Debts" styleClass="sidebar-nav-button" maxWidth="Infinity">
-                <graphic><Region styleClass="nav-icon nav-icon-debts"/></graphic>
+                <graphic><Region styleClass="nav-icon,nav-icon-debts"/></graphic>
             </ToggleButton>
             <Region VBox.vgrow="ALWAYS"/>
             <ToggleButton fx:id="navSettings" text="Settings" styleClass="sidebar-nav-button" maxWidth="Infinity">
-                <graphic><Region styleClass="nav-icon nav-icon-settings"/></graphic>
+                <graphic><Region styleClass="nav-icon,nav-icon-settings"/></graphic>
             </ToggleButton>
         </VBox>
     </left>
@@ -95,7 +97,7 @@
             <Label fx:id="statusSaveLabel" text="Ready" styleClass="status-text"/>
             <Region HBox.hgrow="ALWAYS"/>
             <Label fx:id="statusCountLabel" text="" styleClass="status-text"/>
-            <Label text="F1 for shortcuts" styleClass="status-hint"/>
+            <Label text="F1 · keyboard shortcuts" styleClass="status-hint"/>
         </HBox>
     </bottom>
 </BorderPane>

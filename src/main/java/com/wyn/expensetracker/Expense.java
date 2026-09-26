@@ -23,7 +23,8 @@ public class Expense {
         this.amount = amount;
         this.category = category;
         this.date = date;
-        this.description = description;
+        // Records are stored one per line; a CR/LF in the description would corrupt the row.
+        this.description = FileStorage.stripLineBreaks(description);
     }
 
     public Expense(double amount, String category, LocalDate date, String description, String recurringId, RecurringExpense sourceRecurringExpense) {

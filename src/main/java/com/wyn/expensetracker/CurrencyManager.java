@@ -54,9 +54,61 @@ public class CurrencyManager {
         return exchangeRates.getOrDefault(fromCurrency, 1.0);
     }
 
-    /** Returns true if a conversion rate is configured for the given currency. */
+    /**
+     * Returns true if a conversion rate is configured for the given currency. When this is
+     * false, {@link #getRate}/{@link #toBase} fall back to 1.0 — callers that display
+     * converted totals should use this (or {@link #missingRates}) to warn the user.
+     */
     public boolean hasRate(String currency) {
         return currency == null || currency.equals(baseCurrency) || exchangeRates.containsKey(currency);
+    }
+
+    /** Currency codes used by the given expenses that have no configured rate (sorted). */
+    public Set<String> missingRates(Collection<? extends Expense> expenses) {
+        Set<String> missing = new TreeSet<>();
+        if (expenses == null) return missing;
+        for (Expense e : expenses) {
+            if (e != null && !hasRate(e.getCurrency())) missing.add(e.getCurrency());
+        }
+        return missing;
+    }
+
+    /**
+     * Re-expresses rates stored relative to {@code oldBase} (1 X = rate(X) oldBase) relative
+     * to {@code newBase}: rate_new(X) = rate_old(X) / rate_old(newBase), and
+     * rate_new(oldBase) = 1 / rate_old(newBase). Returns null if the conversion is impossible
+     * because there is no valid rate for {@code newBase}. An empty input converts to empty.
+     */
+    public static Map<String, Double> convertRates(Map<String, Double> rates, String oldBase, String newBase) {
+        Map<String, Double> result = new LinkedHashMap<>();
+        if (rates == null || rates.isEmpty()) return result;
+        if (oldBase == null || newBase == null || oldBase.equals(newBase)) {
+            result.putAll(rates);
+            return result;
+        }
+        Double pivot = rates.get(newBase);
+        if (pivot == null || pivot <= 0 || pivot.isNaN() || pivot.isInfinite()) return null;
+        for (Map.Entry<String, Double> e : rates.entrySet()) {
+            if (e.getKey().equals(newBase) || e.getKey().equals(oldBase)) continue;
+            result.put(e.getKey(), e.getValue() / pivot);
+        }
+        result.put(oldBase, 1.0 / pivot);
+        return result;
+    }
+
+    /**
+     * Switches the base currency and converts the stored rates to it. Returns true if the
+     * rates were converted (or there were none); false if they could not be converted and
+     * were cleared — the caller should tell the user to re-enter them.
+     */
+    public boolean changeBaseCurrency(String newBase) {
+        if (newBase == null || newBase.equals(baseCurrency)) return true;
+        Map<String, Double> converted = convertRates(exchangeRates, baseCurrency, newBase);
+        baseCurrency = newBase;
+        exchangeRates.clear();
+        if (converted == null) return false;
+        exchangeRates.putAll(converted);
+        return true;
     }
 
     /** Convert an amount from its currency to the base currency. */

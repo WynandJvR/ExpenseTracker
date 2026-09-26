@@ -21,60 +21,30 @@ public class OfxStatementParser implements BankStatementParser {
         return upper.contains("<OFX>") || upper.contains("<STMTTRN>");
     }
 
+    private static final Pattern TRANSACTION_BLOCK = Pattern.compile(
+        "<STMTTRN>(.*?)(?=</STMTTRN>|<STMTTRN>|</BANKTRANLIST>|$)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
     @Override
     public List<ImportItem> parse(String text) {
+        // Match blocks across the whole text so minified single-line OFX works too.
         List<ImportItem> items = new ArrayList<>();
-        String[] lines = text.split("\\r?\\n");
-
-        boolean inTransaction = false;
-        String trnType = null;
-        String dateStr = null;
-        String amountStr = null;
-        String name = null;
-        String memo = null;
-
-        for (String line : lines) {
-            String trimmed = line.trim();
-
-            if (STMTTRN_START.matcher(trimmed).find()) {
-                inTransaction = true;
-                trnType = null;
-                dateStr = null;
-                amountStr = null;
-                name = null;
-                memo = null;
-                continue;
-            }
-
-            if (inTransaction && STMTTRN_END.matcher(trimmed).find()) {
-                ImportItem item = buildItem(trnType, dateStr, amountStr, name, memo);
-                if (item != null) items.add(item);
-                inTransaction = false;
-                continue;
-            }
-
-            if (inTransaction) {
-                Matcher m = TAG_PATTERN.matcher(trimmed);
-                while (m.find()) {
-                    String tag = m.group(1).toUpperCase();
-                    String value = m.group(2).trim();
-                    switch (tag) {
-                        case "TRNTYPE" -> trnType = value;
-                        case "DTPOSTED" -> dateStr = value;
-                        case "TRNAMT" -> amountStr = value;
-                        case "NAME" -> name = value;
-                        case "MEMO" -> memo = value;
-                    }
+        Matcher block = TRANSACTION_BLOCK.matcher(text);
+        while (block.find()) {
+            String trnType = null, dateStr = null, amountStr = null, name = null, memo = null;
+            Matcher m = TAG_PATTERN.matcher(block.group(1));
+            while (m.find()) {
+                String value = m.group(2).trim();
+                switch (m.group(1).toUpperCase()) {
+                    case "TRNTYPE" -> trnType = value;
+                    case "DTPOSTED" -> dateStr = value;
+                    case "TRNAMT" -> amountStr = value;
+                    case "NAME" -> name = value;
+                    case "MEMO" -> memo = value;
                 }
             }
-        }
-
-        // Handle SGML without closing tags — last transaction may not have </STMTTRN>
-        if (inTransaction) {
             ImportItem item = buildItem(trnType, dateStr, amountStr, name, memo);
             if (item != null) items.add(item);
         }
-
         return items;
     }
 
@@ -82,22 +52,20 @@ public class OfxStatementParser implements BankStatementParser {
         if (amountStr == null || dateStr == null) return null;
 
         try {
-            double amount = Double.parseDouble(amountStr.replace(",", "").trim());
+            Double parsed = Amounts.parse(amountStr);
+            if (parsed == null) return null;
+            double amount = parsed;
             // OFX dates: YYYYMMDD or YYYYMMDDHHMMSS with optional timezone
             String dateOnly = dateStr.length() >= 8 ? dateStr.substring(0, 8) : dateStr;
             LocalDate date = LocalDate.parse(dateOnly, OFX_DATE_FMT);
 
             String description = buildDescription(name, memo);
 
-            boolean isIncome = amount > 0;
-            double absAmount = Math.abs(amount);
+            double absAmount = Amounts.round2(Math.abs(amount));
             if (absAmount <= 0) return null;
 
-            String desc = isIncome ? "[CREDIT] " + description : description;
-            ImportItem item = new ImportItem(absAmount, desc, date);
-            item.setCategory("Uncategorized");
-            item.setIncome(isIncome);
-            item.setStatus("Uncategorized");
+            ImportItem item = new ImportItem(absAmount, description, date);
+            item.setCredit(amount > 0);
             return item;
         } catch (Exception e) {
             return null;

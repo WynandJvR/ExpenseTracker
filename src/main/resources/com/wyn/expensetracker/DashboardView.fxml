@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <?import javafx.geometry.Insets?>
+<?import javafx.scene.chart.*?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.control.cell.PropertyValueFactory?>
 <?import javafx.scene.layout.*?>
@@ -9,134 +10,139 @@
             xmlns:fx="http://javafx.com/fxml"
             fx:controller="com.wyn.expensetracker.DashboardController"
             fitToWidth="true" hbarPolicy="NEVER" styleClass="scroll-pane">
-    <VBox spacing="16" styleClass="content-view">
-        <padding><Insets top="24" right="28" bottom="24" left="28"/></padding>
+    <VBox spacing="20" styleClass="content-view">
+        <padding><Insets top="28" right="32" bottom="28" left="32"/></padding>
 
-        <Label text="Dashboard" styleClass="view-title"/>
+        <VBox spacing="4">
+            <Label fx:id="overviewTitle" text="Overview" styleClass="view-title"/>
+            <Label fx:id="overviewSubtitle" text="" styleClass="view-subtitle" wrapText="true"/>
+        </VBox>
 
-        <!-- Dashboard Cards -->
-        <HBox fx:id="dashboardCards" spacing="12" alignment="CENTER_LEFT">
-            <VBox styleClass="dashboard-card dashboard-card-spent" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
-                <Label text="Total Spent" styleClass="dashboard-card-title"/>
-                <TextField fx:id="dashTotalSpent" text="0.00" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+        <!-- Things that need the user's attention (uncategorised, stale statements, budgets) -->
+        <VBox fx:id="attentionBox" spacing="8"/>
+        <VBox fx:id="budgetAlertBox" spacing="8"/>
+
+        <!-- Headline numbers -->
+        <GridPane fx:id="kpiGrid" hgap="14" vgap="14">
+            <columnConstraints>
+                <ColumnConstraints percentWidth="25" hgrow="ALWAYS"/>
+                <ColumnConstraints percentWidth="25" hgrow="ALWAYS"/>
+                <ColumnConstraints percentWidth="25" hgrow="ALWAYS"/>
+                <ColumnConstraints percentWidth="25" hgrow="ALWAYS"/>
+            </columnConstraints>
+            <VBox styleClass="kpi-card" GridPane.columnIndex="0" spacing="4">
+                <Label text="Money in" styleClass="kpi-label"/>
+                <Label fx:id="kpiInValue" text="—" styleClass="kpi-value"/>
+                <Label fx:id="kpiInSub" text="" styleClass="kpi-sub" wrapText="true"/>
             </VBox>
-            <VBox styleClass="dashboard-card dashboard-card-top" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
-                <Label text="Top Category" styleClass="dashboard-card-title"/>
-                <TextField fx:id="dashTopCategory" text="-" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
-                <TextField fx:id="dashTopCategoryAmount" text="" editable="false" styleClass="dashboard-card-subtitle-field" alignment="CENTER"/>
+            <VBox styleClass="kpi-card" GridPane.columnIndex="1" spacing="4">
+                <Label text="Money out" styleClass="kpi-label"/>
+                <Label fx:id="kpiOutValue" text="—" styleClass="kpi-value"/>
+                <Label fx:id="kpiOutSub" text="" styleClass="kpi-sub" wrapText="true"/>
             </VBox>
-            <VBox styleClass="dashboard-card dashboard-card-budget" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
-                <Label text="Budget Status" styleClass="dashboard-card-title"/>
-                <TextField fx:id="dashBudgetStatus" text="-" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
-                <TextField fx:id="dashBudgetSubtitle" text="" editable="false" styleClass="dashboard-card-subtitle-field" alignment="CENTER"/>
+            <VBox styleClass="kpi-card" GridPane.columnIndex="2" spacing="4">
+                <Label text="Left over" styleClass="kpi-label"/>
+                <Label fx:id="kpiNetValue" text="—" styleClass="kpi-value"/>
+                <Label fx:id="kpiNetSub" text="" styleClass="kpi-sub" wrapText="true"/>
             </VBox>
-            <VBox styleClass="dashboard-card dashboard-card-trend" alignment="CENTER" spacing="2" HBox.hgrow="ALWAYS">
-                <Label text="vs Last Month" styleClass="dashboard-card-title"/>
-                <TextField fx:id="dashMonthChange" text="-" editable="false" styleClass="dashboard-card-value-field" alignment="CENTER"/>
+            <VBox styleClass="kpi-card" GridPane.columnIndex="3" spacing="4">
+                <Label text="Account balance" styleClass="kpi-label"/>
+                <Label fx:id="kpiBalanceValue" text="—" styleClass="kpi-value"/>
+                <Label fx:id="kpiBalanceSub" text="" styleClass="kpi-sub" wrapText="true"/>
+            </VBox>
+        </GridPane>
+
+        <!-- Spending by category + six-month trend -->
+        <HBox spacing="16" alignment="TOP_LEFT">
+            <VBox spacing="12" styleClass="card" HBox.hgrow="ALWAYS" minWidth="320" prefWidth="520">
+                <HBox alignment="CENTER_LEFT" spacing="8">
+                    <Label text="Where your money went" styleClass="card-title"/>
+                    <Region HBox.hgrow="ALWAYS"/>
+                    <Label fx:id="categorySummaryLabel" styleClass="muted-text"/>
+                </HBox>
+                <VBox fx:id="categoryBars" spacing="10"/>
+                <Label text="Right-click a category to set a monthly budget." styleClass="faint-text"/>
+            </VBox>
+            <VBox spacing="8" styleClass="card" HBox.hgrow="ALWAYS" minWidth="320" prefWidth="460">
+                <Label text="Money in vs out · last 6 months" styleClass="card-title"/>
+                <BarChart fx:id="trendChart" styleClass="trend-chart" legendVisible="true" animated="false"
+                          prefHeight="300" categoryGap="18" barGap="2">
+                    <xAxis><CategoryAxis side="BOTTOM" tickLabelGap="6"/></xAxis>
+                    <yAxis><NumberAxis side="LEFT" minorTickVisible="false" forceZeroInRange="true"/></yAxis>
+                </BarChart>
             </VBox>
         </HBox>
 
-        <!-- Upcoming bill reminders -->
-        <VBox fx:id="remindersBox" spacing="6"/>
+        <!-- Upcoming bills and unusual spending -->
+        <VBox fx:id="remindersBox" spacing="8"/>
+        <VBox fx:id="anomalyBox" spacing="8"/>
 
-        <!-- Anomaly Alerts -->
-        <VBox fx:id="anomalyBox" spacing="6"/>
-
-        <!-- Budget Alerts -->
-        <VBox fx:id="budgetAlertBox" spacing="6"/>
-
-        <!-- Budget Section -->
-        <VBox spacing="8" styleClass="panel-box">
-            <HBox spacing="10" alignment="CENTER_LEFT">
-                <Label text="Budget:" styleClass="form-label"/>
-                <Label fx:id="moneySavedLabel" text="Money Saved: 0.00" styleClass="saved-label"/>
-                <Region HBox.hgrow="ALWAYS"/>
-                <Button fx:id="toggleIncomeButton" text="Edit" styleClass="secondary-button" onAction="#handleToggleIncome"/>
-            </HBox>
-            <Label fx:id="totalLabel" text="Total Expenses: 0.00" styleClass="total-label"/>
-            <VBox fx:id="incomeFieldsBox" spacing="5" visible="false" managed="false">
-                <Label text="Projected Monthly Income:" styleClass="form-label"/>
-                <TextField fx:id="recurringIncomeField" promptText="e.g., 15000.00" styleClass="text-field"/>
-                <Label text="This Month (projected):" styleClass="form-label"/>
-                <TextField fx:id="incomeField" promptText="Leave empty to use default" styleClass="text-field"/>
-            </VBox>
-        </VBox>
-
-        <!-- Income Transactions -->
-        <VBox spacing="8" styleClass="panel-box">
-            <Label text="Income Transactions" styleClass="section-title"/>
-            <Label fx:id="incomeTabSummary" text="" styleClass="form-label"/>
-            <TableView fx:id="incomeTable" styleClass="table-view" prefHeight="200">
-                <columns>
-                    <TableColumn text="Amount" prefWidth="100">
-                        <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
-                    </TableColumn>
-                    <TableColumn text="Category" prefWidth="120">
-                        <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
-                    </TableColumn>
-                    <TableColumn text="Date" prefWidth="100">
-                        <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
-                    </TableColumn>
-                    <TableColumn text="Description" prefWidth="200">
-                        <cellValueFactory><PropertyValueFactory property="description"/></cellValueFactory>
-                    </TableColumn>
-                </columns>
-            </TableView>
-            <HBox spacing="10">
-                <Button text="Delete Selected" styleClass="danger-button" onAction="#handleDeleteIncome"/>
-            </HBox>
-            <Label fx:id="incomeErrorLabel" styleClass="error-label"/>
-        </VBox>
-
-        <!-- Category Table (for budget overview) -->
-        <VBox spacing="8" styleClass="panel-box">
-            <Label text="Expenses by Category" styleClass="section-title"/>
-            <TableView fx:id="categoryTable" styleClass="table-view" prefHeight="200">
-                <columns>
-                    <TableColumn fx:id="categoryNameColumn" text="Category" prefWidth="120">
-                        <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
-                    </TableColumn>
-                    <TableColumn fx:id="categoryTotalColumn" text="Spent" prefWidth="100">
-                        <cellValueFactory><PropertyValueFactory property="total"/></cellValueFactory>
-                    </TableColumn>
-                    <TableColumn fx:id="budgetColumn" text="Budget" prefWidth="100">
-                        <cellValueFactory><PropertyValueFactory property="budget"/></cellValueFactory>
-                    </TableColumn>
-                    <TableColumn fx:id="progressColumn" text="Progress" prefWidth="150">
-                        <cellValueFactory><PropertyValueFactory property="progress"/></cellValueFactory>
-                    </TableColumn>
-                </columns>
-            </TableView>
-        </VBox>
-
-        <!-- Savings Goals -->
-        <VBox fx:id="goalsBox" spacing="8" styleClass="panel-box">
-            <HBox spacing="10" alignment="CENTER_LEFT">
-                <Label text="Savings Goals" styleClass="section-title"/>
-                <Region HBox.hgrow="ALWAYS"/>
-                <Button text="Manage Goals" styleClass="primary-button" onAction="#handleManageGoals"/>
-            </HBox>
-            <VBox fx:id="goalsProgressBox" spacing="8"/>
-        </VBox>
-
-        <!-- Debt Summary + Exchange Rates: two columns on wide screens; a lone visible panel fills the row -->
+        <!-- Goals, debts, exchange rates -->
         <HBox spacing="16" alignment="TOP_LEFT">
-            <!-- Debt Summary -->
-            <VBox fx:id="debtSummaryBox" spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS" maxWidth="Infinity">
-                <Label text="Debt Overview" styleClass="section-title"/>
+            <VBox fx:id="goalsBox" spacing="10" styleClass="card" HBox.hgrow="ALWAYS" maxWidth="Infinity">
+                <HBox spacing="10" alignment="CENTER_LEFT">
+                    <Label text="Savings goals" styleClass="card-title"/>
+                    <Region HBox.hgrow="ALWAYS"/>
+                    <Button text="Manage" styleClass="ghost-button" onAction="#handleManageGoals"/>
+                </HBox>
+                <VBox fx:id="goalsProgressBox" spacing="10"/>
+            </VBox>
+            <VBox fx:id="debtSummaryBox" spacing="10" styleClass="card" HBox.hgrow="ALWAYS" maxWidth="Infinity">
+                <Label text="Debts" styleClass="card-title"/>
                 <VBox fx:id="debtSummaryContent" spacing="6"/>
             </VBox>
-
-            <!-- Exchange Rates -->
-            <VBox fx:id="exchangeRatesBox" spacing="8" styleClass="panel-box" HBox.hgrow="ALWAYS" maxWidth="Infinity">
+            <VBox fx:id="exchangeRatesBox" spacing="10" styleClass="card" HBox.hgrow="ALWAYS" maxWidth="Infinity">
                 <HBox spacing="10" alignment="CENTER_LEFT">
-                    <Label text="Exchange Rates" styleClass="section-title"/>
+                    <Label text="Exchange rates" styleClass="card-title"/>
                     <Region HBox.hgrow="ALWAYS"/>
-                    <Button text="Edit Rates" styleClass="secondary-button" onAction="#handleEditExchangeRates"/>
+                    <Button text="Edit" styleClass="ghost-button" onAction="#handleEditExchangeRates"/>
                 </HBox>
                 <VBox fx:id="exchangeRatesContent" spacing="4"/>
             </VBox>
         </HBox>
+
+        <!-- Income detail (collapsed by default) -->
+        <TitledPane fx:id="incomePane" text="Income this month" expanded="false" styleClass="card-titled-pane">
+            <VBox spacing="12">
+                <Label fx:id="incomeTabSummary" text="" styleClass="muted-text" wrapText="true"/>
+                <TableView fx:id="incomeTable" styleClass="table-view" prefHeight="200">
+                    <columns>
+                        <TableColumn text="Amount" prefWidth="110">
+                            <cellValueFactory><PropertyValueFactory property="amount"/></cellValueFactory>
+                        </TableColumn>
+                        <TableColumn text="Category" prefWidth="120">
+                            <cellValueFactory><PropertyValueFactory property="category"/></cellValueFactory>
+                        </TableColumn>
+                        <TableColumn text="Date" prefWidth="100">
+                            <cellValueFactory><PropertyValueFactory property="date"/></cellValueFactory>
+                        </TableColumn>
+                        <TableColumn text="Description" prefWidth="260">
+                            <cellValueFactory><PropertyValueFactory property="description"/></cellValueFactory>
+                        </TableColumn>
+                    </columns>
+                </TableView>
+                <HBox spacing="10" alignment="CENTER_LEFT">
+                    <Button text="Delete selected" styleClass="ghost-danger-button" onAction="#handleDeleteIncome"/>
+                    <Label fx:id="incomeErrorLabel" styleClass="error-label"/>
+                </HBox>
+                <Separator/>
+                <Label text="Planned income (optional)" styleClass="card-title"/>
+                <Label text="Only used for months with no income in your statements, e.g. to plan ahead."
+                       styleClass="muted-text" wrapText="true"/>
+                <VBox fx:id="incomeFieldsBox" spacing="6">
+                    <HBox spacing="12" alignment="CENTER_LEFT">
+                        <VBox spacing="4" HBox.hgrow="ALWAYS">
+                            <Label text="Every month" styleClass="form-label"/>
+                            <TextField fx:id="recurringIncomeField" promptText="e.g. 15000.00"/>
+                        </VBox>
+                        <VBox spacing="4" HBox.hgrow="ALWAYS">
+                            <Label text="This month only" styleClass="form-label"/>
+                            <TextField fx:id="incomeField" promptText="Leave empty to use the monthly amount"/>
+                        </VBox>
+                    </HBox>
+                </VBox>
+            </VBox>
+        </TitledPane>
 
         <Label fx:id="errorLabel" styleClass="error-label"/>
     </VBox>

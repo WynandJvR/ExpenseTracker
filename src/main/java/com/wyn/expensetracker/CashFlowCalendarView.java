@@ -37,7 +37,7 @@ public class CashFlowCalendarView extends VBox {
         nextBtn.setOnAction(e -> { displayedMonth = displayedMonth.plusMonths(1); rebuild(); });
 
         monthLabel = new Label();
-        monthLabel.setStyle("-fx-text-fill: #FFFFFF; -fx-font-size: 18px; -fx-font-weight: bold;");
+        monthLabel.getStyleClass().add("cal-month-label");
 
         Button todayBtn = new Button("Today");
         todayBtn.getStyleClass().add("today-button");
@@ -75,15 +75,15 @@ public class CashFlowCalendarView extends VBox {
         String[] dayNames = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
         for (int i = 0; i < 7; i++) {
             Label header = new Label(dayNames[i]);
-            header.setStyle("-fx-text-fill: #A0A0A0; -fx-font-size: 11px; -fx-font-weight: bold;");
+            header.getStyleClass().add("cal-weekday");
             header.setAlignment(Pos.CENTER);
             header.setMaxWidth(Double.MAX_VALUE);
             calendarGrid.add(header, i, 0);
         }
 
         // Compute recurring expenses/income per day
-        Map<LocalDate, List<RecurringExpense>> recurringByDay = computeRecurringForMonth();
-        double startingBalance = computeStartingBalance();
+        Map<LocalDate, List<Expense>> recurringByDay = computeRecurringForMonth();
+        double startingBalance = computeStartingBalance(recurringByDay);
 
         LocalDate firstDay = displayedMonth.atDay(1);
         int startCol = firstDay.getDayOfWeek().getValue() - 1; // Mon=0
@@ -95,16 +95,11 @@ public class CashFlowCalendarView extends VBox {
 
         for (int day = 1; day <= daysInMonth; day++) {
             LocalDate date = displayedMonth.atDay(day);
-            List<RecurringExpense> dayRecurring = recurringByDay.getOrDefault(date, Collections.emptyList());
+            List<Expense> dayRecurring = recurringByDay.getOrDefault(date, Collections.emptyList());
 
-            double dayIncome = 0;
-            double dayExpense = 0;
-            for (RecurringExpense r : dayRecurring) {
-                double baseAmt = state.getCurrencyManager().toBase(r.getAmount(), r.getCurrency());
-                if (r.isIncome()) dayIncome += baseAmt;
-                else dayExpense += baseAmt;
+            for (Expense r : dayRecurring) {
+                runningBalance += signedFlow(r);
             }
-            runningBalance += dayIncome - dayExpense;
 
             VBox cell = createDayCell(day, dayRecurring, runningBalance, date.equals(LocalDate.now()));
 
@@ -114,21 +109,29 @@ public class CashFlowCalendarView extends VBox {
         }
     }
 
-    private VBox createDayCell(int day, List<RecurringExpense> recurring, double balance, boolean isToday) {
+    /**
+     * Cash effect of one scheduled occurrence in base currency: income and refunds are
+     * inflows, spend is an outflow, excluded items (own-account transfers) are neutral.
+     */
+    private double signedFlow(Expense r) {
+        if (r.isExcluded()) return 0;
+        double baseAmt = state.toBase(r);
+        if (r.isRefund() || SharedState.isIncomeItem(r)) return baseAmt;
+        return -baseAmt;
+    }
+
+    private VBox createDayCell(int day, List<Expense> recurring, double balance, boolean isToday) {
         VBox cell = new VBox(2);
         cell.setPadding(new Insets(4));
         cell.setMinHeight(70);
         cell.setAlignment(Pos.TOP_CENTER);
 
-        String bgColor = balance < 0 ? "rgba(229, 57, 53, 0.15)" : "rgba(76, 175, 80, 0.08)";
-        String borderColor = isToday ? "#5C6BC0" : "#3A3A3A";
-        int borderWidth = isToday ? 2 : 1;
-        cell.setStyle(String.format(
-            "-fx-background-color: %s; -fx-border-color: %s; -fx-border-width: %d; "
-            + "-fx-border-radius: 4; -fx-background-radius: 4;", bgColor, borderColor, borderWidth));
+        cell.getStyleClass().add("cal-day");
+        if (balance < 0) cell.getStyleClass().add("cal-negative");
+        if (isToday) cell.getStyleClass().add("cal-today");
 
         Label dayLabel = new Label(String.valueOf(day));
-        dayLabel.setStyle("-fx-text-fill: " + (isToday ? "#5C6BC0" : "#E0E0E0") + "; -fx-font-size: 12px; -fx-font-weight: bold;");
+        dayLabel.getStyleClass().add("cal-day-number");
 
         cell.getChildren().add(dayLabel);
 
@@ -138,21 +141,22 @@ public class CashFlowCalendarView extends VBox {
             dots.setAlignment(Pos.CENTER);
             int shown = 0;
             StringBuilder tooltipText = new StringBuilder();
-            for (RecurringExpense r : recurring) {
+            for (Expense r : recurring) {
+                boolean inflow = signedFlow(r) > 0;
                 if (shown < 3) {
                     Label dot = new Label("\u25CF");
-                    dot.setStyle("-fx-text-fill: " + (r.isIncome() ? "#43A047" : "#EF5350") + "; -fx-font-size: 8px;");
+                    dot.getStyleClass().addAll("cal-dot", inflow ? "cal-dot-in" : "cal-dot-out");
                     dots.getChildren().add(dot);
                 }
                 shown++;
-                tooltipText.append(r.isIncome() ? "+" : "-")
-                    .append(UIUtils.fmt(r.getAmount(), state.getCurrencySymbol()))
+                tooltipText.append(inflow ? "+" : "-")
+                    .append(UIUtils.fmt(state.toBase(r), state.getCurrencySymbol()))
                     .append(" ").append(r.getDescription() != null ? r.getDescription() : r.getCategory())
                     .append("\n");
             }
             if (shown > 3) {
                 Label more = new Label("+" + (shown - 3));
-                more.setStyle("-fx-text-fill: #A0A0A0; -fx-font-size: 8px;");
+                more.getStyleClass().add("cal-more");
                 dots.getChildren().add(more);
             }
             cell.getChildren().add(dots);
@@ -164,69 +168,55 @@ public class CashFlowCalendarView extends VBox {
         // Balance label
         String balText = (balance < 0 ? "-" : "") + UIUtils.fmt(Math.abs(balance), state.getCurrencySymbol());
         Label balLabel = new Label(balText);
-        balLabel.setStyle("-fx-text-fill: " + (balance < 0 ? "#EF5350" : "#A0A0A0") + "; -fx-font-size: 9px;");
+        balLabel.getStyleClass().add("cal-balance");
+        if (balance < 0) balLabel.getStyleClass().add("cal-balance-negative");
         cell.getChildren().add(balLabel);
 
         return cell;
     }
 
-    private Map<LocalDate, List<RecurringExpense>> computeRecurringForMonth() {
-        Map<LocalDate, List<RecurringExpense>> result = new HashMap<>();
-        List<RecurringExpense> recurring = state.getRecurringList();
-
-        for (RecurringExpense r : recurring) {
-            LocalDate start = r.getDate();
-            LocalDate end = r.getEndDate();
-            if (end != null && end.isBefore(displayedMonth.atDay(1))) continue;
-            if (start.isAfter(displayedMonth.atEndOfMonth())) continue;
-
-            // Fast-forward to at or near the displayed month to avoid iterating from years ago
-            LocalDate current = start;
-            LocalDate monthStart = displayedMonth.atDay(1);
-            while (current.isBefore(monthStart)) {
-                LocalDate next = advanceByFrequency(current, r.getFrequency());
-                if (next == null || !next.isAfter(current)) break;
-                if (!next.isBefore(monthStart)) { current = current; break; }
-                current = next;
-            }
-
-            // Generate occurrences in this month
-            while (!current.isAfter(displayedMonth.atEndOfMonth())) {
-                if (!current.isBefore(monthStart) && YearMonth.from(current).equals(displayedMonth)) {
-                    if (end == null || !current.isAfter(end)) {
-                        result.computeIfAbsent(current, k -> new ArrayList<>()).add(r);
-                    }
-                }
-                current = advanceByFrequency(current, r.getFrequency());
-                if (current == null) break;
-            }
+    /**
+     * Scheduled recurring occurrences in the displayed month, grouped by day. Uses the
+     * manager's projection so skip/edit overrides and day-of-month clamping (e.g. the
+     * 31st in February) match the rest of the app. Excluded series are dropped.
+     */
+    private Map<LocalDate, List<Expense>> computeRecurringForMonth() {
+        Map<LocalDate, List<Expense>> result = new HashMap<>();
+        if (state.getManager() == null) return result;
+        for (Expense e : state.getManager().getUpcomingRecurring(
+                displayedMonth.atDay(1), displayedMonth.atEndOfMonth())) {
+            if (e.isExcluded()) continue;
+            result.computeIfAbsent(e.getDate(), k -> new ArrayList<>()).add(e);
         }
         return result;
     }
 
-    private LocalDate advanceByFrequency(LocalDate date, RecurrenceType freq) {
-        return switch (freq) {
-            case DAILY -> date.plusDays(1);
-            case WEEKLY -> date.plusWeeks(1);
-            case BIWEEKLY -> date.plusWeeks(2);
-            case MONTHLY -> date.plusMonths(1);
-            case QUARTERLY -> date.plusMonths(3);
-            case YEARLY -> date.plusYears(1);
-        };
-    }
+    /**
+     * Opening balance for the month: the month's income (single app-wide figure) less the
+     * part that arrives as scheduled recurring income on specific days (added in the grid,
+     * so it is not counted twice), less net one-time spend already recorded this month.
+     * Imports that stand in for a recurring occurrence are skipped, as that occurrence is
+     * already shown on its day.
+     */
+    private double computeStartingBalance(Map<LocalDate, List<Expense>> recurringByDay) {
+        double income = state.incomeForMonth(displayedMonth);
+        double scheduledIncome = recurringByDay.values().stream()
+            .flatMap(List::stream)
+            .filter(SharedState::isIncomeItem)
+            .mapToDouble(state::toBase)
+            .sum();
+        double openingIncome = Math.max(0, income - scheduledIncome);
 
-    private double computeStartingBalance() {
-        // Monthly income minus any non-recurring expenses already recorded this month
-        double income = state.getRecurringIncome();
-        Double monthIncome = state.getIncomes().get(displayedMonth);
-        if (monthIncome != null && monthIncome > 0) income = monthIncome;
+        List<Expense> oneTime = new ArrayList<>();
+        for (Expense e : state.getExpenseList()) {
+            if (e.getRecurringId() == null && YearMonth.from(e.getDate()).equals(displayedMonth)
+                    && !state.coversRecurring(e)) {
+                oneTime.add(e);
+            }
+        }
+        double oneTimeNet = state.netSpend(oneTime);
 
-        // Subtract one-time expenses already recorded this month for a more realistic picture
-        double oneTimeExpenses = state.getExpenseList().stream()
-            .filter(e -> !e.isExcluded() && !e.isIncome() && e.getRecurringId() == null
-                && YearMonth.from(e.getDate()).equals(displayedMonth))
-            .mapToDouble(e -> state.getCurrencyManager().toBase(e.getAmount(), e.getCurrency())).sum();
-
-        return income - oneTimeExpenses;
+        return openingIncome - oneTimeNet;
     }
 }
+
