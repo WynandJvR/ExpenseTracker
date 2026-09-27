@@ -19,7 +19,9 @@ public class ExcelExporter {
 
             Row headerRow = sheet.createRow(0);
             String[] headers = {"Amount", "Category", "Date", "Description", "IsRecurring",
-                "Frequency", "EndDate", "ImportId", "IsIncome", "Currency", "ReceiptPath"};
+                "Frequency", "EndDate", "ImportId", "IsIncome", "Currency", "ReceiptPath",
+                // Needed to reproduce the app's totals: refunds net against spend, excluded rows don't count.
+                "IsRefund", "IsExcluded", "Tags"};
             for (int i = 0; i < headers.length; i++) {
                 Cell cell = headerRow.createCell(i);
                 cell.setCellValue(headers[i]);
@@ -45,6 +47,9 @@ public class ExcelExporter {
                 row.createCell(8).setCellValue(expense.isIncome());
                 row.createCell(9).setCellValue(expense.getCurrency() != null ? expense.getCurrency() : "");
                 row.createCell(10).setCellValue(expense.getReceiptPath() != null ? expense.getReceiptPath() : "");
+                row.createCell(11).setCellValue(expense.isRefund());
+                row.createCell(12).setCellValue(expense.isExcluded());
+                row.createCell(13).setCellValue(String.join("|", expense.getTags()));
             }
 
             for (int i = 0; i < headers.length; i++) {

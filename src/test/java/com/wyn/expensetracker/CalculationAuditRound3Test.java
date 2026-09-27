@@ -163,19 +163,5 @@ class CalculationAuditRound3Test {
         ledger.get(1).setExcluded(true);
         assertNotEquals(mid, RecurringController.ledgerSignature(ledger));
         ledger.get(1).setExcluded(false);
-
-        // A pattern built earlier: row 1 has since been replaced by an edit, row 2 marked a transfer.
-        RecurringPatternDetector.DetectedPattern pattern = new RecurringPatternDetector.DetectedPattern(
-            "STREAMCO", "Subscriptions", 200, RecurrenceType.MONTHLY, LocalDate.of(2025, 1, 5),
-            new ArrayList<>(ledger.subList(0, 4)));
-        Expense stale = ledger.get(0);
-        Expense replacement = imported(200, "Subscriptions", "STREAMCO", stale.getDate(), "s1");
-        ledger.set(0, replacement);
-        ledger.get(2).setExcluded(true);
-
-        List<Expense> removable = RecurringController.removableOriginals(pattern, ledger);
-        assertEquals(2, removable.size());
-        assertTrue(removable.stream().noneMatch(e -> e == stale));
-        assertTrue(removable.stream().noneMatch(Expense::isExcluded));
     }
 }

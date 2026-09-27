@@ -5,8 +5,6 @@ import java.io.*;
 import java.nio.file.*;
 import java.time.DateTimeException;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -22,32 +20,39 @@ public class ReceiptScanner {
     private static final String TESSDATA_DIR = System.getProperty("user.home")
         + File.separator + ".expenseTracker" + File.separator + "tessdata";
 
-    // R-prefixed amounts (SA Rand) + fallback for amounts at end-of-line without prefix
-    // R-prefixed amounts accept 1-2 decimal digits (OCR sometimes drops the last digit)
-    private static final Pattern AMOUNT_PATTERN = Pattern.compile(
-        "(?:R\\s*(\\d[\\d\\s,]*[.,]\\d{1,2}))|(\\d[\\d,]*[.,]\\d{2})\\s*$");
-
-    private static final Pattern TOTAL_PATTERN = Pattern.compile(
-        "(?i)(total|subtotal|sub-total|amount\\s*due|grand\\s*total|balance\\s*due|"
-        + "change|vat|tax|card|cash|tendered|rounding|discount|loyalty|smartshopper|"
-        + "auth|slip|eft|payment|qty|items|saving|you saved|excl|incl|"
-        + "nett|gross|member|points|vitality)");
-
-    private static final DateTimeFormatter[] DATE_FORMATS = {
-        DateTimeFormatter.ofPattern("dd/MM/yyyy"),
-        DateTimeFormatter.ofPattern("MM/dd/yyyy"),
-        DateTimeFormatter.ofPattern("yyyy-MM-dd"),
-        DateTimeFormatter.ofPattern("dd-MM-yyyy"),
-        DateTimeFormatter.ofPattern("yyyy/MM/dd"),
-        DateTimeFormatter.ofPattern("dd MMM yyyy"),
-        DateTimeFormatter.ofPattern("d MMM yyyy"),
-        DateTimeFormatter.ofPattern("dd MMMM yyyy"),
-    };
-
-    // Matches text-month dates (e.g. "09 Sep 2024") and numeric dates (e.g. "17/02/2025")
-    private static final Pattern DATE_PATTERN = Pattern.compile(
-        "(\\d{1,2}\\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\w*\\s+\\d{2,4})"
-        + "|(\\d{1,4}[/\\-.]\\d{1,2}[/\\-.]\\d{2,4})", Pattern.CASE_INSENSITIVE);
+    /** Amount at end of line. R-prefixed amounts may use space thousands ("R 1 299,95"); bare amounts may not,
+     *  so a quantity column ("ROLLS 6 24.99") is never glued onto the price. Optional leading/trailing '-' and VAT flag ("34.99 A"). */
+    private static final Pattern LINE_AMOUNT = Pattern.compile(
+        "(?:(?<![A-Za-z])R\\s?(-\\s?)?((?:\\d{1,3}(?:[ ,.]\\d{3})+|\\d+)\\s?[.,]\\s?\\d{2})"
+        + "|(-\\s?)?((?:\\d{1,3}(?:[,.]\\d{3})+|\\d+)[.,]\\s?\\d{2}))"
+        + "(-)?(?:\\s+[A-Z*#]{1,2})?\\s*$");
+    /** Trailing amount token that may contain OCR letter/digit confusions (O/o/@->0, S/s->5, I/l/|->1, B->8, ':'->'.'). */
+    private static final Pattern AMOUNT_TAIL = Pattern.compile(
+        "(?<![A-Za-z])([0-9OoSsIl|B@]{1,3}(?:[ ,.][0-9OoSsIl|B@]{3})*\\s?[.,:]\\s?[0-9OoSsIl|B@]{2}-?(?:\\s+[A-Z*#]{1,2})?)\\s*$");
+    private static final Pattern FLAG = Pattern.compile("\\s+[A-Z*#]{1,2}$");
+    /** Whole-word keywords, so CASHEW / CARDIGAN / TAXI / CARDBOARD / EXCHANGE are NOT skipped. */
+    private static final Pattern NON_ITEM = Pattern.compile(
+        "(?i)\\b(sub-?\\s?total|total|amount\\s*due|balance(\\s*due)?|change|vat|tax|cash|card\\s*(?:sale|tender|no)|visa|master\\s?card|maestro|"
+        + "debit|credit|tendered|rounding|eft|payment|auth|approved|points|you\\s*saved|incl|excl|items|qty|tel|reg\\s*no|date|time|till)\\b");
+    private static final Pattern DISCOUNT = Pattern.compile(
+        "(?i)\\b(saving|savings|discount|promo|coupon|less|smart\\s*price|voucher)\\b");
+    private static final Pattern TOTAL_LINE = Pattern.compile(
+        "(?i)^(?!.*sub).*\\b(total(\\s*due)?|amount\\s*due|balance\\s*due|grand\\s*total|to\\s*pay)\\b");
+    private static final Pattern NOT_THE_TOTAL = Pattern.compile(
+        "(?i)\\b(discount|savings?|saved|vat|tax|items?|qty|excl|incl|points)\\b");
+    private static final Pattern PLAIN_TOTAL = Pattern.compile(
+        "(?i)(grand\\s*)?total(\\s*due)?|amount\\s*due|balance\\s*due|to\\s*pay|total\\s*r?");
+    /** "CARD", "CARD ****1234", "CARD 4521": how the slip was paid (unlike "CARD GAME UNO"). */
+    private static final Pattern CARD_PAYMENT = Pattern.compile("(?i)^card(\\s*[*#xX\\d].*)?$");
+    private static final Pattern QTY_LINE = Pattern.compile("^\\d+(?:[.,]\\d+)?\\s*[@xX*]\\s*(?:R\\s?)?[\\d.,]+$");
+    private static final Pattern NUM_DATE = Pattern.compile(
+        "(?<!\\d)(\\d{1,4})\\s?[/\\-.]\\s?(\\d{1,2})\\s?[/\\-.]\\s?(\\d{2,4})(?!\\d)");
+    /** Locale-independent month names (en_ZA CLDR formats September as "Sept", so DateTimeFormatter "MMM" can't parse "Sep"). */
+    private static final Pattern TEXT_DATE = Pattern.compile(
+        "(?i)(?<!\\d)(\\d{1,2})\\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?,?\\s*(\\d{2,4})(?!\\d)");
+    private static final String[] CHAINS = {"PICK N PAY", "SHOPRITE", "CHECKERS", "WOOLWORTHS", "SPAR", "USAVE", "OK FOODS",
+        "FOOD LOVER", "CLICKS", "DIS-CHEM", "DISCHEM", "PEP", "ACKERMANS", "MR PRICE", "BUILDERS", "GAME", "MAKRO", "ENGEN",
+        "SHELL", "SASOL", "BP", "CALTEX", "KFC", "MCDONALD", "NANDO", "STEERS", "WIMPY", "SPUR", "CAPE UNION MART"};
 
     private final ReceiptImagePreprocessor preprocessor = new ReceiptImagePreprocessor();
     private boolean tessDataAvailable = false;
@@ -62,16 +67,19 @@ public class ReceiptScanner {
 
     private void ensureTessData() {
         Path tessDataPath = Paths.get(TESSDATA_DIR, "eng.traineddata");
-        if (Files.exists(tessDataPath)) {
-            tessDataAvailable = true;
-            return;
-        }
-
         try {
+            if (Files.exists(tessDataPath) && Files.size(tessDataPath) > 1_000_000) {
+                tessDataAvailable = true;
+                return;
+            }
             Files.createDirectories(Paths.get(TESSDATA_DIR));
+            // tess4j itself ships /tessdata/eng.traineddata (tessdata_fast), so this works on a fresh machine too.
             try (InputStream is = getClass().getResourceAsStream("/tessdata/eng.traineddata")) {
                 if (is != null) {
-                    Files.copy(is, tessDataPath, StandardCopyOption.REPLACE_EXISTING);
+                    // copy to a temp file then move, so an interrupted copy never leaves a truncated model behind
+                    Path tmp = Files.createTempFile(Paths.get(TESSDATA_DIR), "eng", ".part");
+                    Files.copy(is, tmp, StandardCopyOption.REPLACE_EXISTING);
+                    Files.move(tmp, tessDataPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
                     tessDataAvailable = true;
                 }
             }
@@ -82,24 +90,22 @@ public class ReceiptScanner {
 
     /**
      * Extracts the photo date from EXIF metadata (when the photo was taken).
-     * Useful as a default date for the receipt date picker.
+     * EXIF timestamps are local wall-clock time with no zone; pass the local zone, otherwise metadata-extractor
+     * treats them as UTC and a photo taken after 22:00 in SA lands on the next day.
      */
     public LocalDate extractPhotoDate(File imageFile) {
+        TimeZone tz = TimeZone.getDefault();
         try {
             Metadata metadata = ImageMetadataReader.readMetadata(imageFile);
             ExifSubIFDDirectory subIfd = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
             if (subIfd != null) {
-                Date date = subIfd.getDateOriginal();
-                if (date != null) {
-                    return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
-                }
+                Date date = subIfd.getDateOriginal(tz);
+                if (date != null) return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
             }
             ExifIFD0Directory exifDir = metadata.getFirstDirectoryOfType(ExifIFD0Directory.class);
             if (exifDir != null) {
-                Date date = exifDir.getDate(ExifIFD0Directory.TAG_DATETIME);
-                if (date != null) {
-                    return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
-                }
+                Date date = exifDir.getDate(ExifIFD0Directory.TAG_DATETIME, tz);
+                if (date != null) return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
             }
         } catch (Exception e) {
             // Fall back silently
@@ -111,226 +117,163 @@ public class ReceiptScanner {
         if (!tessDataAvailable) {
             throw new IllegalStateException("OCR is not available. Please place eng.traineddata in " + TESSDATA_DIR);
         }
-
-        // Preprocess: EXIF rotation, grayscale
         BufferedImage preprocessed = preprocessor.preprocess(imageFile);
 
-        net.sourceforge.tess4j.Tesseract tesseract = new net.sourceforge.tess4j.Tesseract();
+        net.sourceforge.tess4j.Tesseract tesseract = new net.sourceforge.tess4j.Tesseract(); // not thread-safe: one per call
         tesseract.setDatapath(TESSDATA_DIR);
         tesseract.setLanguage("eng");
-        tesseract.setOcrEngineMode(1); // LSTM only (required for tessdata_best)
-        tesseract.setPageSegMode(3);   // Fully automatic page segmentation
+        tesseract.setOcrEngineMode(1);   // LSTM only
+        tesseract.setPageSegMode(6);     // single uniform block: keeps "ITEM ..... 12.99" on one line (PSM 3 splits the price column off)
         tesseract.setVariable("user_defined_dpi", "300");
         return tesseract.doOCR(preprocessed);
     }
 
     public List<ImportItem> parseReceipt(String ocrText, LocalDate fallbackDate) {
-        List<ImportItem> items = new ArrayList<>();
-        LocalDate receiptDate = extractDate(ocrText, fallbackDate);
-        if (receiptDate == null) {
-            receiptDate = fallbackDate != null ? fallbackDate : LocalDate.now();
-        }
+        LocalDate receiptDate = extractDate(ocrText);
+        if (receiptDate == null) receiptDate = fallbackDate != null ? fallbackDate : LocalDate.now();
 
+        List<ImportItem> items = new ArrayList<>();
         String[] lines = ocrText.split("\\r?\\n");
+        ImportItem last = null;
+        int lastIdx = -10, prevNonBlank = -1;
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i].trim();
             if (line.isEmpty()) continue;
-            if (TOTAL_PATTERN.matcher(line).find()) continue;
+            boolean followsItem = lastIdx == prevNonBlank;
+            prevNonBlank = i;
+            if (NUM_DATE.matcher(line).find() || TEXT_DATE.matcher(line).find()) continue; // date/time header lines
 
-            Matcher amountMatch = AMOUNT_PATTERN.matcher(line);
-            if (amountMatch.find()) {
-                // Skip negative amounts (discounts/refunds like "-R49.99" or "DISCOUNT -84.98")
-                String beforeMatch = line.substring(0, amountMatch.start());
-                if (beforeMatch.matches("(?:^|.*\\s)-\\s*")) continue;
+            Matcher m = LINE_AMOUNT.matcher(fixAmountTail(line));
+            if (!m.find()) continue;
+            Double amount = parseAmount(m.group(2) != null ? m.group(2) : m.group(4));
+            if (amount == null || amount <= 0 || amount > 100000) continue;
+            boolean negative = m.group(1) != null || m.group(3) != null || m.group(5) != null;
+            String description = line.substring(0, Math.min(line.length(), m.start())).trim();
 
-                // Group 1 = R-prefixed amount, Group 2 = end-of-line amount
-                String amountStr = amountMatch.group(1) != null ? amountMatch.group(1) : amountMatch.group(2);
-                double amount;
-                try {
-                    amount = Double.parseDouble(normalizeAmount(amountStr));
-                } catch (NumberFormatException e) {
-                    continue;
+            if (TOTAL_LINE.matcher(line).find() || NON_ITEM.matcher(description).find()) continue;
+            // "CARD  1 376,96" / "CARD ****1234" is how the slip was paid; "BIRTHDAY CARD" is an item.
+            if (CARD_PAYMENT.matcher(description).matches()) continue;
+            if (negative || DISCOUNT.matcher(description).find()) {
+                // per-item promo ("XTRA SAVINGS 20.00-") directly under the item it applies to
+                if (last != null && followsItem && last.getAmount() > amount) {
+                    last.setAmount(Math.round((last.getAmount() - amount) * 100) / 100.0);
                 }
-                if (amount <= 0 || amount > 100000) continue;
-
-                String description = line.substring(0, amountMatch.start()).trim();
-                // Remove R prefix if present at the end of the description
-                description = description.replaceAll("R\\s*$", "").trim();
-                description = cleanDescription(description);
-
-                // If description is too short or purely numeric (tabular receipt),
-                // look at adjacent lines for a better description
-                if (description.length() <= 2 || description.matches("\\d+")) {
-                    String better = findNearbyDescription(lines, i);
-                    if (better != null) {
-                        description = better;
-                    }
-                }
-
-                if (description.isEmpty()) continue;
-
-                ImportItem item = new ImportItem(amount, description, receiptDate);
-                item.setStatus("Uncategorized");
-                items.add(item);
+                continue;
             }
+            // "WATER 5L" / "  2 @ 12.99      25.98": take the description from the line above
+            if (QTY_LINE.matcher(description).matches() || description.length() <= 2 || description.matches("[\\d\\s.,]+")) {
+                String prev = "";
+                for (int j = i - 1; j >= 0 && j >= i - 2 && prev.isEmpty(); j--) prev = lines[j].trim();
+                if (!prev.isEmpty() && !LINE_AMOUNT.matcher(prev).find() && prev.matches(".*[A-Za-z]{2,}.*")) description = prev;
+            }
+            description = cleanDescription(description);
+            if (!description.matches(".*[A-Za-z]{2,}.*")) continue;
+
+            ImportItem item = new ImportItem(amount, description, receiptDate);
+            item.setStatus("Uncategorized");
+            items.add(item);
+            last = item;
+            lastIdx = i;
         }
         return items;
     }
 
-    /**
-     * Normalizes an amount string to a parseable double format.
-     * Handles SA formats like "1 299,95" and "1299,95" as well as standard "1299.95".
-     */
-    private String normalizeAmount(String amountStr) {
-        // Strip spaces (handles "R1 299.95" or "1 299,95" with thousands separator spaces)
-        amountStr = amountStr.replaceAll("\\s", "");
-
-        boolean hasDot = amountStr.contains(".");
-        boolean hasComma = amountStr.contains(",");
-
-        if (hasDot && hasComma) {
-            // Both present — whichever comes last is the decimal separator
-            int lastDot = amountStr.lastIndexOf('.');
-            int lastComma = amountStr.lastIndexOf(',');
-            if (lastComma > lastDot) {
-                // Comma is decimal: "1.299,95" → "1299.95"
-                amountStr = amountStr.replace(".", "").replace(",", ".");
-            } else {
-                // Dot is decimal: "1,299.95" → "1299.95"
-                amountStr = amountStr.replace(",", "");
-            }
-        } else if (hasComma) {
-            // Only comma — if ends with ",\d{2}", comma is decimal separator
-            if (amountStr.matches(".*,\\d{1,2}$")) {
-                amountStr = amountStr.replace(",", ".");
-            } else {
-                // Comma is thousands separator
-                amountStr = amountStr.replace(",", "");
-            }
+    /** The receipt total (TOTAL / TOTAL DUE / AMOUNT DUE / BALANCE DUE, never SUBTOTAL), or null. */
+    public Double extractTotal(String ocrText) {
+        Double fallback = null;
+        for (String raw : ocrText.split("\\r?\\n")) {
+            String line = raw.trim();
+            // "TOTAL DISCOUNT 10.00", "TOTAL SAVINGS", "TOTAL VAT" are totals of something else.
+            if (!TOTAL_LINE.matcher(line).find() || NOT_THE_TOTAL.matcher(line).find()) continue;
+            Matcher m = LINE_AMOUNT.matcher(fixAmountTail(line));
+            if (!m.find()) continue;
+            Double amount = parseAmount(m.group(2) != null ? m.group(2) : m.group(4));
+            if (amount == null) continue;
+            // "TOTAL  125.97" / "AMOUNT DUE R 125,97": exactly the total line.
+            if (PLAIN_TOTAL.matcher(line.substring(0, m.start()).trim()).matches()) return amount;
+            if (fallback == null) fallback = amount;
         }
-        // Only dot or neither — standard format, nothing to do
-
-        return amountStr;
+        return fallback;
     }
 
-    /**
-     * Cleans up an OCR description string, preserving useful characters.
-     */
-    private String cleanDescription(String description) {
-        // Remove characters that are clearly OCR noise, but keep periods, parens, ampersands
-        description = description.replaceAll("[^a-zA-Z0-9\\s/\\-.()&]", "");
-        // Collapse multiple whitespace
-        description = description.replaceAll("\\s{2,}", " ").trim();
-        return description;
-    }
-
-    /**
-     * Looks at adjacent lines for a usable description when the current line's
-     * description is too short (common in tabular receipts where descriptions
-     * and amounts are on separate lines).
-     */
-    private String findNearbyDescription(String[] lines, int currentIndex) {
-        // Score all nearby candidates and pick the most descriptive one
-        // (avoids grabbing SKU/code lines over actual item names in tabular receipts)
-        String best = null;
-        int bestLetters = 0;
-
-        for (int offset : new int[]{1, -1, 2, -2}) {
-            int idx = currentIndex + offset;
-            if (idx < 0 || idx >= lines.length) continue;
-            String candidate = lines[idx].trim();
-            if (candidate.isEmpty()) continue;
-            if (TOTAL_PATTERN.matcher(candidate).find()) continue;
-            if (AMOUNT_PATTERN.matcher(candidate).find()) continue;
-            String cleaned = cleanDescription(candidate);
-            if (cleaned.length() < 3 || !cleaned.matches(".*[a-zA-Z]{2,}.*")) continue;
-
-            int letters = (int) cleaned.chars().filter(Character::isLetter).count();
-            if (letters > bestLetters) {
-                bestLetters = letters;
-                best = cleaned;
-            }
-        }
-        return best;
-    }
-
-    private LocalDate extractDate(String text, LocalDate referenceDate) {
-        Matcher m = DATE_PATTERN.matcher(text);
-        while (m.find()) {
-            // Group 1 = text-month date, Group 2 = numeric date
-            String dateStr = m.group(1) != null ? m.group(1) : m.group(2);
-            for (DateTimeFormatter fmt : DATE_FORMATS) {
-                try {
-                    return LocalDate.parse(dateStr, fmt);
-                } catch (DateTimeParseException e) {
-                    // try next format
-                }
-            }
-
-            // If exact parsing failed, try to recover OCR-corrupted date components
-            LocalDate corrected = tryOcrDateCorrection(dateStr, referenceDate);
-            if (corrected != null) return corrected;
+    /** Known chain anywhere on the slip, else the first mostly-alphabetic line in the header. */
+    public String extractMerchant(String ocrText) {
+        String[] lines = ocrText.split("\\r?\\n");
+        // Chain names only in the header: "SHELL PASTA" further down is a product, not the shop.
+        String upper = String.join("\n", Arrays.asList(lines).subList(0, Math.min(8, lines.length))).toUpperCase();
+        for (String c : CHAINS) if (Pattern.compile("\\b" + Pattern.quote(c) + "\\b").matcher(upper).find()) return c;
+        for (int i = 0; i < Math.min(6, lines.length); i++) {
+            String l = lines[i].replaceAll("[^A-Za-z0-9&'\\- ]", "").trim();
+            long letters = l.chars().filter(Character::isLetter).count();
+            if (letters >= 3 && letters >= l.replace(" ", "").length() * 0.7
+                && !l.matches("(?i).*\\b(tax invoice|invoice|receipt|welcome|vat|tel|reg)\\b.*")) return l;
         }
         return null;
     }
 
-    /**
-     * Attempts to recover a date from an OCR-corrupted date string.
-     * Handles cases where OCR drops a digit (e.g. "09" → "0", making day/month invalid).
-     * Uses reference date (e.g. EXIF) for accurate correction when available,
-     * otherwise defaults corrupted day to 1 to preserve the correct month/year.
-     */
-    private LocalDate tryOcrDateCorrection(String dateStr, LocalDate reference) {
-        String[] parts = dateStr.split("[/\\-.]");
-        if (parts.length != 3) return null;
+    private static String fixAmountTail(String line) {
+        Matcher m = AMOUNT_TAIL.matcher(line);
+        if (!m.find() || !m.group(1).matches(".*\\d.*")) return line;
+        String tok = m.group(1);
+        String fixed = tok.replaceAll("[Oo@]", "0").replaceAll("[Ss]", "5").replaceAll("[Il|]", "1")
+            .replace('B', '8').replace(':', '.');
+        Matcher flag = FLAG.matcher(tok);
+        if (flag.find()) fixed = fixed.substring(0, flag.start()) + tok.substring(flag.start()); // keep VAT flag letter
+        return line.substring(0, m.start(1)) + fixed; // same length as the original, so offsets stay valid
+    }
 
+    /** Last '.' or ',' is the decimal separator; everything else (spaces, other separators) is grouping. */
+    private static Double parseAmount(String s) {
+        s = s.replaceAll("\\s", "");
+        int dec = Math.max(s.lastIndexOf('.'), s.lastIndexOf(','));
+        if (dec < 0) return null;
         try {
-            int p0 = Integer.parseInt(parts[0]);
-            int p1 = Integer.parseInt(parts[1]);
-            int p2 = Integer.parseInt(parts[2]);
-
-            // Normalize 2-digit year
-            if (p2 >= 0 && p2 <= 99) p2 += 2000;
-
-            // Try dd/MM/yyyy (SA standard)
-            if (p2 >= 2000 && p2 <= 2100) {
-                LocalDate corrected = correctDate(p0, p1, p2, reference);
-                if (corrected != null) return corrected;
-            }
-
-            // Try yyyy/MM/dd
-            int y0 = p0;
-            if (y0 >= 0 && y0 <= 99) y0 += 2000;
-            if (y0 >= 2000 && y0 <= 2100) {
-                LocalDate corrected = correctDate(p2, p1, y0, reference);
-                if (corrected != null) return corrected;
-            }
+            return Double.parseDouble(s.substring(0, dec).replaceAll("[.,]", "") + "." + s.substring(dec + 1));
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private String cleanDescription(String description) {
+        description = description.replaceAll("[^a-zA-Z0-9\\s/\\-.()&%]", "");
+        return description.replaceAll("\\s{2,}", " ").trim();
+    }
+
+    static LocalDate extractDate(String text) {
+        String t = text.replaceAll("(?<=\\d)[Oo](?=[\\d/\\-.])|(?<=[/\\-.])[Oo](?=\\d)", "0");
+        Matcher tm = TEXT_DATE.matcher(t);
+        while (tm.find()) {
+            int month = "janfebmaraprmayjunjulaugsepoctnovdec".indexOf(tm.group(2).toLowerCase()) / 3 + 1;
+            LocalDate d = safeDate(year(tm.group(3)), month, Integer.parseInt(tm.group(1)));
+            if (plausible(d)) return d;
+        }
+        Matcher m = NUM_DATE.matcher(t);
+        while (m.find()) {
+            String a = m.group(1), b = m.group(2), c = m.group(3);
+            LocalDate d;
+            if (a.length() == 4) {
+                d = safeDate(Integer.parseInt(a), Integer.parseInt(b), Integer.parseInt(c));      // yyyy/MM/dd
+            } else {
+                d = safeDate(year(c), Integer.parseInt(b), Integer.parseInt(a));                  // dd/MM/yyyy (SA)
+                if (d == null) d = safeDate(year(c), Integer.parseInt(a), Integer.parseInt(b));   // MM/dd/yyyy
+            }
+            if (plausible(d)) return d;
+        }
         return null;
     }
 
-    private LocalDate correctDate(int day, int month, int year, LocalDate reference) {
-        boolean dayInvalid = day < 1 || day > 31;
-        boolean monthInvalid = month < 1 || month > 12;
+    private static boolean plausible(LocalDate d) {
+        return d != null && d.getYear() >= 2000 && !d.isAfter(LocalDate.now().plusDays(1));
+    }
 
-        // Only correct if exactly one component is corrupted
-        if (dayInvalid == monthInvalid) return null;
+    private static int year(String y) {
+        int v = Integer.parseInt(y);
+        return y.length() == 2 ? 2000 + v : v;
+    }
 
-        // If reference date matches the valid components, use it for exact correction
-        if (reference != null && reference.getYear() == year) {
-            if (!monthInvalid && month == reference.getMonthValue() && dayInvalid) {
-                return reference;
-            }
-        }
-
-        // No reference — default corrupted day to 1 (preserves correct month/year)
-        if (dayInvalid) day = 1;
-        if (monthInvalid) return null; // can't safely guess month
-
+    private static LocalDate safeDate(int y, int m, int d) {
         try {
-            return LocalDate.of(year, month, day);
+            return LocalDate.of(y, m, d);
         } catch (DateTimeException e) {
             return null;
         }

@@ -160,9 +160,7 @@ public class CashFlowCalendarView extends VBox {
                 dots.getChildren().add(more);
             }
             cell.getChildren().add(dots);
-            Tooltip tooltip = new Tooltip(tooltipText.toString().trim());
-            tooltip.setStyle("-fx-font-size: 12px;");
-            Tooltip.install(cell, tooltip);
+            HoverTip.install(cell, tooltipText.toString().trim());
         }
 
         // Balance label

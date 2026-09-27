@@ -24,6 +24,10 @@ public class Debt {
         if (termMonths <= 0) {
             throw new IllegalArgumentException("Term months must be positive");
         }
+        // NaN fails every comparison, so "principal <= 0" alone would let it through.
+        requireFinite(principal, "Principal");
+        requireFinite(annualRate, "Annual rate");
+        requireFinite(monthlyPayment, "Payment");
         if (principal <= 0) {
             throw new IllegalArgumentException("Principal must be positive");
         }
@@ -41,13 +45,22 @@ public class Debt {
         this.currency = currency;
     }
 
+    /**
+     * Rejects NaN/Infinity (e.g. typed "NaN" or "1e999", which Double.parseDouble accepts).
+     * NumberFormatException so edit forms that catch "invalid number" report it to the user.
+     */
+    private static double requireFinite(double value, String what) {
+        if (!Double.isFinite(value)) throw new NumberFormatException(what + " must be a finite number");
+        return value;
+    }
+
     public String getId() { return id; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public double getPrincipal() { return principal; }
-    public void setPrincipal(double principal) { this.principal = principal; }
+    public void setPrincipal(double principal) { this.principal = requireFinite(principal, "Principal"); }
     public double getAnnualRate() { return annualRate; }
-    public void setAnnualRate(double annualRate) { this.annualRate = annualRate; }
+    public void setAnnualRate(double annualRate) { this.annualRate = requireFinite(annualRate, "Annual rate"); }
     public int getTermMonths() { return termMonths; }
     public void setTermMonths(int termMonths) { this.termMonths = termMonths; }
     public LocalDate getStartDate() { return startDate; }
@@ -55,7 +68,7 @@ public class Debt {
     public String getPaymentFrequency() { return paymentFrequency; }
     public void setPaymentFrequency(String paymentFrequency) { this.paymentFrequency = paymentFrequency; }
     public double getMonthlyPayment() { return monthlyPayment; }
-    public void setMonthlyPayment(double monthlyPayment) { this.monthlyPayment = monthlyPayment; }
+    public void setMonthlyPayment(double monthlyPayment) { this.monthlyPayment = requireFinite(monthlyPayment, "Payment"); }
     public String getCurrency() { return currency; }
     public void setCurrency(String currency) { this.currency = currency; }
     public String getPaymentKeyword() { return paymentKeyword; }

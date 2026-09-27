@@ -18,9 +18,17 @@ public class RecurringPatternDetector {
         private final RecurrenceType frequency;
         private final LocalDate earliestDate;
         private final List<Expense> matchingExpenses;
+        private final double previousAmount; // the price before a change; 0 = unchanged
 
         public DetectedPattern(String description, String category, double averageAmount,
                                RecurrenceType frequency, LocalDate earliestDate, List<Expense> matchingExpenses) {
+            this(description, category, averageAmount, frequency, earliestDate, matchingExpenses, 0);
+        }
+
+        public DetectedPattern(String description, String category, double averageAmount,
+                               RecurrenceType frequency, LocalDate earliestDate, List<Expense> matchingExpenses,
+                               double previousAmount) {
+            this.previousAmount = previousAmount;
             this.description = description;
             this.category = category;
             this.averageAmount = averageAmount;
@@ -40,6 +48,8 @@ public class RecurringPatternDetector {
         public LocalDate getEarliestDate() { return earliestDate; }
         public List<Expense> getMatchingExpenses() { return matchingExpenses; }
         public int getOccurrences() { return matchingExpenses.size(); }
+        /** The price before it changed (e.g. a subscription that went from R2,000 to R4,000); 0 if it didn't. */
+        public double getPreviousAmount() { return previousAmount; }
     }
 
     /**
@@ -74,24 +84,40 @@ public class RecurringPatternDetector {
             List<Expense> group = entry.getValue();
             if (group.size() < 2) continue;
 
-            // Strip amount outliers if needed, then check similarity
-            List<Expense> consistent = stripAmountOutliers(group);
-            if (consistent.size() < 2) continue;
-            if (!amountsAreSimilar(consistent)) continue;
+            // A subscription whose price changed part-way (R2,000 for months, then R4,000) is
+            // still one subscription: keep every charge for the timing, price it at the new amount.
+            List<Expense> dated = new ArrayList<>(group);
+            dated.sort(Comparator.comparing(Expense::getDate));
+            int step = amountsAreSimilar(dated) ? -1 : priceStep(dated);
+            RecurrenceType detectedFreq = step > 0 ? detectFrequency(dated) : null;
 
-            // Sort by date
-            consistent.sort(Comparator.comparing(Expense::getDate));
-
-            // Detect frequency from intervals
-            RecurrenceType detectedFreq = detectFrequency(consistent);
+            List<Expense> consistent;
+            if (detectedFreq != null) {
+                consistent = dated;
+            } else {
+                step = -1;
+                // Strip amount outliers if needed, then check similarity
+                consistent = stripAmountOutliers(group);
+                if (consistent.size() < 2) continue;
+                if (!amountsAreSimilar(consistent)) continue;
+                consistent.sort(Comparator.comparing(Expense::getDate));
+                // Detect frequency from intervals
+                detectedFreq = detectFrequency(consistent);
+            }
             if (detectedFreq == null) continue;
 
             // Check if this pattern already exists as a recurring expense
             Expense representative = consistent.get(0);
             if (alreadyExists(representative, detectedFreq, existingRecurring)) continue;
 
-            double avgAmount = consistent.stream().mapToDouble(Expense::getAmount).average().orElse(0);
+            List<Expense> current = step > 0 ? consistent.subList(step, consistent.size()) : consistent;
+            double avgAmount = current.stream().mapToDouble(Expense::getAmount).average().orElse(0);
             avgAmount = Math.round(avgAmount * 100.0) / 100.0;
+            double previous = 0;
+            if (step > 0) {
+                previous = consistent.subList(0, step).stream().mapToDouble(Expense::getAmount).average().orElse(0);
+                previous = Math.round(previous * 100.0) / 100.0;
+            }
 
             patterns.add(new DetectedPattern(
                 representative.getDescription(),
@@ -99,7 +125,8 @@ public class RecurringPatternDetector {
                 avgAmount,
                 detectedFreq,
                 consistent.get(0).getDate(),
-                new ArrayList<>(consistent)
+                new ArrayList<>(consistent),
+                previous
             ));
         }
 
@@ -151,12 +178,12 @@ public class RecurringPatternDetector {
     }
 
     /** Check if two descriptions refer to the same brand/service via known aliases. */
-    private boolean areBrandAliases(String a, String b) {
+    static boolean areBrandAliases(String a, String b) {
         String[][] aliases = {
             {"claude", "anthropic"},
             {"chatgpt", "openai"},
             {"google one", "google storage"},
-            {"ms ", "microsoft"},
+            {"ms", "microsoft"},
             {"netflix", "netflix.com"},
             {"spotify", "spotify ab"},
             {"amazon prime", "amzn prime", "amazon.com"},
@@ -165,16 +192,27 @@ public class RecurringPatternDetector {
         for (String[] group : aliases) {
             boolean aMatch = false, bMatch = false;
             for (String alias : group) {
-                if (a.contains(alias)) aMatch = true;
-                if (b.contains(alias)) bMatch = true;
+                // Whole words only: "ms" must not match "MAMS MEGASTOP".
+                if (containsWord(a, alias)) aMatch = true;
+                if (containsWord(b, alias)) bMatch = true;
             }
             if (aMatch && bMatch) return true;
         }
         return false;
     }
 
+    private static boolean containsWord(String text, String word) {
+        for (int i = text.indexOf(word); i >= 0; i = text.indexOf(word, i + 1)) {
+            boolean startOk = i == 0 || !Character.isLetterOrDigit(text.charAt(i - 1));
+            int end = i + word.length();
+            boolean endOk = end == text.length() || !Character.isLetterOrDigit(text.charAt(end));
+            if (startOk && endOk) return true;
+        }
+        return false;
+    }
+
     /** Check if two descriptions share a significant keyword (4+ chars, not noise). */
-    private boolean shareSignificantWord(String a, String b) {
+    static boolean shareSignificantWord(String a, String b) {
         if (a == null || b == null) return false;
         Set<String> noise = Set.of("pos", "purchase", "card", "payment", "app", "fnb",
             "the", "for", "and", "fee", "from", "with", "debit", "online", "transfer");
@@ -188,7 +226,7 @@ public class RecurringPatternDetector {
         return false;
     }
 
-    private int commonPrefixLength(String a, String b) {
+    private static int commonPrefixLength(String a, String b) {
         int len = Math.min(a.length(), b.length());
         for (int i = 0; i < len; i++) {
             if (a.charAt(i) != b.charAt(i)) return i;
@@ -196,7 +234,7 @@ public class RecurringPatternDetector {
         return len;
     }
 
-    private String normalizeDescription(String description) {
+    static String normalizeDescription(String description) {
         if (description == null || description.trim().isEmpty()) return "";
         String normalized = description.toLowerCase().trim();
         // Remove trailing reference numbers (common in bank statements)
@@ -243,7 +281,47 @@ public class RecurringPatternDetector {
         return filtered.size() >= 2 ? filtered : group;
     }
 
-    private boolean amountsAreSimilar(List<Expense> group) {
+    /**
+     * True when two bank descriptions name the same merchant/service: equal once reference
+     * numbers and dates are stripped, one contains the other, a long shared prefix, or known
+     * aliases ("CLAUDE.AI" / "ANTHROPIC").
+     */
+    static boolean sameMerchant(String a, String b) {
+        return sameMerchantKey(normalizeDescription(a), normalizeDescription(b));
+    }
+
+    /** {@link #sameMerchant} for descriptions already passed through {@link #normalizeDescription}. */
+    static boolean sameMerchantKey(String x, String y) {
+        if (x.isEmpty() || y.isEmpty()) return false;
+        if (x.equals(y)) return true;
+        // "payment to john" / "payment to mom" differ only in the person: never fuzzy-match those.
+        if (PERSON_PAYMENT.matcher(x).find() || PERSON_PAYMENT.matcher(y).find()) return false;
+        String shorter = x.length() <= y.length() ? x : y, longer = shorter == x ? y : x;
+        // Whole words only, so "fee" isn't found in "coffee bean".
+        if (shorter.length() >= 4 && (" " + longer + " ").contains(" " + shorter + " ")) return true;
+        if (shorter.length() >= 4 && commonPrefixLength(x, y) >= shorter.length() * 0.6) return true;
+        return areBrandAliases(x, y);
+    }
+
+    private static final java.util.regex.Pattern PERSON_PAYMENT =
+        java.util.regex.Pattern.compile("\\b(payment|transfer|paid|send|sent)\\s+(to|from)\\b");
+
+    /**
+     * For date-sorted charges that aren't all one price: the index where a single price change
+     * happened (every charge before it is one price, every charge from it another), or -1.
+     * Needs at least two charges at the new price, so one odd charge isn't mistaken for it.
+     */
+    static int priceStep(List<Expense> dated) {
+        int n = dated.size();
+        if (n < 3) return -1;
+        for (int k = n - 2; k >= 1; k--) {
+            List<Expense> before = dated.subList(0, k), after = dated.subList(k, n);
+            if (amountsAreSimilar(before) && amountsAreSimilar(after)) return k;
+        }
+        return -1;
+    }
+
+    private static boolean amountsAreSimilar(List<Expense> group) {
         double[] amounts = group.stream().mapToDouble(Expense::getAmount).sorted().toArray();
         int mid = amounts.length / 2;
         double median = (amounts.length % 2 == 0)
@@ -339,8 +417,10 @@ public class RecurringPatternDetector {
             boolean catMatch = existing.getCategory().equalsIgnoreCase(representative.getCategory());
             boolean amountClose = Math.abs(existing.getAmount() - representative.getAmount())
                 <= representative.getAmount() * 0.15;
+            // Same merchant by name (not just a shared word): a new price is still that series.
+            boolean strongDesc = sameMerchant(representative.getDescription(), existing.getDescription());
 
-            if (descMatch && catMatch && amountClose) {
+            if (descMatch && catMatch && (amountClose || strongDesc)) {
                 return true;
             }
         }

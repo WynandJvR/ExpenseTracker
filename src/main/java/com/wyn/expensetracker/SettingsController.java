@@ -253,7 +253,7 @@ public class SettingsController {
             .filter(e -> e.getCategory() != null)
             .collect(Collectors.groupingBy(Expense::getCategory, Collectors.counting()));
         List<CategoryStat> rows = new ArrayList<>();
-        for (String c : state.getCategories()) {
+        for (String c : state.getSortedCategories()) {
             rows.add(new CategoryStat(c, counts.getOrDefault(c, 0L)));
         }
         categoryStats.setAll(rows);

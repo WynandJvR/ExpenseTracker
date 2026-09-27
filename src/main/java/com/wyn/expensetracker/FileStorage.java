@@ -222,7 +222,7 @@ public class FileStorage {
                     String excludedFlag = expense.isExcluded() ? ",EXCLUDED" : "";
                     String incomeFlag = expense.isIncome() ? ",INCOME" : "";
                     String refundFlag = expense.isRefund() ? ",REFUND" : "";
-                    String tagsFlag = expense.getTags().isEmpty() ? "" : ",TAGS:" + String.join("|", expense.getTags());
+                    String tagsFlag = expense.getTags().isEmpty() ? "" : "," + escapeCsv("TAGS:" + String.join("|", expense.getTags()));
                     String currencyFlag = expense.getCurrency() != null ? ",CUR:" + expense.getCurrency() : "";
                     String receiptFlag = expense.getReceiptPath() != null ? ",RCPT:" + escapeCsv(expense.getReceiptPath()) : "";
                     String idFlag = ",ID:" + recurringExpense.getId();
@@ -239,7 +239,7 @@ public class FileStorage {
                     String excludedFlag = expense.isExcluded() ? ",EXCLUDED" : "";
                     String incomeFlag = expense.isIncome() ? ",INCOME" : "";
                     String refundFlag = expense.isRefund() ? ",REFUND" : "";
-                    String tagsFlag = expense.getTags().isEmpty() ? "" : ",TAGS:" + String.join("|", expense.getTags());
+                    String tagsFlag = expense.getTags().isEmpty() ? "" : "," + escapeCsv("TAGS:" + String.join("|", expense.getTags()));
                     String currencyFlag = expense.getCurrency() != null ? ",CUR:" + expense.getCurrency() : "";
                     String receiptFlag = expense.getReceiptPath() != null ? ",RCPT:" + escapeCsv(expense.getReceiptPath()) : "";
                     out.println(expense.getAmount() + "," +
@@ -307,7 +307,7 @@ public class FileStorage {
                     String[] parts = splitCsv(line);
                     if (parts.length >= 5) {
                         double amount = Double.parseDouble(parts[0]);
-                        if (amount <= 0) {
+                        if (!Double.isFinite(amount) || amount <= 0) {
                             lastLoadFailedLines++;
                             addParseWarning("Invalid amount at line " + lineNumber + ": " + line);
                             continue;

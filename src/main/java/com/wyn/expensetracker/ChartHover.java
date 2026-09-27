@@ -1,6 +1,5 @@
 package com.wyn.expensetracker;
 
-import javafx.geometry.Bounds;
 import javafx.geometry.Point2D;
 import javafx.scene.Node;
 import javafx.scene.chart.Axis;
@@ -9,7 +8,6 @@ import javafx.scene.chart.StackedBarChart;
 import javafx.scene.chart.XYChart;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.MouseEvent;
-import javafx.stage.Window;
 
 import java.util.Objects;
 import java.util.function.Function;
@@ -39,30 +37,43 @@ public final class ChartHover {
         tip.getStyleClass().add("chart-hover-tip");
         Object[] shownX = {null};
 
-        chart.addEventHandler(MouseEvent.MOUSE_MOVED, e -> {
-            Node plot = chart.lookup(".chart-plot-background");
-            if (plot == null || chart.getData().isEmpty()) return;
-            Point2D p = plot.sceneToLocal(e.getSceneX(), e.getSceneY());
-            Bounds b = plot.getLayoutBounds();
-            if (p == null || !b.contains(p)) {
-                hide(chart, tip, shownX);
-                return;
-            }
-            X x = nearestX(chart, e);
-            if (x == null) {
-                hide(chart, tip, shownX);
-                return;
-            }
-            if (!Objects.equals(x, shownX[0])) {
-                shownX[0] = x;
-                tip.setText(describe(chart, x, format, xLabel, hint));
-                highlight(chart, x);
-            }
-            Window w = chart.getScene() != null ? chart.getScene().getWindow() : null;
-            if (w != null) tip.show(w, e.getScreenX() + 16, e.getScreenY() + 14);
+        chart.addEventHandler(MouseEvent.MOUSE_MOVED, e -> update(chart, tip, shownX, e, format, xLabel, hint));
+        // A fast mouse can land on the read-out before the chart sees the move; keep following.
+        tip.addEventHandler(MouseEvent.MOUSE_MOVED, e -> update(chart, tip, shownX, e, format, xLabel, hint));
+        chart.addEventHandler(MouseEvent.MOUSE_EXITED, e -> {
+            // Leaving the chart onto its own read-out isn't leaving the chart.
+            if (HoverTip.pointerOnTip(tip, e.getScreenX(), e.getScreenY())) return;
+            hide(chart, tip, shownX);
         });
-        chart.addEventHandler(MouseEvent.MOUSE_EXITED, e -> hide(chart, tip, shownX));
         chart.addEventHandler(MouseEvent.MOUSE_ENTERED, e -> removeNodeTooltips(chart));
+        chart.sceneProperty().addListener((o, a, b) -> hide(chart, tip, shownX));
+        // However the read-out goes away (another tip replaced it, the window closed), undim the chart.
+        tip.addEventHandler(javafx.stage.WindowEvent.WINDOW_HIDDEN, e -> hide(chart, tip, shownX));
+    }
+
+    private static <X> void update(XYChart<X, Number> chart, Tooltip tip, Object[] shownX, MouseEvent e,
+                                   Function<Double, String> format, Function<X, String> xLabel, String hint) {
+        Node plot = chart.lookup(".chart-plot-background");
+        if (plot == null || chart.getData().isEmpty()) {
+            hide(chart, tip, shownX);
+            return;
+        }
+        Point2D p = plot.screenToLocal(e.getScreenX(), e.getScreenY());
+        if (p == null || !plot.getLayoutBounds().contains(p)) {
+            hide(chart, tip, shownX);
+            return;
+        }
+        X x = nearestX(chart, e.getScreenX(), e.getScreenY());
+        if (x == null) {
+            hide(chart, tip, shownX);
+            return;
+        }
+        if (!Objects.equals(x, shownX[0])) {
+            shownX[0] = x;
+            tip.setText(describe(chart, x, format, xLabel, hint));
+            highlight(chart, x);
+        }
+        HoverTip.showNear(tip, chart, e.getScreenX(), e.getScreenY());
     }
 
     public static <X> void install(XYChart<X, Number> chart, Function<Double, String> format) {
@@ -70,7 +81,7 @@ public final class ChartHover {
     }
 
     private static <X> void hide(XYChart<X, Number> chart, Tooltip tip, Object[] shownX) {
-        tip.hide();
+        HoverTip.hide(tip);
         if (shownX[0] != null) {
             shownX[0] = null;
             highlight(chart, null);
@@ -79,9 +90,9 @@ public final class ChartHover {
 
     /** The data x value closest to the mouse. */
     @SuppressWarnings("unchecked")
-    private static <X> X nearestX(XYChart<X, Number> chart, MouseEvent e) {
+    private static <X> X nearestX(XYChart<X, Number> chart, double screenX, double screenY) {
         Axis<X> axis = chart.getXAxis();
-        Point2D a = axis.sceneToLocal(e.getSceneX(), e.getSceneY());
+        Point2D a = axis.screenToLocal(screenX, screenY);
         if (a == null) return null;
         double mouse = a.getX();
         X best = null;
@@ -139,6 +150,7 @@ public final class ChartHover {
                 if (n == null) continue;
                 Object t = n.getProperties().get("javafx.scene.control.Tooltip");
                 if (t instanceof Tooltip tooltip) Tooltip.uninstall(n, tooltip);
+                HoverTip.uninstall(n);
             }
         }
     }

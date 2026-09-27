@@ -4,6 +4,7 @@ import javafx.beans.property.*;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
+import javafx.collections.transformation.SortedList;
 import javafx.stage.Stage;
 
 import java.io.IOException;
@@ -76,7 +77,18 @@ public class SharedState {
         this.budgets = new HashMap<>();
         this.categorizationRules = new CategorizationRules();
         this.receiptScanner = new ReceiptScanner();
+        this.sortedCategories = categories == null ? null : new SortedList<>(categories, CATEGORY_ORDER);
     }
+
+    /** A–Z, ignoring case: how every category dropdown and list shows them. */
+    static final Comparator<String> CATEGORY_ORDER = String.CASE_INSENSITIVE_ORDER.thenComparing(Comparator.naturalOrder());
+    private final SortedList<String> sortedCategories;
+
+    /**
+     * The categories A–Z, live: follows every add/rename/remove on {@link #getCategories()}.
+     * Dropdowns and lists show this; code that changes categories uses getCategories().
+     */
+    public SortedList<String> getSortedCategories() { return sortedCategories; }
 
     // --- Core services ---
 
@@ -178,12 +190,31 @@ public class SharedState {
 
     // --- Convenience methods ---
 
+    /** Why the latest ledger save failed, or null when it succeeded. */
+    private String lastSaveError;
+
+    public String getLastSaveError() { return lastSaveError; }
+
+    /** A different profile's ledger is loaded: an earlier failure no longer applies. */
+    public void clearLastSaveError() { lastSaveError = null; }
+
     public void saveExpenses() throws IOException {
-        storage.saveExpenses(manager.getExpensesForSave());
+        try {
+            storage.saveExpenses(manager.getExpensesForSave());
+            lastSaveError = null;
+        } catch (IOException e) {
+            lastSaveError = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            throw e;
+        }
     }
 
     public void saveRecurringOverrides() throws IOException {
-        storage.saveRecurringOverrides(manager.getOverrides());
+        try {
+            storage.saveRecurringOverrides(manager.getOverrides());
+        } catch (IOException e) {
+            lastSaveError = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            throw e;
+        }
     }
 
     public void syncExpenseList() {
@@ -256,10 +287,22 @@ public class SharedState {
         public final Set<String> coveredRecurringIds;
         /** Imported transactions (by identity) that were matched to a recurring occurrence. */
         public final Set<Expense> coveringImports;
+        /**
+         * Covering imports whose amount differs from the recurring amount by more than the usual
+         * tolerance (the price changed, e.g. a subscription went from R2,000 to R4,000), mapped
+         * (by identity) to the occurrence they pay.
+         */
+        public final Map<Expense, Expense> repricedImports;
 
         RecurringCoverage(Set<String> coveredRecurringIds, Set<Expense> coveringImports) {
+            this(coveredRecurringIds, coveringImports, new IdentityHashMap<>());
+        }
+
+        RecurringCoverage(Set<String> coveredRecurringIds, Set<Expense> coveringImports,
+                          Map<Expense, Expense> repricedImports) {
             this.coveredRecurringIds = coveredRecurringIds;
             this.coveringImports = coveringImports;
+            this.repricedImports = repricedImports;
         }
     }
 
@@ -288,6 +331,17 @@ public class SharedState {
 
     /** Maximum distance (days) between an import and the occurrence it covers. */
     public static final int COVERAGE_WINDOW_DAYS = 5;
+    /**
+     * A bank description with reference numbers dropped but otherwise as printed: unlike
+     * {@link RecurringPatternDetector#normalizeDescription} it keeps words such as "debit order",
+     * which are what tell the contract apart from other purchases at the same company.
+     */
+    static String paymentKey(String description) {
+        return description.toLowerCase().replaceAll("\\d{4,}", " ").replaceAll("[^a-z0-9]+", " ").trim();
+    }
+
+    /** Tighter window for pairing a bill with a charge at a different price. */
+    static final int REPRICE_WINDOW_DAYS = 3;
 
     /** Raw-amount variant (no currency conversion); kept for source compatibility. */
     public static RecurringCoverage computeRecurringCoverage(Collection<? extends Expense> expenses) {
@@ -303,6 +357,10 @@ public class SharedState {
      * amounts are within 20%. Pairs are chosen by an optimal one-to-one matching: the
      * maximum number of pairs, and among those the smallest total date distance (then
      * amount difference), so e.g. a weekly series is not mis-paired by a greedy choice.
+     * Occurrences still unpaired after that are paired with the one remaining import that
+     * matches on description and date (within {@link #REPRICE_WINDOW_DAYS}) but not amount
+     * (0.5x-3x) and looks like the bill's earlier payments: the bill's price changed.
+     * Without this the old-price occurrence and the new-price import would both count.
      *
      * @param cm converts amounts to base currency before comparing; null compares raw amounts
      */
@@ -385,7 +443,51 @@ public class SharedState {
                 covering.add(imports.get(pair[1]));
             }
         }
-        return new RecurringCoverage(covered, covering);
+
+        // Price changes: same payee, same timing, different amount. Only when it's unambiguous:
+        // the one same-name charge within a few days, priced 0.5x-3x, and (when earlier months
+        // were paid by imports) looking like those payments. "VODACOM AIRTIME" is not the
+        // "VODACOM DEBIT ORDER" contract just because it's the same company.
+        Map<RecurringExpense, List<String>> paidAs = new IdentityHashMap<>();
+        for (Expense occ : occurrences) {
+            if (!covered.contains(occ.getRecurringId())) continue;
+            for (Expense imp : covering) {
+                if (imp.getDate() != null && Math.abs(imp.getDate().toEpochDay() - occ.getDate().toEpochDay()) <= COVERAGE_WINDOW_DAYS
+                        && imp.getDescription().toLowerCase().contains(
+                            occ.getSourceRecurringExpense().getDescription().toLowerCase().trim())) {
+                    paidAs.computeIfAbsent(occ.getSourceRecurringExpense(), k -> new ArrayList<>())
+                        .add(paymentKey(imp.getDescription()));
+                }
+            }
+        }
+        Map<Expense, Expense> repriced = new IdentityHashMap<>();
+        for (Expense occ : occurrences) {
+            if (covered.contains(occ.getRecurringId())) continue;
+            String srcDesc = occ.getSourceRecurringExpense().getDescription().toLowerCase().trim();
+            double occAmt = Math.abs(baseAmount(occ, cm));
+            if (occAmt <= 0) continue;
+            long day = occ.getDate().toEpochDay();
+            int found = -1, candidates = 0;
+            for (int i = lowerBound(impDay, day - REPRICE_WINDOW_DAYS);
+                 i < nImp && impDay[i] <= day + REPRICE_WINDOW_DAYS; i++) {
+                Expense imp = imports.get(i);
+                if (covering.contains(imp) || imp.isIncome() != occ.isIncome()) continue;
+                if (!impDesc[i].contains(srcDesc)) continue;
+                candidates++;
+                double ratio = Math.abs(impAmt[i]) / occAmt;
+                if (ratio >= 0.5 && ratio <= 3) found = i;
+            }
+            if (candidates != 1 || found < 0) continue;
+            List<String> earlier = paidAs.get(occ.getSourceRecurringExpense());
+            if (earlier != null) {
+                String key = paymentKey(imports.get(found).getDescription());
+                if (earlier.stream().noneMatch(k -> RecurringPatternDetector.sameMerchantKey(k, key))) continue;
+            }
+            covered.add(occ.getRecurringId());
+            covering.add(imports.get(found));
+            repriced.put(imports.get(found), occ);
+        }
+        return new RecurringCoverage(covered, covering, repriced);
     }
 
     /** First index whose value is >= key (values sorted ascending). */

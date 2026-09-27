@@ -33,7 +33,7 @@ public class OfxStatementParser implements BankStatementParser {
             String trnType = null, dateStr = null, amountStr = null, name = null, memo = null;
             Matcher m = TAG_PATTERN.matcher(block.group(1));
             while (m.find()) {
-                String value = m.group(2).trim();
+                String value = decodeEntities(m.group(2).trim());
                 switch (m.group(1).toUpperCase()) {
                     case "TRNTYPE" -> trnType = value;
                     case "DTPOSTED" -> dateStr = value;
@@ -70,6 +70,13 @@ public class OfxStatementParser implements BankStatementParser {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** OFX escapes '&', '<' and '>' in text ("AT&amp;T"); '&amp;' goes last so "&amp;lt;" stays "&lt;". */
+    static String decodeEntities(String s) {
+        if (s.indexOf('&') < 0) return s;
+        return s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+            .replace("&apos;", "'").replace("&#39;", "'").replace("&amp;", "&");
     }
 
     private String buildDescription(String name, String memo) {

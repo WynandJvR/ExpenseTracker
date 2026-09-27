@@ -25,6 +25,8 @@ public class ImportReviewDialog {
     private final ObservableList<ImportItem> incomeItems;
     private final ObservableList<ImportItem> recurringItems;
     private final ObservableList<String> categories;
+    /** Dropdowns show the categories A-Z; new ones are still added to {@link #categories}. */
+    private final javafx.collections.transformation.SortedList<String> sortedCategories;
     private final String currencySymbol;
     private final CategorizationRules categorizationRules;
     private List<Expense> result = null;
@@ -55,6 +57,7 @@ public class ImportReviewDialog {
         this.categorizationRules = categorizationRules;
         this.items = FXCollections.observableArrayList(importItems);
         this.categories = categories;
+        this.sortedCategories = new javafx.collections.transformation.SortedList<>(categories, SharedState.CATEGORY_ORDER);
         this.currencySymbol = currencySymbol;
 
         // Run duplicate detection
@@ -236,11 +239,10 @@ public class ImportReviewDialog {
             {
                 textField.getStyleClass().add("text-field");
                 textField.setOnAction(e -> {
-                    try {
-                        commitEdit(Double.parseDouble(textField.getText()));
-                    } catch (NumberFormatException ex) {
-                        cancelEdit();
-                    }
+                    // Accept "123,45" as well as "123.45" (the prefill is locale-free, but users type either).
+                    Double v = Amounts.parse(textField.getText());
+                    if (v != null && Double.isFinite(v)) commitEdit(v);
+                    else cancelEdit();
                 });
             }
             @Override
@@ -257,7 +259,7 @@ public class ImportReviewDialog {
             @Override
             public void startEdit() {
                 super.startEdit();
-                textField.setText(String.format("%.2f", getItem().doubleValue()));
+                textField.setText(String.format(java.util.Locale.ROOT, "%.2f", getItem().doubleValue()));
                 setGraphic(textField);
                 setText(null);
                 textField.requestFocus();
@@ -287,7 +289,7 @@ public class ImportReviewDialog {
         TableColumn<ImportItem, String> categoryCol = new TableColumn<>("Category");
         categoryCol.setCellValueFactory(cd -> cd.getValue().categoryProperty());
         categoryCol.setCellFactory(col -> new TableCell<>() {
-            private final ComboBox<String> combo = new ComboBox<>(categories);
+            private final ComboBox<String> combo = new ComboBox<>(sortedCategories);
             {
                 combo.setEditable(true);
                 combo.getStyleClass().add("combo-box");
@@ -483,26 +485,24 @@ public class ImportReviewDialog {
 
         // Row factory: duplicate highlighting + right-click to move between tabs
         table.setRowFactory(tv -> new TableRow<>() {
+            {
+                HoverTip.install(this, () -> {
+                    ImportItem item = getItem();
+                    Expense match = item != null && !isEmpty() && item.isDuplicate() ? item.getDuplicateMatch() : null;
+                    return match == null ? null : String.format(
+                        "Potential duplicate of: %s on %s (%s %.2f)",
+                        match.getDescription(), match.getDate(), currencySymbol, match.getAmount());
+                });
+            }
+
             @Override
             protected void updateItem(ImportItem item, boolean empty) {
                 super.updateItem(item, empty);
                 getStyleClass().removeAll("duplicate-row");
                 if (empty || item == null) {
-                    setTooltip(null);
                     setContextMenu(null);
                 } else {
-                    if (item.isDuplicate()) {
-                        getStyleClass().add("duplicate-row");
-                        Expense match = item.getDuplicateMatch();
-                        if (match != null) {
-                            setTooltip(new Tooltip(String.format(
-                                "Potential duplicate of: %s on %s (%s %.2f)",
-                                match.getDescription(), match.getDate(),
-                                currencySymbol, match.getAmount())));
-                        }
-                    } else {
-                        setTooltip(null);
-                    }
+                    if (item.isDuplicate()) getStyleClass().add("duplicate-row");
 
                     ContextMenu menu = new ContextMenu();
                     if (isIncomeTab) {
@@ -600,7 +600,7 @@ public class ImportReviewDialog {
             if (uncategorizedSelected.isEmpty()) {
                 return;
             }
-            ComboBox<String> catPicker = new ComboBox<>(categories);
+            ComboBox<String> catPicker = new ComboBox<>(sortedCategories);
             catPicker.setEditable(true);
             catPicker.setPromptText("Select category...");
             catPicker.setMaxWidth(Double.MAX_VALUE);

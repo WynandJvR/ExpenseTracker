@@ -99,7 +99,7 @@ public class DebtController {
         debtKeywordField = new TextField();
         debtKeywordField.setPromptText("e.g., VEHICLE FIN 1234");
         debtKeywordField.getStyleClass().add("text-field");
-        debtKeywordField.setTooltip(new Tooltip(KEYWORD_HELP));
+        HoverTip.install(debtKeywordField, KEYWORD_HELP);
         Label label = new Label("Statement keyword (optional)");
         label.getStyleClass().add("form-label");
         VBox box = new VBox(5, label, debtKeywordField);
@@ -187,22 +187,27 @@ public class DebtController {
         });
 
         debtBalanceColumn.setCellFactory(col -> new TableCell<Debt, Double>() {
+            {
+                HoverTip.install(this, () -> {
+                    Debt debt = getTableRow() != null ? getTableRow().getItem() : null;
+                    return debt != null && !isEmpty() && state.debtStatus(debt).estimated
+                        ? "Estimated: no payments recorded or matched, so the scheduled balance is assumed. "
+                            + "Record payments or set a statement keyword for an exact figure."
+                        : null;
+                });
+            }
+
             @Override
             protected void updateItem(Double item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || getTableRow() == null || getTableRow().getItem() == null) {
                     setText(null);
-                    setTooltip(null);
                     getStyleClass().remove("paid-off-cell");
                 } else {
                     Debt debt = getTableRow().getItem();
                     Debt.BalanceStatus status = state.debtStatus(debt);
                     double balance = status.balance;
                     setText(balanceText(debt, status));
-                    setTooltip(status.estimated
-                        ? new Tooltip("Estimated: no payments recorded or matched, so the scheduled "
-                            + "balance is assumed. Record payments or set a statement keyword for an exact figure.")
-                        : null);
                     setAlignment(Pos.CENTER_RIGHT);
                     getStyleClass().remove("paid-off-cell");
                     if (balance <= 0.01) getStyleClass().add("paid-off-cell");
@@ -311,6 +316,19 @@ public class DebtController {
         validateAddForm();
     }
 
+    /** A number as typed, with either "," or "." for decimals (throws on bad input, like parseDouble). */
+    private static double parseNumber(String text) {
+        Double v = UIUtils.parseAmount(text);
+        if (v == null || !Double.isFinite(v)) throw new NumberFormatException("Not a number: " + text);
+        return v;
+    }
+
+    /** Interest rate as typed; blank means an interest-free loan. */
+    private static double parseRate(String text) {
+        String t = text == null ? "" : text.trim().replace("%", "");
+        return t.isEmpty() ? 0 : parseNumber(t);
+    }
+
     /** Disables "Add Debt" until principal and term are valid positive numbers; flags bad input inline. */
     private void validateAddForm() {
         boolean principalOk = UIUtils.isPositiveDouble(debtPrincipalField.getText());
@@ -322,8 +340,8 @@ public class DebtController {
 
     private void updateCalculatedPayment() {
         try {
-            double principal = Double.parseDouble(debtPrincipalField.getText());
-            double rate = Double.parseDouble(debtRateField.getText());
+            double principal = parseNumber(debtPrincipalField.getText());
+            double rate = parseRate(debtRateField.getText());
             int term = Integer.parseInt(debtTermField.getText());
             if (principal > 0 && rate >= 0 && term > 0) {
                 double monthlyRate = rate / 100.0 / 12.0;
@@ -402,10 +420,10 @@ public class DebtController {
             String name = debtNameField.getText().trim();
             if (name.isEmpty()) { showMsg("Name is required", true); return; }
 
-            double principal = Double.parseDouble(debtPrincipalField.getText());
+            double principal = parseNumber(debtPrincipalField.getText());
             if (principal <= 0) { showMsg("Principal must be positive", true); return; }
 
-            double rate = Double.parseDouble(debtRateField.getText());
+            double rate = parseRate(debtRateField.getText());
             if (rate < 0) { showMsg("Rate cannot be negative", true); return; }
 
             int term = Integer.parseInt(debtTermField.getText());
@@ -417,7 +435,7 @@ public class DebtController {
             double monthlyPayment = 0;
             String paymentText = debtPaymentField.getText().trim();
             if (!paymentText.isEmpty()) {
-                monthlyPayment = Double.parseDouble(paymentText);
+                monthlyPayment = parseNumber(paymentText);
                 if (monthlyPayment <= 0) { showMsg("Payment must be positive", true); return; }
             }
 
@@ -432,7 +450,7 @@ public class DebtController {
 
             state.getDebts().add(debt);
             saveDebts();
-            refresh();
+            state.requestRefresh();
             resetDebtForm();
             showMsg(String.format("Added %s — %s/month for %d months", name,
                 UIUtils.fmt(debt.getMonthlyPayment(), state.getCurrencySymbol()), term), false);
@@ -459,7 +477,7 @@ public class DebtController {
                 state.getDebtPayments().removeIf(p -> p.getDebtId().equals(selected.getId()));
                 saveDebts();
                 savePayments();
-                refresh();
+                state.requestRefresh();
                 showMsg("Debt deleted", false);
             }
         });
@@ -505,7 +523,7 @@ public class DebtController {
         TextField keywordField = new TextField(selected.getPaymentKeyword() != null ? selected.getPaymentKeyword() : "");
         keywordField.setPromptText("e.g., VEHICLE FIN 1234");
         keywordField.getStyleClass().add("text-field");
-        keywordField.setTooltip(new Tooltip(KEYWORD_HELP));
+        HoverTip.install(keywordField, KEYWORD_HELP);
 
         // Live-recompute the instalment when principal/rate/term change, unless the user
         // has typed their own payment.
@@ -514,8 +532,8 @@ public class DebtController {
         javafx.beans.value.ChangeListener<String> termsListener = (obs, o, n) -> {
             if (paymentTyped[0]) return;
             try {
-                double p = Double.parseDouble(principalField.getText());
-                double r = Double.parseDouble(rateField.getText());
+                double p = parseNumber(principalField.getText());
+                double r = parseRate(rateField.getText());
                 int t = Integer.parseInt(termField.getText());
                 if (p > 0 && r >= 0 && t > 0) {
                     Debt preview = new Debt("preview", "", p, r, t, selected.getStartDate(), "MONTHLY", 0, null);
@@ -538,14 +556,14 @@ public class DebtController {
             try {
                 String name = nameField.getText().trim();
                 if (name.isEmpty()) { errorLabel.setText("Name is required"); return; }
-                double principal = Double.parseDouble(principalField.getText());
+                double principal = parseNumber(principalField.getText());
                 if (principal <= 0) { errorLabel.setText("Principal must be positive"); return; }
-                double rate = Double.parseDouble(rateField.getText());
+                double rate = parseRate(rateField.getText());
                 if (rate < 0) { errorLabel.setText("Rate cannot be negative"); return; }
                 int term = Integer.parseInt(termField.getText());
                 if (term <= 0) { errorLabel.setText("Term must be positive"); return; }
                 String paymentText = paymentField.getText().trim();
-                double payment = paymentText.isEmpty() ? 0 : Double.parseDouble(paymentText);
+                double payment = paymentText.isEmpty() ? 0 : parseNumber(paymentText);
                 if (payment < 0) { errorLabel.setText("Payment cannot be negative"); return; }
 
                 // If the loan terms changed but the user left the payment untouched, the
@@ -562,7 +580,7 @@ public class DebtController {
                 selected.setMonthlyPayment(recompute ? selected.calculateMonthlyPayment() : payment);
                 selected.setPaymentKeyword(keywordField.getText());
                 saveDebts();
-                refresh();
+                state.requestRefresh();
                 showMsg("Debt updated", false);
                 dialog.close();
             } catch (NumberFormatException ex) {
@@ -629,7 +647,7 @@ public class DebtController {
         confirmBtn.getStyleClass().add("accent-button");
         confirmBtn.setOnAction(e -> {
             try {
-                double amount = Double.parseDouble(amountField.getText());
+                double amount = parseNumber(amountField.getText());
                 if (amount <= 0) { errorLabel.setText("Amount must be positive"); return; }
                 LocalDate date = datePicker.getValue();
                 if (date == null) { errorLabel.setText("Date is required"); return; }
@@ -637,7 +655,7 @@ public class DebtController {
                 DebtPayment payment = new DebtPayment(selected.getId(), amount, date, noteField.getText().trim());
                 state.getDebtPayments().add(payment);
                 savePayments();
-                refresh();
+                state.requestRefresh();
                 showMsg(String.format("Recorded %s payment for %s",
                     UIUtils.fmt(amount, state.getCurrencySymbol()), selected.getName()), false);
                 dialog.close();

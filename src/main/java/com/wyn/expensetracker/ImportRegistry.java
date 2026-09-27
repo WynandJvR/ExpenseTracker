@@ -22,6 +22,8 @@ import java.util.*;
  *  - fingerprints.txt: one line per imported transaction fingerprint → import id
  *  - auto_import.txt:  the folder that is scanned for new statements on startup
  *  - dismissed.txt:    hashes of files the user removed, so the folder scan doesn't bring them back
+ *  - dismissed_fingerprints.txt: transactions of removed imports, so the folder scan doesn't
+ *                      bring them back from a second copy (re-downloaded PDF, CSV of the same period)
  */
 public class ImportRegistry {
 
@@ -68,6 +70,7 @@ public class ImportRegistry {
     private final List<StatementRecord> statements = new ArrayList<>();
     private final Map<String, String> fingerprints = new HashMap<>(); // fingerprint -> importId
     private final Set<String> dismissedHashes = new HashSet<>();
+    private final Set<String> dismissedFingerprints = new HashSet<>();
     private String autoImportFolder;
     /** Set when a file exists but couldn't be read: saving would overwrite real history with nothing. */
     private boolean loadFailed;
@@ -77,11 +80,14 @@ public class ImportRegistry {
         final Set<String> fileHashes;
         final Set<String> fingerprints;
         final Set<String> dismissed;
+        final Set<String> dismissedFingerprints;
 
-        Snapshot(Set<String> fileHashes, Set<String> fingerprints, Set<String> dismissed) {
+        Snapshot(Set<String> fileHashes, Set<String> fingerprints, Set<String> dismissed,
+                 Set<String> dismissedFingerprints) {
             this.fileHashes = fileHashes;
             this.fingerprints = fingerprints;
             this.dismissed = dismissed;
+            this.dismissedFingerprints = dismissedFingerprints;
         }
     }
 
@@ -122,7 +128,8 @@ public class ImportRegistry {
     public Snapshot snapshot() {
         Set<String> hashes = new HashSet<>();
         for (StatementRecord r : statements) hashes.add(r.fileHash);
-        return new Snapshot(Set.copyOf(hashes), Set.copyOf(fingerprints.keySet()), Set.copyOf(dismissedHashes));
+        return new Snapshot(Set.copyOf(hashes), Set.copyOf(fingerprints.keySet()), Set.copyOf(dismissedHashes),
+            Set.copyOf(dismissedFingerprints));
     }
 
     public List<String> fingerprintsFor(String importId) {
@@ -145,17 +152,19 @@ public class ImportRegistry {
             if (fp != null) fingerprints.putIfAbsent(fp, statement.importId);
         }
         dismissedHashes.remove(statement.fileHash);
+        dismissedFingerprints.removeAll(newFingerprints);
     }
 
     /**
-     * Forgets an import the user removed (or undid). Its file is remembered as dismissed
-     * so the watched-folder scan doesn't silently bring it back; importing it by hand
-     * clears that.
+     * Forgets an import the user removed (or undid). Its file and its transactions are
+     * remembered as dismissed so the watched-folder scan doesn't silently bring them back,
+     * not even from another copy of the statement; importing it by hand clears that.
      */
     public void forget(String importId) {
         for (StatementRecord r : statements) {
             if (r.importId.equals(importId) && r.fileHash != null) dismissedHashes.add(r.fileHash);
         }
+        dismissedFingerprints.addAll(fingerprintsFor(importId));
         purge(importId);
     }
 
@@ -223,6 +232,7 @@ public class ImportRegistry {
         statements.clear();
         fingerprints.clear();
         dismissedHashes.clear();
+        dismissedFingerprints.clear();
         autoImportFolder = null;
         loadFailed = false;
         for (String line : readLines("statements.txt")) {
@@ -243,6 +253,7 @@ public class ImportRegistry {
         List<String> auto = readLines("auto_import.txt");
         if (!auto.isEmpty()) setAutoImportFolder(auto.get(0).trim());
         for (String line : readLines("dismissed.txt")) dismissedHashes.add(line.trim());
+        for (String line : readLines("dismissed_fingerprints.txt")) dismissedFingerprints.add(line);
     }
 
     public void save() throws IOException {
@@ -261,6 +272,7 @@ public class ImportRegistry {
         writeLines("fingerprints.txt", fp);
         writeLines("auto_import.txt", autoImportFolder == null ? List.of() : List.of(autoImportFolder));
         writeLines("dismissed.txt", new ArrayList<>(dismissedHashes));
+        writeLines("dismissed_fingerprints.txt", new ArrayList<>(dismissedFingerprints));
     }
 
     private List<String> readLines(String name) {

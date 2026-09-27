@@ -3,7 +3,15 @@ package com.wyn.expensetracker;
 import java.time.LocalDate;
 
 public class Anomaly {
-    public enum AnomalyType { AMOUNT_OUTLIER, NEW_CATEGORY, SPENDING_SPIKE, LARGE_TRANSACTION }
+    public enum AnomalyType {
+        AMOUNT_OUTLIER, NEW_CATEGORY, SPENDING_SPIKE, LARGE_TRANSACTION,
+        /** A subscription/debit order charged at a different price than usual. */
+        PRICE_CHANGE,
+        /** A merchant that has started charging the same amount at a regular interval. */
+        NEW_SUBSCRIPTION,
+        /** The same amount at the same merchant twice within a few days. */
+        DUPLICATE_CHARGE
+    }
 
     private final AnomalyType type;
     private final String message;

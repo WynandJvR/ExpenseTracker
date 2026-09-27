@@ -51,7 +51,7 @@ public class TagEditorPopup {
         addBtn.getStyleClass().add("primary-button");
         addBtn.setOnAction(e -> {
             String tag = newTagField.getText().trim()
-                .replace("|", "").replace(",", "").replace("\n", "").replace("\r", "");
+                .replace("|", "").replace(",", "").replace("\"", "").replace("\n", "").replace("\r", "");
             if (!tag.isEmpty()) {
                 selectedTags.add(tag);
                 // Add chip if not already present

@@ -2,6 +2,8 @@ package com.wyn.expensetracker;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.temporal.ChronoField;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,7 +18,17 @@ public class QifStatementParser implements BankStatementParser {
         DateTimeFormatter.ofPattern("MM-dd-yyyy"),
         DateTimeFormatter.ofPattern("d/M/yyyy"),
         DateTimeFormatter.ofPattern("M/d/yyyy"),
+        // Older Quicken files use two-digit years ("D6/ 1/94"): 50-99 is 19xx, 00-49 is 20xx.
+        twoDigitYear("d/M/"),
+        twoDigitYear("M/d/"),
+        twoDigitYear("d-M-"),
+        twoDigitYear("M-d-"),
     };
+
+    private static DateTimeFormatter twoDigitYear(String dayMonth) {
+        return new DateTimeFormatterBuilder().appendPattern(dayMonth)
+            .appendValueReduced(ChronoField.YEAR, 2, 2, 1950).toFormatter();
+    }
 
     @Override
     public boolean canParse(String text) {
@@ -59,6 +71,9 @@ public class QifStatementParser implements BankStatementParser {
                 }
             }
         }
+        // The last record may lack its closing '^'.
+        ImportItem last = buildItem(dateStr, amountStr, payee, memo);
+        if (last != null) items.add(last);
 
         return items;
     }

@@ -89,9 +89,9 @@ public class RecurringController {
         initialized = true;
 
         // Category combos
-        addRecurringCategoryCombo.setItems(state.getCategories());
+        addRecurringCategoryCombo.setItems(state.getSortedCategories());
         addRecurringCategoryCombo.setEditable(true);
-        editRecurringCategoryCombo.setItems(state.getCategories());
+        editRecurringCategoryCombo.setItems(state.getSortedCategories());
         editRecurringCategoryCombo.setEditable(true);
         UIUtils.setupComboCellFactory(addRecurringCategoryCombo);
         UIUtils.setupComboCellFactory(editRecurringCategoryCombo);
@@ -143,7 +143,7 @@ public class RecurringController {
                 String desc = newSelection.getDescription();
                 editRecurringTitle.setText(desc == null || desc.isBlank()
                     ? "Edit recurring item" : "Edit \u201c" + desc.trim() + "\u201d");
-                editRecurringAmountField.setText(String.valueOf(newSelection.getAmount()));
+                editRecurringAmountField.setText(UIUtils.formatAmountForEdit(newSelection.getAmount()));
                 editRecurringCategoryCombo.setValue(newSelection.getCategory());
                 editRecurringDatePicker.setValue(newSelection.getDate());
                 editRecurringDescField.setText(newSelection.getDescription());
@@ -263,17 +263,102 @@ public class RecurringController {
     }
 
     /**
-     * The originals of a pattern that may be removed after converting it: rows still in
-     * the ledger (by identity, so rows replaced by an edit are not "deleted" and later
-     * re-added by undo) and still plain spend (not since marked as a transfer/income/refund).
+     * The first date on the series' cadence after {@code last} that is also after the newest
+     * imported transaction: up to that date the statements are the record, so a generated
+     * occurrence there would either repeat a real charge or invent one.
      */
-    static List<Expense> removableOriginals(RecurringPatternDetector.DetectedPattern pattern, List<Expense> ledger) {
+    static LocalDate firstDateAfterImports(RecurrenceType frequency, LocalDate last, List<Expense> ledger) {
+        LocalDate imported = ledger.stream().filter(e -> e.getImportId() != null && e.getDate() != null)
+            .map(Expense::getDate).max(LocalDate::compareTo).orElse(last);
+        int n = 1;
+        LocalDate next = ExpenseManager.nthDate(frequency, last, n);
+        while (!next.isAfter(imported)) next = ExpenseManager.nthDate(frequency, last, ++n);
+        return next;
+    }
+
+    /**
+     * Where "Make Recurring" starts the series for {@code expense}: after the newest entry with
+     * the same description (so months already logged by hand aren't counted again), and for an
+     * imported one also after everything imported so far (statements are the record up to there).
+     */
+    static LocalDate makeRecurringStart(Expense expense, RecurrenceType frequency, List<Expense> ledger) {
+        String desc = expense.getDescription() == null ? "" : expense.getDescription().trim();
+        LocalDate last = ledger.stream()
+            .filter(e -> e.getRecurringId() == null && e.getDate() != null && e.getDescription() != null
+                && e.getDescription().trim().equalsIgnoreCase(desc))
+            .map(Expense::getDate).max(LocalDate::compareTo).orElse(expense.getDate());
+        if (last.isBefore(expense.getDate())) last = expense.getDate();
+        // Keep the transaction's own day of month; step from it, not from the newest entry.
+        int n = 1;
+        LocalDate next = ExpenseManager.nthDate(frequency, expense.getDate(), n);
+        LocalDate after = last;
+        if (expense.getImportId() != null) {
+            LocalDate imported = ledger.stream().filter(e -> e.getImportId() != null && e.getDate() != null)
+                .map(Expense::getDate).max(LocalDate::compareTo).orElse(last);
+            if (imported.isAfter(after)) after = imported;
+        }
+        while (!next.isAfter(after)) next = ExpenseManager.nthDate(frequency, expense.getDate(), ++n);
+        return next;
+    }
+
+    /**
+     * Template for a detected pattern. Currency, refund flag and tags come from the pattern's
+     * transactions still in the ledger (the most recent one when they disagree), so a USD
+     * subscription doesn't turn into a base-currency one and refunds stay refunds.
+     *
+     * <p>The real charges stay as they are (they are what the bank took: a R89 month stays R89,
+     * a skipped month stays skipped). The series starts at the next expected charge after the
+     * last one and after everything imported so far, so it only fills in what's still to come.
+     */
+    static RecurringExpense templateFromPattern(RecurringPatternDetector.DetectedPattern pattern, List<Expense> ledger) {
+        LocalDate lastCharge = pattern.getMatchingExpenses().stream().map(Expense::getDate)
+            .filter(java.util.Objects::nonNull).max(LocalDate::compareTo).orElse(pattern.getEarliestDate());
+        RecurringExpense recurring = new RecurringExpense(
+            pattern.getAverageAmount(),
+            pattern.getCategory(),
+            firstDateAfterImports(pattern.getFrequency(), lastCharge, ledger),
+            pattern.getDescription() != null ? pattern.getDescription() : "",
+            pattern.getFrequency(),
+            null
+        );
         java.util.Set<Expense> present = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         present.addAll(ledger);
-        return pattern.getMatchingExpenses().stream()
+        List<Expense> live = pattern.getMatchingExpenses().stream()
             .filter(present::contains)
-            .filter(e -> !e.isExcluded() && !e.isIncome() && !e.isRefund())
+            .filter(e -> !e.isExcluded() && !e.isIncome())
             .collect(Collectors.toList());
+        if (live.isEmpty()) return recurring;
+        Expense latest = live.stream().max(java.util.Comparator.comparing(Expense::getDate)).get();
+        long refunds = live.stream().filter(Expense::isRefund).count();
+        recurring.setRefund(refunds * 2 > live.size() || (refunds * 2 == live.size() && latest.isRefund()));
+        recurring.setCurrency(latest.getCurrency());
+        recurring.setTags(latest.getTags());
+        return recurring;
+    }
+
+    /**
+     * Template for "Make Recurring" on a one-off expense: same amount/category/date/description
+     * plus every flag that changes how it counts (income, refund, excluded), its currency, tags
+     * and receipt. The import id is deliberately not carried (undoing that import must not
+     * delete the series).
+     */
+    static RecurringExpense recurringFrom(Expense expense, RecurrenceType frequency, LocalDate endDate) {
+        return recurringFrom(expense, frequency, endDate, expense.getDate());
+    }
+
+    /** As above, with the series' first date given (e.g. the next charge after this one). */
+    static RecurringExpense recurringFrom(Expense expense, RecurrenceType frequency, LocalDate endDate, LocalDate start) {
+        RecurringExpense recurring = new RecurringExpense(
+            expense.getAmount(), expense.getCategory(), start,
+            expense.getDescription() != null ? expense.getDescription() : "",
+            frequency, endDate);
+        recurring.setIncome(expense.isIncome());
+        recurring.setRefund(expense.isRefund());
+        recurring.setExcluded(expense.isExcluded());
+        recurring.setCurrency(expense.getCurrency());
+        recurring.setTags(expense.getTags());
+        recurring.setReceiptPath(expense.getReceiptPath());
+        return recurring;
     }
 
     private HBox notice(String title, String body, String actionText, Runnable action) {
@@ -324,7 +409,7 @@ public class RecurringController {
     @FXML
     private void handleAddRecurring() {
         try {
-            double amount = Double.parseDouble(addRecurringAmountField.getText());
+            double amount = parseUserAmount(addRecurringAmountField.getText());
             if (amount <= 0) {
                 showMsg("Amount must be positive", true);
                 return;
@@ -393,7 +478,7 @@ public class RecurringController {
         }
 
         try {
-            double amount = Double.parseDouble(editRecurringAmountField.getText());
+            double amount = parseUserAmount(editRecurringAmountField.getText());
             if (amount <= 0) {
                 showMsgOn("Amount must be positive", true, editRecurringErrorLabel);
                 return;
@@ -442,6 +527,13 @@ public class RecurringController {
      * flags, currency, tags, import id, receipt) so editing amount/date/etc. doesn't
      * silently turn a salary into an expense or drop its currency.
      */
+    /** Locale-tolerant amount parse ("12.50" or "12,50"); NumberFormatException for anything else. */
+    private static double parseUserAmount(String text) {
+        Double v = UIUtils.parseAmount(text);
+        if (v == null) throw new NumberFormatException(text);
+        return v;
+    }
+
     static void copyNonFormFields(RecurringExpense from, RecurringExpense to) {
         if (from == null || to == null) return;
         to.setIncome(from.isIncome());
@@ -598,14 +690,17 @@ public class RecurringController {
         catCol.setCellValueFactory(new PropertyValueFactory<>("category"));
         catCol.setPrefWidth(100);
 
-        TableColumn<RecurringPatternDetector.DetectedPattern, Double> amtCol = new TableColumn<>("Avg Amount");
+        TableColumn<RecurringPatternDetector.DetectedPattern, Double> amtCol = new TableColumn<>("Amount");
         amtCol.setCellValueFactory(new PropertyValueFactory<>("averageAmount"));
-        amtCol.setPrefWidth(90);
+        amtCol.setPrefWidth(150);
         amtCol.setCellFactory(tc -> new TableCell<RecurringPatternDetector.DetectedPattern, Double>() {
             @Override
             protected void updateItem(Double item, boolean empty) {
                 super.updateItem(item, empty);
-                setText(empty || item == null ? null : fmt(item));
+                RecurringPatternDetector.DetectedPattern p = empty || getTableRow() == null ? null : getTableRow().getItem();
+                if (item == null || p == null) { setText(null); return; }
+                // A subscription that changed price is priced at the new amount; show the old one too.
+                setText(p.getPreviousAmount() > 0 ? fmt(item) + "  (was " + fmt(p.getPreviousAmount()) + ")" : fmt(item));
             }
         });
 
@@ -636,9 +731,10 @@ public class RecurringController {
 
         HBox selectionButtons = new HBox(10, selectAllBtn, deselectAllBtn);
 
-        CheckBox removeOriginals = new CheckBox("Remove original one-time expenses after conversion");
-        removeOriginals.setSelected(true);
-        removeOriginals.getStyleClass().add("form-label");
+        Label keepNote = new Label("Your past charges stay exactly as the bank charged them; the recurring "
+            + "item covers upcoming months from the next expected charge.");
+        keepNote.getStyleClass().add("faint-text");
+        keepNote.setWrapText(true);
 
         Label statusLabel = new Label();
         statusLabel.getStyleClass().add("error-label");
@@ -657,23 +753,9 @@ public class RecurringController {
 
             int commandCount = 0;
             for (RecurringPatternDetector.DetectedPattern pattern : selected) {
-                RecurringExpense recurring = new RecurringExpense(
-                    pattern.getAverageAmount(),
-                    pattern.getCategory(),
-                    pattern.getEarliestDate(),
-                    pattern.getDescription() != null ? pattern.getDescription() : "",
-                    pattern.getFrequency(),
-                    null
-                );
+                RecurringExpense recurring = templateFromPattern(pattern, state.getManager().getExpenses());
                 state.getManager().executeCommand(new AddExpenseCommand(state.getManager(), recurring));
                 commandCount++;
-
-                if (removeOriginals.isSelected()) {
-                    for (Expense original : removableOriginals(pattern, state.getManager().getExpenses())) {
-                        state.getManager().executeCommand(new DeleteExpenseCommand(state.getManager(), original));
-                        commandCount++;
-                    }
-                }
             }
 
             try {
@@ -703,7 +785,7 @@ public class RecurringController {
         // Copy All button
         Button copyAllBtn = new Button("Copy All");
         copyAllBtn.getStyleClass().add("secondary-button");
-        copyAllBtn.setTooltip(new Tooltip("Copy all detected patterns as text (Ctrl+Shift+C)"));
+        HoverTip.install(copyAllBtn, "Copy all detected patterns as text (Ctrl+Shift+C)");
         copyAllBtn.setOnAction(e -> showCopyablePatterns(patterns));
 
         Region spacer = new Region();
@@ -713,7 +795,7 @@ public class RecurringController {
         actionButtons.setAlignment(Pos.CENTER_RIGHT);
 
         VBox content = new VBox(12, header, subtitle, patternTable, selectionButtons,
-            removeOriginals, statusLabel, actionButtons);
+            keepNote, statusLabel, actionButtons);
         content.setPadding(new Insets(20));
         content.getStyleClass().add("root-pane");
 
@@ -740,7 +822,7 @@ public class RecurringController {
             sb.append(String.format("%-30s %-15s %-12s %-12s %-8d %-12s\n",
                 UIUtils.truncate(p.getDescription(), 30),
                 UIUtils.truncate(p.getCategory(), 15),
-                fmt(p.getAverageAmount()),
+                fmt(p.getAverageAmount()) + (p.getPreviousAmount() > 0 ? " (was " + fmt(p.getPreviousAmount()) + ")" : ""),
                 p.getFrequency(),
                 p.getOccurrences(),
                 p.getEarliestDate()));

@@ -528,9 +528,11 @@
 .separator-menu-item .line { -fx-border-color: -c-border transparent transparent transparent; }
 
 .tooltip {
-    -fx-show-delay: 120ms;        /* JavaFX waits a full second by default */
+    /* App tooltips are shown by HoverTip (follows the cursor, never under it). These timings
+       only apply to a stray standard tooltip; very short delays make those flicker. */
+    -fx-show-delay: 400ms;
     -fx-show-duration: 30s;
-    -fx-hide-delay: 80ms;
+    -fx-hide-delay: 150ms;
     -fx-background-color: #2b3036;
     -fx-text-fill: -c-text;
     -fx-font-size: 12px;

@@ -115,17 +115,17 @@ public class ImportController {
                 if (row.record == null || row.record.openingBalance == null) {
                     badge.setText("Not available");
                     badge.getStyleClass().add("badge-neutral");
-                    badge.setTooltip(new Tooltip("This file doesn't include opening and closing balances."));
+                    HoverTip.install(badge, "This file doesn't include opening and closing balances.");
                 } else if (row.record.reconciled) {
                     badge.setText("✓ Matches");
                     badge.getStyleClass().add("badge-good");
-                    badge.setTooltip(new Tooltip("Opening balance + money in − money out equals the closing balance, "
-                        + "so no transactions were missed."));
+                    HoverTip.install(badge, "Opening balance + money in − money out equals the closing balance, "
+                        + "so no transactions were missed.");
                 } else {
                     badge.setText("⚠ Check");
                     badge.getStyleClass().add("badge-warn");
-                    badge.setTooltip(new Tooltip("The imported transactions don't add up to the statement's closing "
-                        + "balance. Some lines may not have been read correctly."));
+                    HoverTip.install(badge, "The imported transactions don't add up to the statement's closing "
+                        + "balance. Some lines may not have been read correctly.");
                 }
                 setGraphic(badge);
             }
@@ -679,6 +679,15 @@ public class ImportController {
         });
         try {
             state.saveExpenses();
+        } catch (Exception ex) {
+            // The registry and history were already updated: put the rows, the history row and
+            // the registry entry back (undo re-saves the registry) so memory matches the disk.
+            manager.rollbackLastCommand();
+            refreshRows();
+            showMsg("Couldn't save after removing the import (" + ex.getMessage() + "). Nothing was changed.", true);
+            return;
+        }
+        try {
             state.getStorage().saveImportLogs(new ArrayList<>(state.getImportLogs()));
             registry.save();
         } catch (IOException ex) {
@@ -701,12 +710,15 @@ public class ImportController {
 
     private StatementParseResult mapCsvManually(File file) {
         try {
-            String text = new String(java.nio.file.Files.readAllBytes(file.toPath()), java.nio.charset.StandardCharsets.UTF_8);
-            char delimiter = CsvStatementParser.detectDelimiter(text);
-            String[] lines = text.split("\\r?\\n");
+            // Same decoding as automatic detection (BOM, Windows-1252), and skip any preamble above the table.
+            String text = StatementImporter.readText(file);
+            String[] allLines = text.split("\\r?\\n");
+            int headerRow = CsvStatementParser.findHeaderRow(allLines);
+            String[] lines = Arrays.copyOfRange(allLines, headerRow, allLines.length);
             if (lines.length < 2) return null;
+            char delimiter = CsvStatementParser.detectDelimiter(String.join("\n", lines));
             String[] headers = CsvStatementParser.parseHeaders(lines[0], delimiter);
-            List<ImportItem> items = showCsvMappingDialog(text, headers, delimiter, lines);
+            List<ImportItem> items = showCsvMappingDialog(text, headers, delimiter, lines, headerRow + 1);
             return items == null || items.isEmpty() ? null : new StatementParseResult("CSV", items);
         } catch (IOException e) {
             return null;
@@ -767,6 +779,16 @@ public class ImportController {
                 Platform.runLater(() -> ocrStatusLabel.setText("Parsing items..."));
 
                 List<ImportItem> items = receiptScanner.parseReceipt(ocrText, fallbackDate);
+                Double receiptTotal = receiptScanner.extractTotal(ocrText);
+                String merchant = receiptScanner.extractMerchant(ocrText);
+                if (items.isEmpty() && receiptTotal != null && receiptTotal > 0) {
+                    // Couldn't read the lines, but the total is there: offer the receipt as one expense.
+                    LocalDate onSlip = ReceiptScanner.extractDate(ocrText);
+                    ImportItem whole = new ImportItem(receiptTotal, merchant != null ? merchant : "Receipt",
+                        onSlip != null ? onSlip : fallbackDate != null ? fallbackDate : LocalDate.now());
+                    whole.setStatus("Uncategorized");
+                    items.add(whole);
+                }
 
                 // Auto-categorize
                 for (ImportItem item : items) {
@@ -799,7 +821,15 @@ public class ImportController {
                         alert.showAndWait();
                         return;
                     }
-                    showMsg("Found " + items.size() + " items.", false);
+                    double itemSum = items.stream().mapToDouble(ImportItem::getAmount).sum();
+                    if (receiptTotal != null && items.size() > 1 && Math.abs(itemSum - receiptTotal) > 0.01) {
+                        showMsg(String.format("Found %d items adding up to %s, but the receipt total is %s. "
+                                + "Check the amounts before importing.", items.size(),
+                            UIUtils.fmt(itemSum, state.getCurrencySymbol()),
+                            UIUtils.fmt(receiptTotal, state.getCurrencySymbol())), true);
+                    } else {
+                        showMsg("Found " + items.size() + (items.size() == 1 ? " item." : " items."), false);
+                    }
                     ImportReviewDialog dialog = new ImportReviewDialog(
                         state.getStage(), items, state.getCategories(), state.getCurrencySymbol(),
                         ocrText, categorizationRules, state.getManager().getExpenses());
@@ -809,13 +839,14 @@ public class ImportController {
                         importExpenses(expenses, file.getName(), "Receipt");
                     }
                 });
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 if (Thread.currentThread().isInterrupted()) return;
+                String why = e.getMessage() != null ? e.getMessage() : e.toString();
                 Platform.runLater(() -> {
                     state.getStage().setOnCloseRequest(originalCloseHandler);
                     wrapper.getChildren().clear();
                     scene.setRoot(originalRoot);
-                    showMsg("OCR failed: " + e.getMessage(), true);
+                    showMsg("OCR failed: " + why, true);
                 });
             }
         });
@@ -845,7 +876,7 @@ public class ImportController {
 
         Label catLabel = new Label("Category:");
         catLabel.getStyleClass().add("form-label");
-        ComboBox<String> catCombo = new ComboBox<>(state.getCategories());
+        ComboBox<String> catCombo = new ComboBox<>(state.getSortedCategories());
         catCombo.setEditable(true);
         catCombo.getStyleClass().add("combo-box");
         catCombo.setMaxWidth(Double.MAX_VALUE);
@@ -891,7 +922,9 @@ public class ImportController {
         ruleStage.showAndWait();
     }
 
-    private List<ImportItem> showCsvMappingDialog(String text, String[] headers, char delimiter, String[] lines) {
+    /** {@code lines} start at the header row; {@code firstDataLine} indexes the rows of {@code text}. */
+    private List<ImportItem> showCsvMappingDialog(String text, String[] headers, char delimiter, String[] lines,
+                                                  int firstDataLine) {
         Stage mappingStage = new Stage();
         mappingStage.initModality(Modality.WINDOW_MODAL);
         mappingStage.initOwner(state.getStage());
@@ -923,7 +956,7 @@ public class ImportController {
         Label dateFormatLabel = new Label("Date format:");
         dateFormatLabel.getStyleClass().add("form-label");
         ComboBox<String> dateFormatCombo = new ComboBox<>(
-            FXCollections.observableArrayList(CsvStatementParser.DATE_FORMATS));
+            FXCollections.observableArrayList(CsvStatementParser.DETECTABLE_DATE_FORMATS));
         dateFormatCombo.getStyleClass().add("combo-box");
         dateFormatCombo.setValue("yyyy-MM-dd");
         dateFormatCombo.setMaxWidth(Double.MAX_VALUE);
@@ -939,6 +972,14 @@ public class ImportController {
             else if (h.contains("amount") || h.contains("debit") || h.contains("value")) amountColCombo.setValue(headers[i]);
             else if (h.contains("desc") || h.contains("narr") || h.contains("detail") || h.contains("reference")) descColCombo.setValue(headers[i]);
         }
+        // Suggest the date format the rows actually use, as automatic detection would.
+        java.util.function.Consumer<String> suggestFormat = col -> {
+            int idx = Arrays.asList(headers).indexOf(col);
+            String detected = idx < 0 ? null : CsvStatementParser.detectDateFormat(lines, 1, idx, delimiter);
+            if (detected != null) dateFormatCombo.setValue(detected);
+        };
+        if (dateColCombo.getValue() != null) suggestFormat.accept(dateColCombo.getValue());
+        dateColCombo.valueProperty().addListener((obs, old, col) -> suggestFormat.accept(col));
 
         // Preview
         Label previewLabel = new Label("Preview (first 3 rows):");
@@ -968,8 +1009,8 @@ public class ImportController {
             int amountIdx = Arrays.asList(headers).indexOf(amountCol);
             int descIdx = descCol != null ? Arrays.asList(headers).indexOf(descCol) : -1;
 
-            resultHolder[0] = CsvStatementParser.parse(text, delimiter, dateIdx, amountIdx,
-                descIdx, dateFormatCombo.getValue(), negativeIsExpense.isSelected());
+            resultHolder[0] = CsvStatementParser.parse(text, delimiter, dateIdx, amountIdx, -1,
+                descIdx, -1, dateFormatCombo.getValue(), negativeIsExpense.isSelected(), firstDataLine);
             mappingStage.close();
         });
 

@@ -42,9 +42,50 @@ public final class UIUtils {
     /** Pseudo-class toggled on input fields that currently hold invalid values (styled in styles.css). */
     public static final PseudoClass INVALID = PseudoClass.getPseudoClass("invalid");
 
+    /** Strict (Double.parseDouble) check; "Infinity", "NaN" and overflow such as "1e999" are rejected. */
     public static boolean isPositiveDouble(String s) {
         if (s == null) return false;
-        try { return Double.parseDouble(s.trim()) > 0; } catch (NumberFormatException e) { return false; }
+        try {
+            double v = Double.parseDouble(s.trim());
+            return Double.isFinite(v) && v > 0;
+        } catch (NumberFormatException e) { return false; }
+    }
+
+    /**
+     * Parses a user-typed money amount in either decimal style ("123.45", "123,45", "1 234,56",
+     * "1,234.56"), so the app works regardless of the JVM locale. Returns null for anything that
+     * isn't a plain non-negative number (letters, exponents, "Infinity", signs) or whose
+     * separators aren't a decimal point/comma plus consistent groups of three ("..5", "1,2,3").
+     * The result is rounded to cents.
+     */
+    public static Double parseAmount(String s) {
+        if (s == null) return null;
+        String t = s.trim().replace((char) 0xA0, ' ');
+        if (t.startsWith("+")) t = t.substring(1).trim();
+        if (!USER_AMOUNT.matcher(t).matches()) return null;
+        // A lone comma before four or more digits is neither a decimal comma nor grouping.
+        if (t.matches("\\d*,\\d{4,}")) return null;
+        // "150,000" / "1,500": nobody types money to three decimals, so a comma before exactly
+        // three digits is grouping. "1.234" could be one thousand or one point two: ask again.
+        if (t.matches("\\d{1,3},\\d{3}")) return Double.valueOf(t.replace(",", ""));
+        if (t.matches("\\d*[.,]\\d{3,}")) return null;
+        Double v = Amounts.parse(t.replace("'", ""));
+        return v != null && Double.isFinite(v) && v >= 0 ? Amounts.round2(v) : null;
+    }
+
+    /** Plain digits, one decimal separator, or groups of three split by one consistent separator. */
+    private static final java.util.regex.Pattern USER_AMOUNT = java.util.regex.Pattern.compile(
+        "\\d*[.,]\\d+|\\d+|\\d{1,3}([ ,.'])\\d{3}(?:\\1\\d{3})*(?:(?!\\1)[.,]\\d+)?");
+
+    /** True if {@link #parseAmount} yields a positive amount. */
+    public static boolean isPositiveAmount(String s) {
+        Double v = parseAmount(s);
+        return v != null && v > 0;
+    }
+
+    /** Amount formatted for an editable text field: plain digits and a '.' decimal point, in any locale. */
+    public static String formatAmountForEdit(double amount) {
+        return String.format(java.util.Locale.ROOT, "%.2f", amount);
     }
 
     public static boolean isPositiveInt(String s) {
@@ -64,7 +105,7 @@ public final class UIUtils {
      */
     public static void bindPositiveAmountValidation(TextField amountField, Button submitButton) {
         Runnable validate = () -> {
-            boolean valid = isPositiveDouble(amountField.getText());
+            boolean valid = isPositiveAmount(amountField.getText());
             submitButton.setDisable(!valid);
             markValidity(amountField, valid);
         };
@@ -170,14 +211,23 @@ public final class UIUtils {
         }
     }
 
-    public static void copyExpenseToClipboard(Expense expense, String currencySymbol) {
-        if (expense == null) return;
-        String text = String.format("%s\t%s\t%s\t%s",
-            fmt(expense.getAmount(), currencySymbol), expense.getCategory(),
+    /**
+     * Tab-separated text for one expense. A foreign-currency expense is shown with its own
+     * currency's symbol, not the base one ({@code baseCurrencySymbol}).
+     */
+    static String clipboardText(Expense expense, String baseCurrencySymbol) {
+        String symbol = expense.getCurrency() != null && !expense.getCurrency().isBlank()
+            ? CurrencyManager.getSymbol(expense.getCurrency()) : baseCurrencySymbol;
+        return String.format("%s\t%s\t%s\t%s",
+            fmt(expense.getAmount(), symbol), expense.getCategory(),
             expense.getDate().format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy")),
             expense.getDescription() != null ? expense.getDescription() : "");
+    }
+
+    public static void copyExpenseToClipboard(Expense expense, String currencySymbol) {
+        if (expense == null) return;
         ClipboardContent content = new ClipboardContent();
-        content.putString(text);
+        content.putString(clipboardText(expense, currencySymbol));
         Clipboard.getSystemClipboard().setContent(content);
     }
 

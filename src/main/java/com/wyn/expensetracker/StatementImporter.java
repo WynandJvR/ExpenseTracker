@@ -103,7 +103,10 @@ public class StatementImporter {
         Prepared p = new Prepared(file);
         try {
             p.fileHash = ImportRegistry.sha256(file);
-            if (seen.fileHashes.contains(p.fileHash) || batchHashes.contains(p.fileHash)) {
+            // A file imported before is only skipped outright by the folder scan. Picked by hand it
+            // goes through per-transaction dedupe, so rows it shares with a removed overlapping
+            // import come back while rows it still owns are counted as already imported.
+            if (batchHashes.contains(p.fileHash) || (silent && seen.fileHashes.contains(p.fileHash))) {
                 p.skippedWholeFile = true;
                 return p;
             }
@@ -117,10 +120,15 @@ public class StatementImporter {
             p.problem = "Couldn't read the file (" + e.getMessage() + ")";
             return p;
         }
+        boolean knownFile = seen.fileHashes.contains(p.fileHash);
+        if (knownFile && (p.statement == null || p.statement.getItems().isEmpty())) {
+            p.skippedWholeFile = true; // imported before (e.g. a hand-mapped CSV): don't ask again
+            return p;
+        }
         if (p.statement == null || p.statement.getItems().isEmpty()) {
             p.problem = file.getName().toLowerCase().endsWith(".csv")
                 ? NEEDS_CSV_MAPPING
-                : "No transactions found — is this a bank statement?";
+                : "No transactions found \u2014 is this a bank statement?";
             return p;
         }
 
@@ -142,11 +150,18 @@ public class StatementImporter {
             if (e.getImportId() == null && e.getRecurringId() == null) manual.add(e);
         }
         Set<Expense> claimed = Collections.newSetFromMap(new IdentityHashMap<>());
+        int dismissedItems = 0;
 
         for (ImportItem item : items) {
             String fp = item.getFingerprint();
             if (seen.fingerprints.contains(fp) || batchFingerprints.contains(fp)) {
                 p.alreadyImported++;
+                continue;
+            }
+            // The folder scan doesn't bring back transactions of an import the user removed,
+            // even from another copy of the statement (re-downloaded PDF, CSV of the same period).
+            if (silent && seen.dismissedFingerprints.contains(fp)) {
+                dismissedItems++;
                 continue;
             }
             Expense match = findManualDuplicate(item, manual, claimed);
@@ -157,7 +172,10 @@ public class StatementImporter {
             }
             p.newItems.add(item);
         }
-        if (p.newItems.isEmpty() && p.alreadyImported > 0) {
+        if (p.newItems.isEmpty() && dismissedItems > 0) {
+            p.skippedWholeFile = true;
+            p.dismissed = true;
+        } else if (p.newItems.isEmpty() && p.alreadyImported > 0) {
             p.skippedWholeFile = true;
         }
         batchHashes.add(p.fileHash);
@@ -256,12 +274,13 @@ public class StatementImporter {
 
     // ------------------------------------------------------------ helpers
 
-    private static String readText(File file) throws IOException {
+    /** Reads a text export: UTF-8 (minus any byte-order mark), falling back to Windows-1252. */
+    static String readText(File file) throws IOException {
         byte[] bytes = Files.readAllBytes(file.toPath());
         String utf8 = new String(bytes, StandardCharsets.UTF_8);
         // Bank CSV exports are often Windows-1252; fall back if UTF-8 decoding produced junk.
-        if (utf8.indexOf('�') >= 0) return new String(bytes, java.nio.charset.Charset.forName("windows-1252"));
-        return utf8.startsWith("﻿") ? utf8.substring(1) : utf8;
+        if (utf8.indexOf('\uFFFD') >= 0) return new String(bytes, java.nio.charset.Charset.forName("windows-1252"));
+        return utf8.startsWith("\uFEFF") ? utf8.substring(1) : utf8;
     }
 
     /** Older parsers flag direction with "[CREDIT]"/"[TRANSFER]" prefixes and the income flag. */

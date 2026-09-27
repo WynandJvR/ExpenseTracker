@@ -70,6 +70,8 @@ public class MainController {
     // --- Shared state ---
     private SharedState state;
     private boolean refreshingTable = false;
+    // Set while the profile combo is updated in code, so its onAction doesn't trigger a second switch.
+    private boolean updatingProfileCombo = false;
     // Last non-maximized window bounds, tracked continuously so we can restore a sensible
     // floating size even when the app is closed while maximized.
     private double lastFloatW = Double.NaN, lastFloatH = Double.NaN;
@@ -153,6 +155,11 @@ public class MainController {
         // Install the global toast overlay for transient confirmations
         Toast.init(contentArea);
 
+        // Tooltips declared in the FXML views use the flicker-free hover tips too.
+        javafx.scene.Parent root = contentArea;
+        while (root.getParent() != null) root = root.getParent();
+        HoverTip.adopt(root);
+
         // Cross-screen shortcuts: "Sort them" / "Review uncategorised" and "Import" buttons
         Runnable reviewUncategorized = () -> {
             navExpenses.setSelected(true);
@@ -211,6 +218,8 @@ public class MainController {
         profileCombo.setItems(FXCollections.observableArrayList(state.getProfileManager().listProfiles()));
         profileCombo.setValue(state.getProfileManager().getActiveProfile());
         profileCombo.setOnAction(e -> {
+            // Programmatic updates (create/rename/delete) do their own switch.
+            if (updatingProfileCombo) return;
             String selected = profileCombo.getValue();
             if (selected != null && !selected.equals(state.getProfileManager().getActiveProfile())) {
                 switchToProfile(selected);
@@ -341,6 +350,9 @@ public class MainController {
         for (Expense expense : state.getExpenseList()) {
             years.add(expense.getDate().getYear());
         }
+        // An empty ledger (first run / new profile) still needs a selected period, otherwise
+        // the Overview skips its refresh and keeps showing the previous profile's numbers.
+        if (years.isEmpty()) years.add(LocalDate.now().getYear());
         state.getYearList().setAll(years);
 
         if (selectedYear != null && state.getYearList().contains(selectedYear)) {
@@ -367,7 +379,13 @@ public class MainController {
     }
 
     private void updateStatusBar() {
-        statusSaveLabel.setText("All changes saved");
+        if (state.getLastSaveError() != null) {
+            statusSaveLabel.setText("Save failed: " + state.getLastSaveError());
+        } else if (state.getStorage().isExpenseSaveBlocked()) {
+            statusSaveLabel.setText("Saving disabled — expense file could not be read");
+        } else {
+            statusSaveLabel.setText("All changes saved");
+        }
 
         int total = state.getExpenseList().size();
         YearMonth shown = state.getSelectedYearMonth();
@@ -407,23 +425,31 @@ public class MainController {
     private void handleUndo() {
         if (!state.getManager().canUndo()) return;
         state.getManager().undo();
-        try {
-            state.saveExpenses();
-            refreshTable();
-        } catch (Exception ex) {
-            System.err.println("Error during undo: " + ex.getMessage());
-        }
+        saveAfterUndoRedo("Undo");
     }
 
     @FXML
     private void handleRedo() {
         if (!state.getManager().canRedo()) return;
         state.getManager().redo();
+        saveAfterUndoRedo("Redo");
+    }
+
+    /**
+     * Undo/redo can touch both the ledger and per-occurrence overrides (e.g. undoing the
+     * delete of a recurring occurrence), so persist both. The view is refreshed even if the
+     * save fails — the in-memory state has already changed — and the failure is shown.
+     */
+    private void saveAfterUndoRedo(String action) {
         try {
             state.saveExpenses();
-            refreshTable();
+            state.saveRecurringOverrides();
         } catch (Exception ex) {
-            System.err.println("Error during redo: " + ex.getMessage());
+            String why = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+            showError(action + " Failed", action + " was applied, but saving your data failed.",
+                why + "\n\nYour changes are only in memory until a save succeeds.");
+        } finally {
+            refreshTable();
         }
     }
 
@@ -493,6 +519,19 @@ public class MainController {
 
     // ======================== KEYBOARD SHORTCUTS ========================
 
+    /**
+     * True when keyboard focus is somewhere the user types text: a text control, or an
+     * editable ComboBox/DatePicker (whose focus owner is the combo itself, not its editor).
+     * Ctrl+Z/Y there must edit the text, not undo ledger changes.
+     */
+    static boolean isTextInput(Node focused) {
+        for (Node n = focused; n != null; n = n.getParent()) {
+            if (n instanceof javafx.scene.control.TextInputControl) return true;
+            if (n instanceof javafx.scene.control.ComboBoxBase<?> combo && combo.isEditable()) return true;
+        }
+        return false;
+    }
+
     public void setupKeyboardShortcuts(Scene scene) {
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (event.isControlDown() && event.isShiftDown() && event.getCode() == KeyCode.C) {
@@ -502,7 +541,7 @@ public class MainController {
             }
             if (event.isControlDown()) {
                 Node focused = scene.getFocusOwner();
-                boolean inTextField = focused instanceof TextField || focused instanceof TextArea;
+                boolean inTextField = isTextInput(focused);
 
                 switch (event.getCode()) {
                     case Z:
@@ -672,7 +711,13 @@ public class MainController {
     // ======================== PROFILES ========================
 
     private void switchToProfile(String profileName) {
-        saveUIState();
+        switchToProfile(profileName, true);
+    }
+
+    /** @param keepCurrentUi save the current profile's view/month/sort first (not when it was just deleted) */
+    private void switchToProfile(String profileName, boolean keepCurrentUi) {
+        if (keepCurrentUi) saveUIState();
+        state.clearLastSaveError();
 
         state.setStorage(new FileStorage(state.getProfileManager().getProfileDir(profileName)));
         state.setManager(new ExpenseManager());
@@ -837,9 +882,11 @@ public class MainController {
             String trimmed = name.trim();
             if (trimmed.isEmpty()) return;
             if (state.getProfileManager().createProfile(trimmed)) {
-                profileCombo.getItems().setAll(state.getProfileManager().listProfiles());
-                profileCombo.setValue(trimmed);
+                showProfileInCombo(trimmed);
                 switchToProfile(trimmed);
+            } else {
+                showError("New Profile", "Could not create profile \"" + trimmed + "\".",
+                    "The name may already be in use or contain invalid characters.");
             }
         });
     }
@@ -857,13 +904,46 @@ public class MainController {
         dialog.showAndWait().ifPresent(name -> {
             String trimmed = name.trim();
             if (trimmed.isEmpty() || trimmed.equals(current)) return;
+            boolean renamingActive = current.equals(state.getProfileManager().getActiveProfile());
+            // Persist UI state while storage still points at the existing folder.
+            if (renamingActive) saveUIState();
             if (state.getProfileManager().renameProfile(current, trimmed)) {
-                try { state.getProfileManager().setActiveProfile(trimmed); } catch (Exception e) { /* ignore */ }
-                profileCombo.getItems().setAll(state.getProfileManager().listProfiles());
-                profileCombo.setValue(trimmed);
-                state.getStage().setTitle("Expense Tracker - " + trimmed);
+                // The old folder no longer exists: rebind storage before anything can save
+                // (otherwise saves fail or recreate a ghost profile under the old name), then
+                // reload through the normal switch path so the import registry etc. follow.
+                if (renamingActive) {
+                    state.setStorage(new FileStorage(state.getProfileManager().getProfileDir(trimmed)));
+                    showProfileInCombo(trimmed);
+                    switchToProfile(trimmed);
+                } else {
+                    showProfileInCombo(state.getProfileManager().getActiveProfile());
+                }
+            } else {
+                showError("Rename Profile", "Could not rename profile \"" + current + "\" to \"" + trimmed + "\".",
+                    "The name may already be in use, contain invalid characters, or the folder may be open in another program.");
             }
         });
+    }
+
+    /** Reloads the profile list and selects {@code name} without triggering the combo's own switch. */
+    private void showProfileInCombo(String name) {
+        updatingProfileCombo = true;
+        try {
+            profileCombo.getItems().setAll(state.getProfileManager().listProfiles());
+            profileCombo.setValue(name);
+        } finally {
+            updatingProfileCombo = false;
+        }
+    }
+
+    private void showError(String title, String header, String content) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.initOwner(state.getStage());
+        alert.setTitle(title);
+        alert.setHeaderText(header);
+        alert.setContentText(content);
+        UIUtils.applyStylesheet(alert.getDialogPane());
+        alert.showAndWait();
     }
 
     @FXML
@@ -882,9 +962,15 @@ public class MainController {
                 String switchTo = state.getProfileManager().listProfiles().stream()
                     .filter(p -> !p.equals(current)).findFirst().orElse(ProfileManager.DEFAULT_PROFILE);
                 if (state.getProfileManager().deleteProfile(current)) {
-                    profileCombo.getItems().setAll(state.getProfileManager().listProfiles());
-                    profileCombo.setValue(switchTo);
-                    switchToProfile(switchTo);
+                    // Don't let the switch write UI state back into the deleted folder.
+                    state.setStorage(new FileStorage(state.getProfileManager().getProfileDir(switchTo)));
+                    showProfileInCombo(switchTo);
+                    switchToProfile(switchTo, false);
+                } else {
+                    showError("Delete Profile", "Profile \"" + current + "\" could not be fully deleted.",
+                        "Some files may be open in another program. The data still loaded here is kept and will be "
+                            + "saved again on your next change. Folder: "
+                            + state.getProfileManager().getProfileDir(current));
                 }
             }
         });

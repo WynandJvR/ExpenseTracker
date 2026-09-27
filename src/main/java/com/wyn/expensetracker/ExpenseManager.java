@@ -80,6 +80,17 @@ public class ExpenseManager {
         return !redoStack.isEmpty();
     }
 
+    /**
+     * Drops all undo/redo history. Needed after bulk in-place changes that bypass the
+     * command stack (category rename, currency stamping): commands hold detached copies
+     * of expenses, and undoing one would restore a record with the stale category or
+     * currency (e.g. a base-currency R100 re-appearing as $100 after the base changed).
+     */
+    public void clearHistory() {
+        undoStack.clear();
+        redoStack.clear();
+    }
+
     // Sane bounds for user-entered data. Loading from disk bypasses these so existing
     // records are never rejected; they guard only fresh input from the UI.
     static final LocalDate MIN_DATE = LocalDate.of(1900, 1, 1);
@@ -95,6 +106,9 @@ public class ExpenseManager {
     public static void validateExpense(Expense e) {
         if (e == null) {
             throw new IllegalArgumentException("Expense cannot be null");
+        }
+        if (!Double.isFinite(e.getAmount())) {
+            throw new IllegalArgumentException("Expense amount must be a finite number");
         }
         if (e.getAmount() <= 0) {
             throw new IllegalArgumentException("Expense amount must be positive");
@@ -263,9 +277,11 @@ public class ExpenseManager {
                 updated++;
             }
         }
+        boolean changed = updated > 0;
         for (RecurringExpense r : baseRecurringExpenses) {
             if (oldCategory.equals(r.getCategory())) {
                 r.setCategory(newCategory);
+                changed = true;
             }
         }
         // Per-occurrence overrides carry their own category; left alone they would
@@ -273,8 +289,11 @@ public class ExpenseManager {
         for (OccurrenceOverride o : occurrenceOverrides.values()) {
             if (oldCategory.equals(o.getCategory())) {
                 o.setCategory(newCategory);
+                changed = true;
             }
         }
+        // Undo would restore detached copies still carrying the old category.
+        if (changed && !oldCategory.equals(newCategory)) clearHistory();
         return updated;
     }
 
@@ -326,6 +345,8 @@ public class ExpenseManager {
         for (Expense e : expenses) {
             if (e.getCurrency() == null) { e.setCurrency(currencyCode); stamped.add(e); }
         }
+        // Undo would restore detached copies with no currency, i.e. re-read in the NEW base.
+        if (!stamped.isEmpty()) clearHistory();
         return stamped;
     }
 
@@ -480,8 +501,8 @@ public class ExpenseManager {
         if (src == null) {
             throw new IllegalArgumentException("Not a generated recurring occurrence");
         }
-        if (amount != null && amount <= 0) {
-            throw new IllegalArgumentException("Amount must be positive");
+        if (amount != null && (!Double.isFinite(amount) || amount <= 0)) {
+            throw new IllegalArgumentException("Amount must be a positive number");
         }
         if (category != null && category.trim().isEmpty()) {
             throw new IllegalArgumentException("Category cannot be empty");
@@ -564,6 +585,27 @@ public class ExpenseManager {
         Set<String> liveIds = new HashSet<>();
         for (RecurringExpense r : baseRecurringExpenses) liveIds.add(r.getId());
         occurrenceOverrides.values().removeIf(o -> !liveIds.contains(o.getTemplateId()));
+    }
+
+    /** The date one {@code frequency} period after {@code from}, keeping its day of month. */
+    static LocalDate nextDate(RecurrenceType frequency, LocalDate from) {
+        return nthDate(frequency, from, 1);
+    }
+
+    /**
+     * The date {@code n} periods after {@code from}, counted from {@code from} itself so a charge
+     * on the 31st stays on the 31st (or the month's last day), rather than drifting to the 28th.
+     */
+    static LocalDate nthDate(RecurrenceType frequency, LocalDate from, int n) {
+        int day = from.getDayOfMonth();
+        return switch (frequency) {
+            case DAILY -> from.plusDays(n);
+            case WEEKLY -> from.plusWeeks(n);
+            case BIWEEKLY -> from.plusWeeks(2L * n);
+            case MONTHLY -> adjustDay(from.plusMonths(n), day);
+            case QUARTERLY -> adjustDay(from.plusMonths(3L * n), day);
+            case YEARLY -> adjustDay(from.plusYears(n), day);
+        };
     }
 
     private LocalDate getNextRecurringDate(RecurringExpense expense, LocalDate fromDate) {

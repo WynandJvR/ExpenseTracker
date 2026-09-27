@@ -54,7 +54,7 @@
 
         <!-- Spending by category + six-month trend -->
         <HBox spacing="16" alignment="TOP_LEFT">
-            <VBox spacing="12" styleClass="card" HBox.hgrow="ALWAYS" minWidth="320" prefWidth="520">
+            <VBox spacing="12" styleClass="card" HBox.hgrow="ALWAYS" minWidth="240" prefWidth="520">
                 <HBox alignment="CENTER_LEFT" spacing="8">
                     <Label text="Where your money went" styleClass="card-title"/>
                     <Region HBox.hgrow="ALWAYS"/>
@@ -63,7 +63,7 @@
                 <VBox fx:id="categoryBars" spacing="10"/>
                 <Label text="Click a category for its totals and where the money goes · right-click to set a budget." styleClass="faint-text" wrapText="true"/>
             </VBox>
-            <VBox spacing="8" styleClass="card" HBox.hgrow="ALWAYS" minWidth="320" prefWidth="460">
+            <VBox spacing="8" styleClass="card" HBox.hgrow="ALWAYS" minWidth="240" prefWidth="460">
                 <Label text="Money in vs out · last 6 months" styleClass="card-title"/>
                 <BarChart fx:id="trendChart" styleClass="trend-chart" legendVisible="true" animated="false"
                           prefHeight="300" categoryGap="18" barGap="2">

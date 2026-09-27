@@ -116,10 +116,7 @@ public class DashboardController {
 
     /** Hover text for a headline card (installed on the whole card). */
     private static void explain(Label value, String text) {
-        Tooltip t = new Tooltip(text);
-        t.setWrapText(true);
-        t.setMaxWidth(320);
-        Tooltip.install(value.getParent(), t);
+        HoverTip.install(value.getParent(), text);
     }
 
     /** Lets a click on a month in the trend chart switch the whole app to that month. */
@@ -236,11 +233,16 @@ public class DashboardController {
         recurringIncomeField.textProperty().addListener((obs, oldVal, newVal) -> {
             if (suppressRecurringIncomeListener) return;
             try {
-                double value = (newVal == null || newVal.isEmpty()) ? 0.0 : Double.parseDouble(newVal);
-                if (value < 0) { return; }
+                // Accepts "15000", "15 000", "15000,50" and "15000.50" alike.
+                Double parsed = (newVal == null || newVal.isBlank()) ? Double.valueOf(0) : Amounts.parse(newVal);
+                if (parsed == null || parsed < 0 || !Double.isFinite(parsed)) { return; }
+                double value = parsed;
                 state.setRecurringIncome(value);
                 state.getStorage().saveRecurringIncome(value);
-                updateIncomeField();
+                // Don't rewrite the field while the user is typing in it; just update the numbers.
+                state.invalidateSpendCache();
+                updateTotalExpenses();
+                if (!incomeField.isFocused()) updateIncomeField();
             } catch (NumberFormatException e) {
                 // ignore while typing
             } catch (IOException e) {
@@ -267,7 +269,9 @@ public class DashboardController {
                     updateTotalExpenses();
                     return;
                 }
-                double incomeValue = Double.parseDouble(newVal);
+                Double parsedIncome = Amounts.parse(newVal);
+                if (parsedIncome == null || !Double.isFinite(parsedIncome)) return; // still typing
+                double incomeValue = parsedIncome;
                 if (incomeValue < 0) {
                     UIUtils.showMessage("Income cannot be negative", true, errorLabel);
                     return;
@@ -506,9 +510,9 @@ public class DashboardController {
                         () -> onShowCategory.accept(category));
                 }
             });
-            Tooltip.install(row, new Tooltip(category + ": " + fmt(spent) + " this month"
+            HoverTip.install(row, category + ": " + fmt(spent) + " this month"
                 + (budget > 0 ? " of " + fmt(budget) + " budget" : "")
-                + "\nClick for totals, trend and where it goes · right-click to set a budget"));
+                + "\nClick for totals, trend and where it goes · right-click to set a budget");
             categoryBars.getChildren().add(row);
         }
     }
@@ -629,9 +633,15 @@ public class DashboardController {
         card.getChildren().add(title);
 
         int shown = 0;
+        List<HBox> overflow = new ArrayList<>();
+        Button[] moreButton = {null};
         for (Anomaly anomaly : anomalies) {
-            if (shown >= 3) break;
-            Label icon = new Label(anomaly.getType() == Anomaly.AnomalyType.NEW_CATEGORY ? "\u2605" : "\u26A0");
+            Label icon = new Label(switch (anomaly.getType()) {
+                case NEW_CATEGORY -> "\u2605";      // star
+                case NEW_SUBSCRIPTION -> "\u21BB";  // circular arrow
+                case PRICE_CHANGE -> "\u2195";      // up/down arrow
+                default -> "\u26A0";                // warning sign
+            });
             icon.getStyleClass().addAll("list-row-icon", anomaly.getSeverity() > 0.6 ? "list-row-icon-bad" : "list-row-icon-warn");
             Label msg = new Label(anomaly.getMessage());
             msg.getStyleClass().add("list-row-text");
@@ -653,10 +663,33 @@ public class DashboardController {
                     System.err.println("Failed to save dismissed anomalies: " + ex.getMessage());
                 }
                 card.getChildren().remove(row);
-                if (card.getChildren().size() == 1) anomalyBox.getChildren().clear();
+                // Refill from the hidden ones, so "Show N more" stays true and the card only goes when empty.
+                int at = card.getChildren().indexOf(moreButton[0]);
+                if (!overflow.isEmpty() && at >= 0) card.getChildren().add(at, overflow.remove(0));
+                if (moreButton[0] != null) {
+                    if (overflow.isEmpty()) card.getChildren().remove(moreButton[0]);
+                    else moreButton[0].setText("Show " + overflow.size() + " more");
+                }
+                if (card.getChildren().stream().noneMatch(n -> n.getStyleClass().contains("list-row"))) {
+                    anomalyBox.getChildren().clear();
+                }
             });
-            card.getChildren().add(row);
+            // The most important few show straight away; the rest are one click away.
+            if (shown < 4) card.getChildren().add(row);
+            else overflow.add(row);
             shown++;
+        }
+        if (!overflow.isEmpty()) {
+            Button more = new Button("Show " + overflow.size() + " more");
+            more.getStyleClass().add("ghost-button");
+            moreButton[0] = more;
+            more.setOnAction(e -> {
+                int at = card.getChildren().indexOf(more);
+                card.getChildren().remove(more);
+                card.getChildren().addAll(at, overflow);
+                overflow.clear();
+            });
+            card.getChildren().add(more);
         }
         anomalyBox.getChildren().add(card);
     }
@@ -670,8 +703,11 @@ public class DashboardController {
             ym, state.getCurrencySymbol(),
             state.getCurrencyManager(), state.getRecurringCoverage());
         anomalies.removeIf(a -> state.getDismissedAnomalyKeys().contains(a.getDismissKey()));
-        // "Uncategorized is unusually high" repeats the needs-a-category note.
-        anomalies.removeIf(a -> a.getExpense() != null
+        // "Uncategorized is unusually high" repeats the needs-a-category note. Subscription
+        // notes (new price, new subscription, charged twice) still matter for a fresh import.
+        EnumSet<Anomaly.AnomalyType> byCategory = EnumSet.of(Anomaly.AnomalyType.AMOUNT_OUTLIER,
+            Anomaly.AnomalyType.LARGE_TRANSACTION, Anomaly.AnomalyType.SPENDING_SPIKE);
+        anomalies.removeIf(a -> byCategory.contains(a.getType()) && a.getExpense() != null
             && TransactionClassifier.UNCATEGORIZED.equals(a.getExpense().getCategory()));
         return anomalies;
     }
@@ -851,7 +887,7 @@ public class DashboardController {
                 UIUtils.showMessage("Error saving budget: " + ex.getMessage(), true, errorLabel);
                 return;
             }
-            updateTotalExpenses();
+            state.requestRefresh();
             Toast.show(parsed > 0 ? "Budget set for " + category : "Budget removed for " + category);
         });
     }
@@ -864,7 +900,7 @@ public class DashboardController {
             UIUtils.showMessage("Error saving budget: " + ex.getMessage(), true, errorLabel);
             return;
         }
-        updateTotalExpenses();
+        state.requestRefresh();
         Toast.show("Budget removed for " + category);
     }
 
@@ -892,6 +928,8 @@ public class DashboardController {
             state.getManager().executeCommand(new DeleteExpenseCommand(state.getManager(), selected));
             try {
                 state.saveExpenses();
+                // Deleting a recurring occurrence skips that date; persist it or it returns on restart.
+                state.saveRecurringOverrides();
                 state.syncExpenseList();
                 state.requestRefresh();
                 incomeErrorLabel.setText("Income deleted.");
@@ -933,8 +971,11 @@ public class DashboardController {
             // Populate recurring income field with stored value
             double recurringIncome = state.getRecurringIncome();
             String currentRecurring = recurringIncomeField.getText();
-            String expectedRecurring = recurringIncome > 0 ? String.format("%.2f", recurringIncome) : "";
-            if (!expectedRecurring.equals(currentRecurring)) {
+            // Locale.ROOT: this is read back with Amounts.parse, and en_ZA would write "15000,00".
+            String expectedRecurring = recurringIncome > 0 ? String.format(Locale.ROOT, "%.2f", recurringIncome) : "";
+            Double shown = Amounts.parse(currentRecurring);
+            boolean same = shown != null ? Math.abs(shown - recurringIncome) < 0.005 : recurringIncome == 0;
+            if (!same && !recurringIncomeField.isFocused()) {
                 recurringIncomeField.setText(expectedRecurring);
             }
 
@@ -947,8 +988,10 @@ public class DashboardController {
             }
             YearMonth selectedYearMonth = YearMonth.of(selectedYear, selectedMonth);
             Double monthProjected = state.getIncomes().get(selectedYearMonth);
-            if (monthProjected != null) {
-                incomeField.setText(String.format("%.2f", monthProjected));
+            if (incomeField.isFocused()) {
+                // Leave what the user is typing alone.
+            } else if (monthProjected != null) {
+                incomeField.setText(String.format(Locale.ROOT, "%.2f", monthProjected));
                 incomeField.setPromptText("Clear to use default");
             } else {
                 incomeField.setText("");

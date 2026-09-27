@@ -16,7 +16,7 @@ public final class Amounts {
      */
     public static Double parse(String raw) {
         if (raw == null) return null;
-        String s = raw.trim().replace("\"", "").replace(" ", " ");
+        String s = raw.trim().replace("\"", "").replace('\u00A0', ' ');
         if (s.isEmpty()) return null;
 
         boolean negative = false;

@@ -12,6 +12,30 @@ public class CsvStatementParser {
         "yyyy/MM/dd", "dd MMM yyyy", "MMM dd, yyyy", "yyyyMMdd"
     };
 
+    /** Header of a column that only says which way the money went: "Debit/Credit", "Dr/Cr", "D/C"... */
+    private static final java.util.regex.Pattern SIGN_HEADER = java.util.regex.Pattern.compile(
+        "(debit|dr|d)\\s*(/|or|-)?\\s*(credit|cr|c)|(credit|cr|c)\\s*(/|or|-)?\\s*(debit|dr|d)");
+
+    /**
+     * The row the table starts on (its header): the first line that splits into the same
+     * number of columns as the line after it. Skips the account/period preamble some banks
+     * put above the table. Returns 0 when there's no such line.
+     */
+    static int findHeaderRow(String[] lines) {
+        for (int h = 0; h < Math.min(lines.length - 1, 15); h++) {
+            String rest = String.join("\n", Arrays.copyOfRange(lines, h, Math.min(lines.length, h + 10)));
+            char d = detectDelimiter(rest);
+            int n = countChar(lines[h], d);
+            if (n == 0) continue;
+            for (int i = h + 1; i < lines.length; i++) {
+                if (lines[i].trim().isEmpty()) continue;
+                if (countChar(lines[i], d) == n) return h;
+                break;
+            }
+        }
+        return 0;
+    }
+
     public static char detectDelimiter(String text) {
         char[] candidates = {',', ';', '\t', '|'};
         String[] lines = text.split("\\r?\\n", 10);
@@ -57,6 +81,17 @@ public class CsvStatementParser {
     static List<ImportItem> parse(String text, char delimiter, int dateCol, int amountCol, int creditCol,
                                   int descCol, int balanceCol, String dateFormat,
                                   boolean negativeIsExpense, int firstDataLine) {
+        return parse(text, delimiter, dateCol, amountCol, creditCol, descCol, balanceCol, -1,
+            dateFormat, negativeIsExpense, firstDataLine);
+    }
+
+    /**
+     * As above; {@code signCol} >= 0 is a "Debit/Credit" or "Dr/Cr" column whose "D"/"DR"/
+     * "Debit" (or "C"/"CR"/"Credit") decides the direction of an unsigned amount.
+     */
+    static List<ImportItem> parse(String text, char delimiter, int dateCol, int amountCol, int creditCol,
+                                  int descCol, int balanceCol, int signCol, String dateFormat,
+                                  boolean negativeIsExpense, int firstDataLine) {
         List<ImportItem> items = new ArrayList<>();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern(dateFormat, Locale.ENGLISH);
         String[] lines = text.split("\\r?\\n");
@@ -83,6 +118,9 @@ public class CsvStatementParser {
                     if (amount == null) continue;
                     // negativeIsExpense: "-100" is money out. Otherwise positive values are money out.
                     signed = negativeIsExpense ? amount : -amount;
+                    String marker = signCol >= 0 ? field(fields, signCol).toLowerCase(Locale.ROOT) : "";
+                    if (marker.equals("d") || marker.equals("dr") || marker.equals("debit")) signed = -Math.abs(amount);
+                    else if (marker.equals("c") || marker.equals("cr") || marker.equals("credit")) signed = Math.abs(amount);
                 }
                 double abs = Amounts.round2(Math.abs(signed));
                 if (abs <= 0) continue;
@@ -111,18 +149,23 @@ public class CsvStatementParser {
         String[] lines = text.split("\\r?\\n");
         for (int h = 0; h < Math.min(lines.length, 15); h++) {
             String[] headers = splitLine(lines[h], delimiter);
-            int date = -1, desc = -1, amount = -1, debit = -1, credit = -1, balance = -1;
+            int date = -1, desc = -1, weakDesc = -1, amount = -1, debit = -1, credit = -1, balance = -1, sign = -1;
             for (int i = 0; i < headers.length; i++) {
                 String x = unquote(headers[i]).toLowerCase();
                 if (x.isEmpty()) continue;
                 if (date < 0 && x.contains("date") && !x.contains("value date")) date = i;
                 else if (balance < 0 && x.contains("balance")) balance = i;
+                // "Debit/Credit", "Dr/Cr": says which way the "Amount" column's money went
+                else if (sign < 0 && SIGN_HEADER.matcher(x).matches()) sign = i;
                 else if (debit < 0 && (x.contains("debit") || x.equals("money out") || x.contains("withdrawal") || x.equals("paid out"))) debit = i;
                 else if (credit < 0 && (x.contains("credit") || x.equals("money in") || x.contains("deposit") || x.equals("paid in"))) credit = i;
                 else if (amount < 0 && (x.contains("amount") || x.equals("value"))) amount = i;
-                else if (desc < 0 && (x.contains("desc") || x.contains("narr") || x.contains("detail")
-                    || x.contains("reference") || x.contains("payee") || x.contains("memo") || x.contains("transaction"))) desc = i;
+                else if (x.contains("type")) continue; // "Type", "Transaction Type": a code, not a description
+                // A real description column beats a "Details"/"Reference" one wherever it sits.
+                else if (desc < 0 && (x.contains("desc") || x.contains("narr") || x.contains("payee") || x.contains("memo"))) desc = i;
+                else if (weakDesc < 0 && (x.contains("detail") || x.contains("reference") || x.contains("transaction"))) weakDesc = i;
             }
+            if (desc < 0) desc = weakDesc;
             if (date < 0) {
                 for (int i = 0; i < headers.length; i++) {
                     if (unquote(headers[i]).equalsIgnoreCase("date")) date = i;
@@ -138,18 +181,21 @@ public class CsvStatementParser {
             // A lone "Debit" column holds positive money-out values.
             boolean negativeIsExpense = !(amount < 0 && debit >= 0 && !split);
             List<ImportItem> items = parse(text, delimiter, date, amountCol, split ? credit : -1,
-                desc, balance, format, negativeIsExpense, h + 1);
+                desc, balance, split ? -1 : sign, format, negativeIsExpense, h + 1);
             if (items.isEmpty()) continue;
             return new StatementParseResult("CSV", items);
         }
         return null;
     }
 
+    /** The patterns {@link #detectDateFormat} chooses from (day-first first), also offered when mapping by hand. */
+    static final String[] DETECTABLE_DATE_FORMATS = {"yyyy-MM-dd", "yyyy/MM/dd", "dd/MM/yyyy", "d/M/yyyy",
+        "dd-MM-yyyy", "dd.MM.yyyy", "MM/dd/yyyy", "M/d/yyyy", "dd MMM yyyy", "d MMM yyyy", "dd-MMM-yyyy",
+        "MMM dd, yyyy", "yyyyMMdd", "dd/MM/yy", "yyyy-MM-dd HH:mm:ss"};
+
     /** Picks the date pattern that parses every sample row; prefers day-first when ambiguous. */
     static String detectDateFormat(String[] lines, int from, int dateCol, char delimiter) {
-        String[] candidates = {"yyyy-MM-dd", "yyyy/MM/dd", "dd/MM/yyyy", "d/M/yyyy", "dd-MM-yyyy", "dd.MM.yyyy",
-            "MM/dd/yyyy", "M/d/yyyy", "dd MMM yyyy", "d MMM yyyy", "dd-MMM-yyyy", "MMM dd, yyyy", "yyyyMMdd",
-            "dd/MM/yy", "yyyy-MM-dd HH:mm:ss"};
+        String[] candidates = DETECTABLE_DATE_FORMATS;
         List<String> samples = new ArrayList<>();
         for (int i = from; i < lines.length && samples.size() < 200; i++) {
             String[] f = splitLine(lines[i], delimiter);

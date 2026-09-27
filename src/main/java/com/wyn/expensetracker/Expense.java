@@ -123,13 +123,15 @@ public class Expense {
     }
 
     public void addTag(String tag) {
-        if (tag != null && !tag.trim().isEmpty()) {
-            tags.add(sanitizeTag(tag.trim()));
+        if (tag != null) {
+            String clean = sanitizeTag(tag).trim();
+            if (!clean.isEmpty()) tags.add(clean);
         }
     }
 
     private static String sanitizeTag(String tag) {
-        return tag.replace("|", "").replace(",", "").replace("\n", "").replace("\r", "");
+        // '"' is the CSV quote character in expenses.txt; a stray one would corrupt the row.
+        return tag.replace("|", "").replace(",", "").replace("\"", "").replace("\n", "").replace("\r", "");
     }
 
     public void removeTag(String tag) {

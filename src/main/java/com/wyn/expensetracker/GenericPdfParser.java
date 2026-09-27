@@ -3,23 +3,31 @@ package com.wyn.expensetracker;
 import java.time.LocalDate;
 import java.time.Month;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class GenericPdfParser implements BankStatementParser {
 
-    // Common date patterns found in bank statements
-    private static final DateTimeFormatter[] DATE_FORMATS = {
-        DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.ENGLISH),
-        DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.ENGLISH),
-        DateTimeFormatter.ofPattern("dd-MM-yyyy", Locale.ENGLISH),
-        DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.ENGLISH),
-        DateTimeFormatter.ofPattern("yyyy/MM/dd", Locale.ENGLISH),
-        DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH),
-        DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.ENGLISH),
+    // Date patterns found in bank statements. '-' separators are read as '/'. Whether
+    // "03/04/2024" is 3 April or 4 March is decided once per statement (detectDayFirst).
+    private static final DateTimeFormatter[] YEAR_FIRST = { DateTimeFormatter.ofPattern("yyyy/M/d", Locale.ENGLISH) };
+    private static final DateTimeFormatter[] DAY_FIRST = {
+        DateTimeFormatter.ofPattern("d/M/yyyy", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("d/M/yy", Locale.ENGLISH),
     };
+    private static final DateTimeFormatter[] MONTH_FIRST = {
+        DateTimeFormatter.ofPattern("M/d/yyyy", Locale.ENGLISH),
+        DateTimeFormatter.ofPattern("M/d/yy", Locale.ENGLISH),
+    };
+    private static final DateTimeFormatter[] NAMED_MONTH = {
+        new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("d MMM yyyy").toFormatter(Locale.ENGLISH),
+        new DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern("d MMMM yyyy").toFormatter(Locale.ENGLISH),
+    };
+    private static final Pattern NUMERIC_DATE = Pattern.compile("(\\d{1,2})/(\\d{1,2})/(\\d{2}|\\d{4})");
 
     // "DD Mon" without year (e.g. FNB-style: "27 Nov")
     private static final Pattern SHORT_DATE = Pattern.compile(
@@ -83,6 +91,8 @@ public class GenericPdfParser implements BankStatementParser {
 
     private static final Pattern SIGNED_AMOUNT = Pattern.compile(
         "(?<![\\d.])(-?\\d{1,3}(?:[, ]\\d{3})*\\.\\d{2}|-?\\d+\\.\\d{2})\\s?(Cr|Dr|CR|DR|-)?(?![\\d])");
+    private static final Pattern SPACE_GROUPED = Pattern.compile("-?\\d{1,3}(?: \\d{3})+\\.\\d{2}");
+    private static final Pattern COMMA_GROUPED = Pattern.compile("(?<![\\d.,])\\d{1,3}(?:,\\d{3})+\\.\\d{2}(?!\\d)");
     private static final Pattern OPENING = Pattern.compile(
         "(?i)(?:opening|previous|brought forward)\\s+balance[^\\d-]*(-?[\\d, ]+\\.\\d{2})\\s?(Cr|Dr)?");
     private static final Pattern CLOSING = Pattern.compile(
@@ -106,6 +116,10 @@ public class GenericPdfParser implements BankStatementParser {
         while (cm.find()) closing = signedValue(cm.group(1), cm.group(2)); // last one wins
         result.setClosingBalance(closing);
 
+        boolean dayFirst = detectDayFirst(text);
+        // Without a balance to check, "1 500.00" is read whole unless the statement is known to
+        // group thousands with commas (then the "1" ends the description).
+        boolean preferWhole = usesSpaceGrouping(text) || !usesCommaGrouping(text);
         Double prevBalance = result.getOpeningBalance();
         int memo = 0;
         // Items whose date had no year of its own; their years are assigned at the end.
@@ -114,9 +128,10 @@ public class GenericPdfParser implements BankStatementParser {
             String line = rawLine.trim();
             if (line.isEmpty() || SKIP_LINE.matcher(line).find()) continue;
 
-            LocalDate date = extractDate(line, inferredYear);
+            LocalDate date = extractDate(line, inferredYear, dayFirst);
             if (date == null) continue;
-            boolean hasYear = FULL_DATE.matcher(line).find();
+            Matcher fm = FULL_DATE.matcher(line);
+            boolean hasYear = fm.find() && parseFullDate(fm.group(1), dayFirst) != null;
 
             // Only look for amounts after the date so day/month digits aren't mistaken for money.
             String afterDate = line;
@@ -128,21 +143,37 @@ public class GenericPdfParser implements BankStatementParser {
                 if (sm.find()) afterDate = line.substring(sm.end());
             }
 
-            List<double[]> amounts = new ArrayList<>(); // {signedValue, hasExplicitMarker}
+            List<MatchResult> amounts = new ArrayList<>();
             Matcher m = SIGNED_AMOUNT.matcher(afterDate);
             while (m.find()) {
                 Double v = signedValue(m.group(1), m.group(2));
-                if (v != null && Math.abs(v) < 10_000_000) amounts.add(new double[]{v, m.group(2) != null || v < 0 ? 1 : 0});
+                if (v != null && Math.abs(v) < 10_000_000) amounts.add(m.toMatchResult());
             }
             if (amounts.isEmpty()) continue;
 
-            double first = amounts.get(0)[0];
+            MatchResult firstMatch = amounts.get(0);
+            MatchResult lastMatch = amounts.get(amounts.size() - 1);
+            Double balance = amounts.size() >= 2 ? Amounts.round2(signedValue(lastMatch.group(1), lastMatch.group(2))) : null;
+            // "Uber trip 2 150.00" also matches as "2 150.00": try where the amount could start,
+            // and take the reading that moves the balance correctly when there is one.
+            List<Integer> starts = amountStarts(firstMatch.group(1), preferWhole);
+            int start = starts.get(0);
+            if (prevBalance != null && balance != null) {
+                for (int st : starts) {
+                    double a = Amounts.round2(Math.abs(signedValue(firstMatch.group(1).substring(st), firstMatch.group(2))));
+                    if (Math.abs(Math.abs(prevBalance - balance) - a) < 0.005) {
+                        start = st;
+                        break;
+                    }
+                }
+            }
+            double first = signedValue(firstMatch.group(1).substring(start), firstMatch.group(2));
+            boolean explicitMarker = firstMatch.group(2) != null || first < 0;
             double amount = Amounts.round2(Math.abs(first));
             if (amount <= 0) continue;
-            Double balance = amounts.size() >= 2 ? Amounts.round2(amounts.get(amounts.size() - 1)[0]) : null;
 
             boolean credit;
-            if (amounts.get(0)[1] == 1) {
+            if (explicitMarker) {
                 credit = first > 0;
             } else {
                 credit = CREDIT_INDICATOR.matcher(line).find();
@@ -157,7 +188,13 @@ public class GenericPdfParser implements BankStatementParser {
             }
             if (balance != null) prevBalance = balance;
 
-            String description = extractDescription(line);
+            // The description is what's left once the amounts actually read are cut out.
+            StringBuilder rest = new StringBuilder(afterDate);
+            for (int k = amounts.size() - 1; k >= 0; k--) {
+                MatchResult r = amounts.get(k);
+                rest.replace(k == 0 ? r.start(1) + start : r.start(), r.end(), " ");
+            }
+            String description = extractDescription(line.substring(0, line.length() - afterDate.length()) + rest);
             if (description.isEmpty()) description = "Bank transaction";
             ImportItem item = new ImportItem(amount, description, date);
             item.setCredit(credit);
@@ -180,9 +217,10 @@ public class GenericPdfParser implements BankStatementParser {
     static LocalDate statementEnd(String text, Collection<ImportItem> yearless, int inferredYear) {
         LocalDate today = LocalDate.now();
         LocalDate latest = null;
+        boolean dayFirst = detectDayFirst(text);
         Matcher m = FULL_DATE.matcher(text);
         while (m.find()) {
-            LocalDate d = parseFullDate(m.group(1));
+            LocalDate d = parseFullDate(m.group(1), dayFirst);
             if (d != null && !d.isAfter(today.plusDays(7)) && (latest == null || d.isAfter(latest))) latest = d;
         }
         if (latest != null) return latest;
@@ -216,15 +254,79 @@ public class GenericPdfParser implements BankStatementParser {
         }
     }
 
-    private static LocalDate parseFullDate(String s) {
-        for (DateTimeFormatter fmt : DATE_FORMATS) {
+    static LocalDate parseFullDate(String s, boolean dayFirst) {
+        String n = s.trim().replace('-', '/').replaceAll("\\s+", " ");
+        DateTimeFormatter[] formats = n.contains(" ") ? NAMED_MONTH
+            : n.matches("\\d{4}/.*") ? YEAR_FIRST : dayFirst ? DAY_FIRST : MONTH_FIRST;
+        for (DateTimeFormatter fmt : formats) {
             try {
-                return LocalDate.parse(s, fmt);
+                return LocalDate.parse(n, fmt);
             } catch (DateTimeParseException ignored) {
                 // try next
             }
         }
         return null;
+    }
+
+    /**
+     * Day/month order for the whole statement: a first number above 12 ("15/03/2024") proves
+     * day-first, a second one above 12 ("03/15/2024") month-first. Day-first unless the
+     * month-first evidence wins, so every date on one statement is read the same way.
+     */
+    static boolean detectDayFirst(String text) {
+        int dayFirst = 0, monthFirst = 0;
+        Matcher m = FULL_DATE.matcher(text);
+        while (m.find()) {
+            Matcher d = NUMERIC_DATE.matcher(m.group(1).replace('-', '/'));
+            if (!d.matches()) continue;
+            int a = Integer.parseInt(d.group(1)), b = Integer.parseInt(d.group(2));
+            if (a > 12 && b <= 12) dayFirst++;
+            else if (b > 12 && a <= 12) monthFirst++;
+        }
+        return monthFirst <= dayFirst;
+    }
+
+    /**
+     * Whether this statement groups thousands with spaces ("1 000.00"). Only trusted when it's
+     * unambiguous: an opening/closing balance, or an amount printed right after another one
+     * (a description's trailing digits can't be glued onto that).
+     */
+    static boolean usesSpaceGrouping(String text) {
+        for (Pattern p : new Pattern[]{OPENING, CLOSING}) {
+            Matcher m = p.matcher(text);
+            while (m.find()) {
+                if (SPACE_GROUPED.matcher(m.group(1).trim()).matches()) return true;
+            }
+        }
+        for (String line : text.split("\\r?\\n")) {
+            Matcher m = SIGNED_AMOUNT.matcher(line);
+            boolean afterAmount = false;
+            while (m.find()) {
+                if (afterAmount && m.group(1).contains(" ")) return true;
+                afterAmount = true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether this statement groups thousands with commas ("1,234.56") anywhere. */
+    static boolean usesCommaGrouping(String text) {
+        return COMMA_GROUPED.matcher(text).find();
+    }
+
+    /**
+     * Where in a matched number like "2 150.00" the amount may start: 0 (the whole thing,
+     * 2150.00) or after a space (150.00, the "2" ending the description). The likelier
+     * reading comes first: the whole number unless {@code preferWhole} is false.
+     */
+    private static List<Integer> amountStarts(String number, boolean preferWhole) {
+        List<Integer> starts = new ArrayList<>();
+        starts.add(0);
+        for (int i = 0; i < number.length(); i++) {
+            if (number.charAt(i) == ' ') starts.add(i + 1);
+        }
+        if (!preferWhole) Collections.reverse(starts);
+        return starts;
     }
 
     private static Double signedValue(String number, String marker) {
@@ -238,18 +340,12 @@ public class GenericPdfParser implements BankStatementParser {
         return FULL_DATE.matcher(line).find() || SHORT_DATE.matcher(line).find();
     }
 
-    private LocalDate extractDate(String line, int fallbackYear) {
+    private LocalDate extractDate(String line, int fallbackYear, boolean dayFirst) {
         // Try full date formats first
         Matcher fullMatch = FULL_DATE.matcher(line);
         if (fullMatch.find()) {
-            String dateStr = fullMatch.group(1);
-            for (DateTimeFormatter fmt : DATE_FORMATS) {
-                try {
-                    return LocalDate.parse(dateStr, fmt);
-                } catch (DateTimeParseException e) {
-                    // try next
-                }
-            }
+            LocalDate d = parseFullDate(fullMatch.group(1), dayFirst);
+            if (d != null) return d;
         }
 
         // Try short "DD Mon" format
@@ -290,8 +386,8 @@ public class GenericPdfParser implements BankStatementParser {
         String noDate = FULL_DATE.matcher(line).replaceFirst("").trim();
         noDate = SHORT_DATE.matcher(noDate).replaceFirst("").trim();
 
-        // Remove all amounts
-        String noAmounts = AMOUNT_PATTERN.matcher(noDate).replaceAll("").trim();
+        // Remove any amounts left (same pattern the amounts are read with, so no stray digits remain)
+        String noAmounts = SIGNED_AMOUNT.matcher(noDate).replaceAll("").trim();
 
         // Remove credit indicators
         String clean = CREDIT_INDICATOR.matcher(noAmounts).replaceAll("").trim();

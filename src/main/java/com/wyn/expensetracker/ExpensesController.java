@@ -89,7 +89,7 @@ public class ExpensesController {
         initialized = true;
 
         // Category combo: share categories, editable
-        categoryCombo.setItems(state.getCategories());
+        categoryCombo.setItems(state.getSortedCategories());
         categoryCombo.setEditable(true);
         UIUtils.setupComboCellFactory(categoryCombo);
 
@@ -109,7 +109,6 @@ public class ExpensesController {
 
         // Expense table setup
         expenseTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        expenseTable.setTooltip(new Tooltip("Double-click a cell to edit  |  Right-click for more options  |  Press F1 for shortcuts"));
         setupEditableAmountColumn();
         setupEditableCategoryColumn();
         setupEditableDateColumn();
@@ -248,6 +247,11 @@ public class ExpensesController {
 
             SeparatorMenuItem occurrenceSeparator = new SeparatorMenuItem();
 
+            // Generated occurrences are rebuilt from their series on every refresh, so flag,
+            // tag and receipt changes made on one would silently vanish. Say where to go instead.
+            MenuItem occurrenceHint = new MenuItem("Flags, tags & receipts: change the series on the Recurring tab");
+            occurrenceHint.setDisable(true);
+
             MenuItem editOccurrenceItem = new MenuItem("Edit This Occurrence...");
             editOccurrenceItem.setOnAction(e -> {
                 Expense item = row.getItem();
@@ -327,6 +331,13 @@ public class ExpensesController {
                 makeRecurring.setVisible(item != null && item.getRecurringId() == null
                         && !(item instanceof RecurringExpense));
                 boolean isOccurrence = item != null && item.getRecurringId() != null;
+                occurrenceHint.setVisible(isOccurrence);
+                toggleExclude.setDisable(isOccurrence);
+                toggleIncome.setDisable(isOccurrence);
+                toggleRefund.setDisable(isOccurrence);
+                manageTags.setDisable(isOccurrence);
+                attachReceiptItem.setDisable(isOccurrence);
+                removeReceiptItem.setDisable(isOccurrence);
                 editOccurrenceItem.setVisible(isOccurrence);
                 skipOccurrenceItem.setVisible(isOccurrence);
                 resetOccurrenceItem.setVisible(isOccurrence && state.getManager().hasOverride(item));
@@ -340,7 +351,7 @@ public class ExpensesController {
             menu.getItems().addAll(copyItem, new SeparatorMenuItem(),
                     ownAccount, toggleExclude, toggleIncome, toggleRefund,
                     new SeparatorMenuItem(), manageTags,
-                    occurrenceSeparator, editOccurrenceItem, skipOccurrenceItem, resetOccurrenceItem,
+                    occurrenceSeparator, occurrenceHint, editOccurrenceItem, skipOccurrenceItem, resetOccurrenceItem,
                     new SeparatorMenuItem(), attachReceiptItem, viewReceiptItem, removeReceiptItem,
                     new SeparatorMenuItem(), makeRecurring);
             row.setContextMenu(menu);
@@ -431,6 +442,11 @@ public class ExpensesController {
     public void refresh() {
         updateFilterCategoryCombo();
         updateFilterTagCombo();
+        // Follow base-currency changes / profile switches, but never override a choice the
+        // user is making in the open add form.
+        if (!addExpensePane.isVisible()) {
+            currencyCodeCombo.setValue(state.getCurrencyManager().getBaseCurrency());
+        }
         // Only show the currency and tag columns once they carry information.
         String base = state.getCurrencyManager().getBaseCurrency();
         boolean foreign = false, tagged = false;
@@ -468,14 +484,10 @@ public class ExpensesController {
 
         double minAmount = 0;
         double maxAmount = Double.MAX_VALUE;
-        try {
-            String minText = filterMinAmount.getText();
-            if (minText != null && !minText.isEmpty()) minAmount = Double.parseDouble(minText);
-        } catch (NumberFormatException ignored) {}
-        try {
-            String maxText = filterMaxAmount.getText();
-            if (maxText != null && !maxText.isEmpty()) maxAmount = Double.parseDouble(maxText);
-        } catch (NumberFormatException ignored) {}
+        Double parsedMin = UIUtils.parseAmount(filterMinAmount.getText());
+        if (parsedMin != null) minAmount = parsedMin;
+        Double parsedMax = UIUtils.parseAmount(filterMaxAmount.getText());
+        if (parsedMax != null) maxAmount = parsedMax;
         final double fMin = minAmount;
         final double fMax = maxAmount;
 
@@ -528,7 +540,7 @@ public class ExpensesController {
         try {
             String current = filterCategoryCombo.getValue();
             ObservableList<String> filterItems = FXCollections.observableArrayList("All Categories");
-            filterItems.addAll(state.getCategories());
+            filterItems.addAll(state.getSortedCategories());
             filterCategoryCombo.setItems(filterItems);
             if (current != null && filterItems.contains(current)) {
                 filterCategoryCombo.setValue(current);
@@ -545,7 +557,7 @@ public class ExpensesController {
         try {
             String current = filterTagCombo.getValue();
             ObservableList<String> filterItems = FXCollections.observableArrayList("All Tags");
-            filterItems.addAll(state.getTags());
+            filterItems.addAll(state.getTags().stream().sorted(SharedState.CATEGORY_ORDER).toList());
             filterTagCombo.setItems(filterItems);
             if (current != null && filterItems.contains(current)) {
                 filterTagCombo.setValue(current);
@@ -753,7 +765,9 @@ public class ExpensesController {
     @FXML
     private void handleAddExpense() {
         try {
-            double amount = Double.parseDouble(amountField.getText());
+            Double parsedAmount = UIUtils.parseAmount(amountField.getText());
+            if (parsedAmount == null) throw new NumberFormatException(amountField.getText());
+            double amount = parsedAmount;
             if (amount <= 0) {
                 showMsg("Amount must be positive", true);
                 return;
@@ -819,16 +833,22 @@ public class ExpensesController {
         confirmation.initOwner(state.getStage());
         confirmation.setTitle("Confirm Deletion");
         confirmation.setHeaderText(null);
-        confirmation.setContentText("Are you sure you want to delete this expense?");
+        boolean isOccurrence = selectedExpense.getRecurringId() != null;
+        confirmation.setContentText(isOccurrence
+            ? "Delete this occurrence? Only this date is removed; the rest of the recurring series is kept."
+            : "Are you sure you want to delete this expense?");
         confirmation.getDialogPane().getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
 
         Optional<ButtonType> result = confirmation.showAndWait();
         if (result.isPresent() && result.get() == ButtonType.OK) {
-            // Clean up receipt file if present
-            String receiptPath = selectedExpense.getReceiptPath();
+            // Clean up receipt file if present. A generated occurrence is only skipped (its
+            // series lives on), so never delete a file it may share with the series.
+            String receiptPath = isOccurrence ? null : selectedExpense.getReceiptPath();
             state.getManager().executeCommand(new DeleteExpenseCommand(state.getManager(), selectedExpense));
             try {
                 state.saveExpenses();
+                // Deleting an occurrence is persisted as a "skipped" override.
+                if (isOccurrence) state.saveRecurringOverrides();
                 if (receiptPath != null && !receiptPath.isEmpty()) {
                     java.io.File receiptFile = resolveReceiptFile(receiptPath);
                     if (receiptFile.exists()) receiptFile.delete();
@@ -1032,26 +1052,78 @@ public class ExpensesController {
         showMsg("Expense updated", false);
     }
 
+    /**
+     * The expense shown in {@code cell}'s row, read from the table by index. Cells are recycled
+     * as the table scrolls/sorts/refreshes, so an inline editor must remember the expense it was
+     * opened on and compare against this rather than trusting whatever row the cell shows now.
+     */
+    private static Expense rowItemOf(TableCell<Expense, ?> cell) {
+        TableView<Expense> tv = cell.getTableView();
+        int i = cell.getIndex();
+        if (tv == null || i < 0 || i >= tv.getItems().size()) return null;
+        return tv.getItems().get(i);
+    }
+
+    /**
+     * Cancels an inline editor when it loses focus (click elsewhere, tab away) while still editing.
+     * Focus also drops when the whole window is deactivated (alt-tab); that keeps the edit alive.
+     */
+    private static void cancelOnFocusLoss(javafx.scene.Node editor, java.util.function.BooleanSupplier stillEditing,
+                                          Runnable cancel) {
+        editor.focusedProperty().addListener((obs, was, now) -> {
+            if (now || !stillEditing.getAsBoolean()) return;
+            javafx.scene.Scene scene = editor.getScene();
+            if (scene == null || scene.getWindow() == null || !scene.getWindow().isFocused()) return;
+            cancel.run();
+        });
+    }
+
+    /** Copy of {@code old} with the four editable fields replaced and every flag carried over. */
+    private static Expense copyForEdit(Expense old, double amount, String category, LocalDate date, String description) {
+        Expense updated = new Expense(amount, category, date, description);
+        updated.setImportId(old.getImportId());
+        updated.setExcluded(old.isExcluded());
+        updated.setIncome(old.isIncome());
+        updated.setRefund(old.isRefund());
+        updated.setTags(old.getTags());
+        updated.setCurrency(old.getCurrency());
+        updated.setReceiptPath(old.getReceiptPath());
+        return updated;
+    }
+
+    /** True if {@code target} is still a live ledger entry (not replaced/deleted since the edit began). */
+    private boolean stillInLedger(Expense target) {
+        if (target == null) return false;
+        for (Expense e : state.getManager().getExpenses()) {
+            if (e == target) return true;
+        }
+        return false;
+    }
+
     private void setupEditableAmountColumn() {
         amountColumn.setCellFactory(col -> new TableCell<Expense, Double>() {
             private TextField textField;
             private boolean editing = false;
+            private Expense editTarget;
 
             {
                 setOnMouseClicked(event -> {
-                    if (event.getClickCount() == 2 && !isEmpty() && getTableRow() != null
-                            && canEditExpense(getTableRow().getItem())) {
+                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(rowItemOf(this))) {
                         startInlineEdit();
                     }
                 });
             }
 
             private void startInlineEdit() {
+                editTarget = rowItemOf(this);
+                if (editTarget == null) return;
                 editing = true;
-                textField = new TextField(getItem().toString());
+                // Locale.ROOT so the prefill round-trips on comma-decimal locales (e.g. en_ZA).
+                textField = new TextField(UIUtils.formatAmountForEdit(editTarget.getAmount()));
                 textField.getStyleClass().add("text-field");
                 textField.setOnAction(e -> commitInlineEdit());
                 textField.setOnKeyPressed(e -> { if (e.getCode() == KeyCode.ESCAPE) cancelInlineEdit(); });
+                cancelOnFocusLoss(textField, () -> editing, this::cancelInlineEdit);
                 setGraphic(textField);
                 setText(null);
                 textField.selectAll();
@@ -1060,40 +1132,32 @@ public class ExpensesController {
 
             private void commitInlineEdit() {
                 if (!editing) return;
-                try {
-                    double val = Double.parseDouble(textField.getText());
-                    if (val <= 0) { showMsg("Amount must be positive", true); cancelInlineEdit(); return; }
-                    if (getTableRow() == null || getTableRow().getItem() == null) { cancelInlineEdit(); return; }
-                    Expense old = getTableRow().getItem();
-                    editing = false;
-                    Expense updated = new Expense(val, old.getCategory(), old.getDate(), old.getDescription());
-                    updated.setImportId(old.getImportId());
-                    updated.setExcluded(old.isExcluded());
-                    updated.setIncome(old.isIncome());
-                    updated.setRefund(old.isRefund());
-                    updated.setTags(old.getTags());
-                    updated.setCurrency(old.getCurrency());
-                    updated.setReceiptPath(old.getReceiptPath());
-                    handleInlineEdit(old, updated);
-                } catch (NumberFormatException ex) {
-                    showMsg("Invalid amount", true);
-                    cancelInlineEdit();
-                }
+                Expense old = editTarget;
+                Double val = UIUtils.parseAmount(textField.getText());
+                if (val == null) { showMsg("Invalid amount", true); cancelInlineEdit(); return; }
+                if (val <= 0) { showMsg("Amount must be positive", true); cancelInlineEdit(); return; }
+                if (!stillInLedger(old)) { cancelInlineEdit(); return; }
+                cancelInlineEdit();
+                if (val == old.getAmount()) return;
+                handleInlineEdit(old, copyForEdit(old, val, old.getCategory(), old.getDate(), old.getDescription()));
             }
 
             private void cancelInlineEdit() {
                 editing = false;
-                setText(getItem() == null ? null : fmt(getItem()));
+                editTarget = null;
                 setGraphic(null);
+                updateItem(getItem(), isEmpty());
             }
 
             @Override
             protected void updateItem(Double item, boolean empty) {
                 super.updateItem(item, empty);
+                // Recycled onto another row (scroll/sort/refresh): drop the editor, never carry it over.
+                if (editing && (empty || rowItemOf(this) != editTarget)) { editing = false; editTarget = null; }
                 if (empty || item == null) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && textField != null) { setGraphic(textField); setText(null); }
                 else {
-                    Expense expense = getTableRow() != null ? getTableRow().getItem() : null;
+                    Expense expense = rowItemOf(this);
                     if (expense != null && expense.getCurrency() != null
                             && !expense.getCurrency().equals(state.getCurrencyManager().getBaseCurrency())) {
                         setText(CurrencyManager.fmt(item, expense.getCurrency()));
@@ -1112,25 +1176,71 @@ public class ExpensesController {
             private ComboBox<String> comboBox;
             private boolean editing = false;
             private boolean committing = false;
+            private Expense editTarget;
+            // Set when the popup closes because the user chose an item (mouse click or Enter in the list).
+            private boolean picked = false;
+            private boolean escapedInPopup = false;
 
             {
                 setOnMouseClicked(event -> {
-                    if (event.getClickCount() == 2 && !isEmpty() && getTableRow() != null
-                            && canEditExpense(getTableRow().getItem())) {
+                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(rowItemOf(this))) {
                         startInlineEdit();
                     }
                 });
             }
 
             private void startInlineEdit() {
+                editTarget = rowItemOf(this);
+                if (editTarget == null) return;
                 editing = true;
                 committing = false;
-                comboBox = new ComboBox<>(FXCollections.observableArrayList(state.getCategories()));
-                comboBox.setValue(getItem());
+                picked = false;
+                escapedInPopup = false;
+                comboBox = new ComboBox<>(FXCollections.observableArrayList(state.getSortedCategories()));
+                comboBox.setValue(editTarget.getCategory());
                 comboBox.setEditable(true);
                 comboBox.getStyleClass().add("combo-box");
-                comboBox.setOnAction(e -> commitInlineEdit());
-                comboBox.setOnKeyPressed(e -> { if (e.getCode() == KeyCode.ESCAPE) cancelInlineEdit(); });
+                // No setOnAction(commit): it fires on every arrow-key move through the popup, and a
+                // commit also bulk-moves similar transactions. Commit on Enter, or when the popup
+                // closes after a pick; Escape cancels.
+                comboBox.setCellFactory(lv -> {
+                    if (lv.getProperties().putIfAbsent("inlinePickHook", Boolean.TRUE) == null) {
+                        lv.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
+                            if (e.getCode() == KeyCode.ENTER) picked = true;
+                            else if (e.getCode() == KeyCode.ESCAPE) escapedInPopup = true;
+                        });
+                    }
+                    ListCell<String> cell = new ListCell<>() {
+                        @Override
+                        protected void updateItem(String item, boolean empty) {
+                            super.updateItem(item, empty);
+                            setText(empty || item == null ? null : item);
+                        }
+                    };
+                    // PRESSED, not RELEASED: the skin's own RELEASED filter on the list hides the
+                    // popup before a cell-level RELEASED filter would run, so onHidden would miss it.
+                    cell.addEventFilter(javafx.scene.input.MouseEvent.MOUSE_PRESSED, e -> {
+                        if (!cell.isEmpty()) picked = true;
+                    });
+                    return cell;
+                });
+                comboBox.setOnShowing(e -> { picked = false; escapedInPopup = false; });
+                comboBox.setOnHidden(e -> {
+                    if (!editing) return;
+                    if (escapedInPopup) cancelInlineEdit();
+                    else if (picked) commitInlineEdit();
+                    picked = false;
+                });
+                comboBox.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
+                    if (e.getCode() == KeyCode.ENTER) {
+                        e.consume();
+                        commitInlineEdit();
+                    } else if (e.getCode() == KeyCode.ESCAPE) {
+                        e.consume();
+                        cancelInlineEdit();
+                    }
+                });
+                cancelOnFocusLoss(comboBox, () -> editing && !comboBox.isShowing(), this::cancelInlineEdit);
                 setGraphic(comboBox);
                 setText(null);
                 comboBox.requestFocus();
@@ -1140,34 +1250,29 @@ public class ExpensesController {
                 if (committing || !editing) return;
                 committing = true;
                 try {
-                    String newCategory = comboBox.getValue();
-                    if (newCategory == null || newCategory.trim().isEmpty()) {
-                        newCategory = comboBox.getEditor().getText().trim();
-                    }
-                    if (newCategory == null || newCategory.isEmpty()) {
+                    // The editor holds what the user typed or picked; the value can lag behind it.
+                    String typed = comboBox.getEditor().getText();
+                    String newCategory = typed == null ? "" : typed.trim();
+                    if (newCategory.isEmpty() && comboBox.getValue() != null) newCategory = comboBox.getValue().trim();
+                    Expense old = editTarget;
+                    if (comboBox.isShowing()) comboBox.hide();
+                    if (newCategory.isEmpty()) {
                         showMsg("Category cannot be empty", true);
                         cancelInlineEdit();
                         return;
                     }
-                    if (getTableRow() == null || getTableRow().getItem() == null) {
+                    if (!stillInLedger(old)) {
                         cancelInlineEdit();
                         return;
                     }
+                    cancelInlineEdit();
+                    if (newCategory.equals(old.getCategory())) return;
                     if (!state.getCategories().contains(newCategory)) {
                         state.getCategories().add(newCategory);
                         try { state.getStorage().saveCategories(state.getCategories()); }
                         catch (Exception ex) { state.getCategories().remove(newCategory); }
                     }
-                    Expense old = getTableRow().getItem();
-                    editing = false;
-                    Expense updated = new Expense(old.getAmount(), newCategory, old.getDate(), old.getDescription());
-                    updated.setImportId(old.getImportId());
-                    updated.setExcluded(old.isExcluded());
-                    updated.setIncome(old.isIncome());
-                    updated.setRefund(old.isRefund());
-                    updated.setTags(old.getTags());
-                    updated.setCurrency(old.getCurrency());
-                    updated.setReceiptPath(old.getReceiptPath());
+                    Expense updated = copyForEdit(old, old.getAmount(), newCategory, old.getDate(), old.getDescription());
                     if (TransactionClassifier.TRANSFERS.equals(newCategory)) {
                         // A transfer between your own accounts is neither spending nor income.
                         updated.setExcluded(true);
@@ -1188,19 +1293,22 @@ public class ExpensesController {
                 } catch (Exception ex) {
                     System.err.println("Error in category commitInlineEdit: " + ex.getMessage());
                     cancelInlineEdit();
+                } finally {
+                    committing = false;
                 }
             }
 
             private void cancelInlineEdit() {
                 editing = false;
-                committing = false;
-                setText(getItem());
+                editTarget = null;
                 setGraphic(null);
+                updateItem(getItem(), isEmpty());
             }
 
             @Override
             protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
+                if (editing && (empty || rowItemOf(this) != editTarget)) { editing = false; editTarget = null; }
                 if (empty || item == null) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && comboBox != null) { setGraphic(comboBox); setText(null); }
                 else { setText(item); setGraphic(null); setAlignment(Pos.CENTER_LEFT); }
@@ -1212,22 +1320,25 @@ public class ExpensesController {
         dateColumn.setCellFactory(col -> new TableCell<Expense, LocalDate>() {
             private DatePicker picker;
             private boolean editing = false;
+            private Expense editTarget;
 
             {
                 setOnMouseClicked(event -> {
-                    if (event.getClickCount() == 2 && !isEmpty() && getTableRow() != null
-                            && canEditExpense(getTableRow().getItem())) {
+                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(rowItemOf(this))) {
                         startInlineEdit();
                     }
                 });
             }
 
             private void startInlineEdit() {
+                editTarget = rowItemOf(this);
+                if (editTarget == null) return;
                 editing = true;
-                picker = new DatePicker(getItem());
+                picker = new DatePicker(editTarget.getDate());
                 picker.getStyleClass().add("date-picker");
                 picker.setOnAction(e -> commitInlineEdit());
                 picker.setOnKeyPressed(e -> { if (e.getCode() == KeyCode.ESCAPE) cancelInlineEdit(); });
+                cancelOnFocusLoss(picker, () -> editing && !picker.isShowing(), this::cancelInlineEdit);
                 setGraphic(picker);
                 setText(null);
                 picker.requestFocus();
@@ -1236,30 +1347,24 @@ public class ExpensesController {
             private void commitInlineEdit() {
                 if (!editing) return;
                 LocalDate newDate = picker.getValue();
-                if (newDate == null) { cancelInlineEdit(); return; }
-                if (getTableRow() == null || getTableRow().getItem() == null) { cancelInlineEdit(); return; }
-                Expense old = getTableRow().getItem();
-                editing = false;
-                Expense updated = new Expense(old.getAmount(), old.getCategory(), newDate, old.getDescription());
-                updated.setImportId(old.getImportId());
-                updated.setExcluded(old.isExcluded());
-                updated.setIncome(old.isIncome());
-                updated.setRefund(old.isRefund());
-                updated.setTags(old.getTags());
-                updated.setCurrency(old.getCurrency());
-                updated.setReceiptPath(old.getReceiptPath());
-                handleInlineEdit(old, updated);
+                Expense old = editTarget;
+                if (newDate == null || !stillInLedger(old)) { cancelInlineEdit(); return; }
+                cancelInlineEdit();
+                if (newDate.equals(old.getDate())) return;
+                handleInlineEdit(old, copyForEdit(old, old.getAmount(), old.getCategory(), newDate, old.getDescription()));
             }
 
             private void cancelInlineEdit() {
                 editing = false;
-                setText(getItem() == null ? null : getItem().toString());
+                editTarget = null;
                 setGraphic(null);
+                updateItem(getItem(), isEmpty());
             }
 
             @Override
             protected void updateItem(LocalDate item, boolean empty) {
                 super.updateItem(item, empty);
+                if (editing && (empty || rowItemOf(this) != editTarget)) { editing = false; editTarget = null; }
                 if (empty || item == null) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && picker != null) { setGraphic(picker); setText(null); }
                 else {
@@ -1275,22 +1380,28 @@ public class ExpensesController {
         descriptionColumn.setCellFactory(col -> new TableCell<Expense, String>() {
             private TextField textField;
             private boolean editing = false;
+            private Expense editTarget;
 
             {
                 setOnMouseClicked(event -> {
-                    if (event.getClickCount() == 2 && !isEmpty() && getTableRow() != null
-                            && canEditExpense(getTableRow().getItem())) {
+                    if (event.getClickCount() == 2 && !isEmpty() && canEditExpense(rowItemOf(this))) {
                         startInlineEdit();
                     }
                 });
+                // Full text of long descriptions (the column cuts them off).
+                HoverTip.install(this, () -> !isEmpty() && !editing && getItem() != null
+                    && getItem().length() > 30 ? getItem() : null);
             }
 
             private void startInlineEdit() {
+                editTarget = rowItemOf(this);
+                if (editTarget == null) return;
                 editing = true;
-                textField = new TextField(getItem() != null ? getItem() : "");
+                textField = new TextField(editTarget.getDescription() != null ? editTarget.getDescription() : "");
                 textField.getStyleClass().add("text-field");
                 textField.setOnAction(e -> commitInlineEdit());
                 textField.setOnKeyPressed(e -> { if (e.getCode() == KeyCode.ESCAPE) cancelInlineEdit(); });
+                cancelOnFocusLoss(textField, () -> editing, this::cancelInlineEdit);
                 setGraphic(textField);
                 setText(null);
                 textField.selectAll();
@@ -1299,29 +1410,25 @@ public class ExpensesController {
 
             private void commitInlineEdit() {
                 if (!editing) return;
-                if (getTableRow() == null || getTableRow().getItem() == null) { cancelInlineEdit(); return; }
-                Expense old = getTableRow().getItem();
-                editing = false;
-                Expense updated = new Expense(old.getAmount(), old.getCategory(), old.getDate(), textField.getText().trim());
-                updated.setImportId(old.getImportId());
-                updated.setExcluded(old.isExcluded());
-                updated.setIncome(old.isIncome());
-                updated.setRefund(old.isRefund());
-                updated.setTags(old.getTags());
-                updated.setCurrency(old.getCurrency());
-                updated.setReceiptPath(old.getReceiptPath());
-                handleInlineEdit(old, updated);
+                Expense old = editTarget;
+                String newDescription = textField.getText().trim();
+                if (!stillInLedger(old)) { cancelInlineEdit(); return; }
+                cancelInlineEdit();
+                if (newDescription.equals(old.getDescription() != null ? old.getDescription() : "")) return;
+                handleInlineEdit(old, copyForEdit(old, old.getAmount(), old.getCategory(), old.getDate(), newDescription));
             }
 
             private void cancelInlineEdit() {
                 editing = false;
-                setText(getItem() != null ? getItem() : "");
+                editTarget = null;
                 setGraphic(null);
+                updateItem(getItem(), isEmpty());
             }
 
             @Override
             protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
+                if (editing && (empty || rowItemOf(this) != editTarget)) { editing = false; editTarget = null; }
                 if (empty) { setText(null); setGraphic(null); editing = false; }
                 else if (editing && textField != null) { setGraphic(textField); setText(null); }
                 else {
@@ -1329,11 +1436,6 @@ public class ExpensesController {
                     setText(text);
                     setGraphic(null);
                     setAlignment(Pos.CENTER_LEFT);
-                    if (text.length() > 30) {
-                        setTooltip(new Tooltip(text));
-                    } else {
-                        setTooltip(null);
-                    }
                 }
             }
         });
@@ -1386,6 +1488,18 @@ public class ExpensesController {
             return new javafx.beans.property.SimpleStringProperty(cur);
         });
         currencyColumn.setCellFactory(col -> new TableCell<Expense, String>() {
+            {
+                HoverTip.install(this, () -> {
+                    String cur = getItem();
+                    Expense expense = getTableRow() != null ? getTableRow().getItem() : null;
+                    if (isEmpty() || cur == null || expense == null
+                            || cur.equals(state.getCurrencyManager().getBaseCurrency())) return null;
+                    if (!state.getCurrencyManager().hasRate(cur)) return "No exchange rate set for " + cur + " — using 1:1";
+                    return String.format("%s (= %s)", CurrencyManager.fmt(expense.getAmount(), cur),
+                        UIUtils.fmt(state.getCurrencyManager().toBase(expense.getAmount(), cur), state.getCurrencySymbol()));
+                });
+            }
+
             @Override
             protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
@@ -1397,21 +1511,8 @@ public class ExpensesController {
                     setAlignment(Pos.CENTER);
                     boolean isForeign = !item.equals(state.getCurrencyManager().getBaseCurrency());
                     setStyle(isForeign ? "-fx-text-fill: #F7B731; -fx-font-weight: bold;" : "");
-                    if (isForeign) {
-                        Expense expense = getTableRow() != null ? getTableRow().getItem() : null;
-                        if (expense != null) {
-                            if (state.getCurrencyManager().hasRate(item)) {
-                                double converted = state.getCurrencyManager().toBase(expense.getAmount(), item);
-                                setTooltip(new Tooltip(String.format("%s (= %s)",
-                                    CurrencyManager.fmt(expense.getAmount(), item),
-                                    UIUtils.fmt(converted, state.getCurrencySymbol()))));
-                            } else {
-                                setStyle("-fx-text-fill: #FC5C65; -fx-font-weight: bold;");
-                                setTooltip(new Tooltip("No exchange rate set for " + item + " — using 1:1"));
-                            }
-                        }
-                    } else {
-                        setTooltip(null);
+                    if (isForeign && !state.getCurrencyManager().hasRate(item)) {
+                        setStyle("-fx-text-fill: #FC5C65; -fx-font-weight: bold;");
                     }
                 }
             }
@@ -1438,7 +1539,7 @@ public class ExpensesController {
                         Label icon = new Label("\uD83D\uDCCE"); // paperclip
                         icon.setStyle("-fx-cursor: hand; -fx-font-size: 14px;");
                         icon.setOnMouseClicked(e -> viewReceipt(expense));
-                        icon.setTooltip(new Tooltip("View receipt"));
+                        HoverTip.install(icon, "View receipt");
                         setGraphic(icon);
                     } else {
                         setGraphic(null);
@@ -1502,6 +1603,11 @@ public class ExpensesController {
     }
 
     private void attachReceipt(Expense expense) {
+        if (expense.getRecurringId() != null) {
+            // Generated occurrences are rebuilt on refresh; the receipt link would be lost.
+            showMsg("Receipts can't be attached to a single recurring occurrence", true);
+            return;
+        }
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Attach Receipt Image");
         fileChooser.getExtensionFilters().addAll(
@@ -1577,12 +1683,12 @@ public class ExpensesController {
 
         Label amountLabel = new Label("Amount:");
         amountLabel.getStyleClass().add("form-label");
-        TextField amountField = new TextField(String.format("%.2f", occurrence.getAmount()));
+        TextField amountField = new TextField(UIUtils.formatAmountForEdit(occurrence.getAmount()));
         amountField.getStyleClass().add("text-field");
 
         Label categoryLabel = new Label("Category:");
         categoryLabel.getStyleClass().add("form-label");
-        ComboBox<String> categoryBox = new ComboBox<>(state.getCategories());
+        ComboBox<String> categoryBox = new ComboBox<>(state.getSortedCategories());
         categoryBox.setMaxWidth(Double.MAX_VALUE);
         categoryBox.getStyleClass().add("combo-box");
         categoryBox.setValue(occurrence.getCategory());
@@ -1598,13 +1704,12 @@ public class ExpensesController {
         Button confirmBtn = new Button("Save Occurrence");
         confirmBtn.getStyleClass().add("success-button");
         confirmBtn.setOnAction(e -> {
-            double amount;
-            try {
-                amount = Double.parseDouble(amountField.getText().trim());
-            } catch (NumberFormatException ex) {
+            Double parsed = UIUtils.parseAmount(amountField.getText());
+            if (parsed == null) {
                 errorLabel.setText("Enter a valid amount");
                 return;
             }
+            double amount = parsed;
             if (amount <= 0) {
                 errorLabel.setText("Amount must be positive");
                 return;
@@ -1673,8 +1778,20 @@ public class ExpensesController {
         endDatePicker.getStyleClass().add("date-picker");
         endDatePicker.setPromptText("No end date");
 
+        Label note = new Label("This transaction stays as it is. Pick how often it repeats to see "
+            + "when the series starts.");
+        note.getStyleClass().add("form-label");
+        note.setWrapText(true);
+        freqCombo.valueProperty().addListener((o, was, freq) -> {
+            if (freq == null) return;
+            LocalDate start = RecurringController.makeRecurringStart(expense, freq, state.getManager().getExpenses());
+            note.setText("This transaction stays as it is. The series starts on "
+                + start.format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)) + ".");
+        });
+
         Label errorLabel = new Label();
         errorLabel.getStyleClass().add("error-label");
+        errorLabel.setWrapText(true);
 
         Button confirmBtn = new Button("Make Recurring");
         confirmBtn.getStyleClass().add("success-button");
@@ -1686,13 +1803,22 @@ public class ExpensesController {
             }
             LocalDate endDate = endDatePicker.getValue();
 
-            RecurringExpense recurring = new RecurringExpense(
-                    expense.getAmount(), expense.getCategory(), expense.getDate(),
-                    expense.getDescription() != null ? expense.getDescription() : "",
-                    freq, endDate);
-            if (expense.isIncome()) recurring.setIncome(true);
-
-            state.getManager().executeCommand(new AddExpenseCommand(state.getManager(), recurring));
+            // Keep this transaction as it is and start the series at the next one, so nothing is
+            // counted twice. For an imported one, also past everything imported so far: those
+            // months come from the statements, not from the series.
+            LocalDate start = RecurringController.makeRecurringStart(expense, freq, state.getManager().getExpenses());
+            if (endDate != null && endDate.isBefore(start)) {
+                errorLabel.setText("The end date must be on or after the start, "
+                    + start.format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)) + ".");
+                return;
+            }
+            RecurringExpense recurring = RecurringController.recurringFrom(expense, freq, endDate, start);
+            try {
+                state.getManager().executeCommand(new AddExpenseCommand(state.getManager(), recurring));
+            } catch (IllegalArgumentException ex) {
+                errorLabel.setText(ex.getMessage());
+                return;
+            }
             try {
                 state.getManager().generateRecurringExpenses(LocalDate.now());
                 state.saveExpenses();
@@ -1715,11 +1841,11 @@ public class ExpensesController {
         HBox buttons = new HBox(10, confirmBtn, cancelBtn);
         buttons.setAlignment(Pos.CENTER_RIGHT);
 
-        VBox content = new VBox(12, header, freqLabel, freqCombo, endLabel, endDatePicker, errorLabel, buttons);
+        VBox content = new VBox(12, header, freqLabel, freqCombo, endLabel, endDatePicker, note, errorLabel, buttons);
         content.setPadding(new Insets(20));
         content.getStyleClass().add("root-pane");
 
-        Scene scene = new Scene(content, 400, 380);
+        Scene scene = new Scene(content, 400, 420);
         scene.getStylesheets().add(getClass().getResource("/styles.css").toExternalForm());
         dialog.setScene(scene);
         dialog.showAndWait();

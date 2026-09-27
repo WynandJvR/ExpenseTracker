@@ -53,14 +53,23 @@ public class ProfileManager {
         if (profiles.size() <= 1) return false;
         File dir = new File(getProfileDir(name));
         if (!dir.exists()) return false;
-        // Delete all files in the profile directory (including backups)
-        File[] files = dir.listFiles();
-        if (files != null) {
-            for (File f : files) {
-                f.delete();
+        // Delete everything in the profile directory, including backups and the
+        // receipts/ subfolder (deepest paths first so directories are empty when removed).
+        boolean ok = true;
+        try (java.util.stream.Stream<Path> walk = Files.walk(dir.toPath())) {
+            for (Path p : walk.sorted(Comparator.reverseOrder()).toList()) {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException e) {
+                    System.err.println("Could not delete " + p + ": " + e.getMessage());
+                    ok = false;
+                }
             }
+        } catch (IOException | UncheckedIOException e) {
+            System.err.println("Could not list profile folder " + dir + ": " + e.getMessage());
+            return false;
         }
-        return dir.delete();
+        return ok && !dir.exists();
     }
 
     public boolean renameProfile(String oldName, String newName) {

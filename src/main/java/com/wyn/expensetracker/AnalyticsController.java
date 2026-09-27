@@ -124,6 +124,8 @@ public class AnalyticsController {
 
     public void refresh() {
         updateCharts();
+        Tab open = analyticsTabPane.getSelectionModel().getSelectedItem();
+        if (open == cashFlowTab) updateCashFlowCalendar();
     }
 
     // ======================== MASTER CHART UPDATE ========================
@@ -382,7 +384,6 @@ public class AnalyticsController {
                         newNode.setStyle("-fx-bar-fill: " + color + ";");
                         if (amt > 0) {
                             newNode.setCursor(Cursor.HAND);
-                            tip(newNode, category + " (" + barLabel + "): " + fmt(amt));
                             newNode.setOnMouseClicked(event -> {
                                 List<Expense> filtered = barItems.getOrDefault(barLabel, Collections.emptyList()).stream()
                                     .filter(e -> isOther ? !shownSet.contains(e.getCategory())
@@ -495,21 +496,9 @@ public class AnalyticsController {
             final double fExpense = expenseAmt;
 
             XYChart.Data<String, Number> incomeData = new XYChart.Data<>(label, incomeAmt);
-            incomeData.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                if (newNode != null) {
-                    tip(newNode, ym.getMonth().getDisplayName(TextStyle.FULL, Locale.getDefault())
-                        + " " + ym.getYear() + "\nIncome: " + fmt(fIncome));
-                }
-            });
             incomeSeries.getData().add(incomeData);
 
             XYChart.Data<String, Number> expenseData = new XYChart.Data<>(label, expenseAmt);
-            expenseData.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                if (newNode != null) {
-                    tip(newNode, ym.getMonth().getDisplayName(TextStyle.FULL, Locale.getDefault())
-                        + " " + ym.getYear() + "\nExpenses: " + fmt(fExpense));
-                }
-            });
             expenseSeries.getData().add(expenseData);
 
             cursor = cursor.plusMonths(1);
@@ -586,11 +575,6 @@ public class AnalyticsController {
             final double fActual = actualAmt;
 
             XYChart.Data<String, Number> bData = new XYChart.Data<>(category, budgetAmt);
-            bData.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                if (newNode != null) {
-                    tip(newNode, category + "\nBudget: " + fmt(fBudget));
-                }
-            });
             budgetSeries.getData().add(bData);
 
             XYChart.Data<String, Number> aData = new XYChart.Data<>(category, actualAmt);
@@ -598,8 +582,6 @@ public class AnalyticsController {
                 if (newNode != null) {
                     setExclusiveClass(newNode, fActual > fBudget ? "actual-over" : "actual-under",
                         "actual-over", "actual-under");
-                    tip(newNode, category + "\nActual: " + fmt(fActual)
-                        + (fActual > fBudget ? " (OVER)" : ""));
                 }
             });
             actualSeries.getData().add(aData);
@@ -684,11 +666,6 @@ public class AnalyticsController {
             final double total = runningTotal;
             final int d = day;
             XYChart.Data<Number, Number> data = new XYChart.Data<>(day, runningTotal);
-            data.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                if (newNode != null) {
-                    tip(newNode, "Day " + d + ": " + fmt(total));
-                }
-            });
             actualSeries.getData().add(data);
         }
         cumulativeSpendingChart.getData().add(actualSeries);
@@ -833,20 +810,10 @@ public class AnalyticsController {
             final double fPrev = prevAmt;
 
             XYChart.Data<String, Number> cData = new XYChart.Data<>(label, currentAmt);
-            cData.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                if (newNode != null) {
-                    tip(newNode, label + " " + selectedYear + ": " + fmt(fCurrent));
-                }
-            });
             // Months still to come have no spend yet; end the line at the current month.
             if (!YearMonth.of(selectedYear, m).isAfter(YearMonth.now())) currentSeries.getData().add(cData);
 
             XYChart.Data<String, Number> pData = new XYChart.Data<>(label, prevAmt);
-            pData.nodeProperty().addListener((obs, oldNode, newNode) -> {
-                if (newNode != null) {
-                    tip(newNode, label + " " + prevYear + ": " + fmt(fPrev));
-                }
-            });
             prevSeries.getData().add(pData);
         }
 
@@ -1108,17 +1075,8 @@ public class AnalyticsController {
             projOutlookChart.getData().addAll(Arrays.asList(optimisticSeries, pessimisticSeries));
         }
 
-        // Series colours (and dashed confidence bands) come from .outlook-chart in styles.css
-        Platform.runLater(() -> {
-            for (XYChart.Series<String, Number> series : projOutlookChart.getData()) {
-                for (XYChart.Data<String, Number> data : series.getData()) {
-                    if (data.getNode() != null) {
-                        tip(data.getNode(), series.getName() + " - " + data.getXValue() + ": "
-                            + fmt(data.getYValue().doubleValue()));
-                    }
-                }
-            }
-        });
+        // Series colours (and dashed confidence bands) come from .outlook-chart in styles.css;
+        // the hover read-out (ChartHover) describes each month.
     }
 
     // ======================== PROJECTION BALANCE CHART ========================
@@ -1199,19 +1157,6 @@ public class AnalyticsController {
         xAxis.setAutoRanging(false);
         xAxis.setCategories(FXCollections.observableArrayList(labels));
         projCategoryChart.getData().addAll(Arrays.asList(recurringSeries, variableSeries));
-
-        Platform.runLater(() -> {
-            for (XYChart.Data<String, Number> data : recurringSeries.getData()) {
-                if (data.getNode() != null) {
-                    tip(data.getNode(), data.getXValue() + " (Recurring): " + fmt(data.getYValue().doubleValue()) + "/month");
-                }
-            }
-            for (XYChart.Data<String, Number> data : variableSeries.getData()) {
-                if (data.getNode() != null) {
-                    tip(data.getNode(), data.getXValue() + " (Variable): " + fmt(data.getYValue().doubleValue()) + "/month");
-                }
-            }
-        });
     }
 
     public int getSelectedTabIndex() {
@@ -1325,7 +1270,7 @@ public class AnalyticsController {
     }
 
     private static void tip(Node node, String text) {
-        Tooltip.install(node, new Tooltip(text));
+        HoverTip.install(node, text);
     }
 
     /** Swaps one of a set of mutually exclusive style classes on a node. */
